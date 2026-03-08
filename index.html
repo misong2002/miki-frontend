@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live2D 直接可运行示例</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #eef3f9;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+
+    #app {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #live2d-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 20;
+      background: rgba(255,255,255,0.95);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      max-width: 520px;
+      color: #223;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    #status {
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    #error {
+      color: #c0392b;
+      white-space: pre-wrap;
+      margin-top: 8px;
+    }
+
+    button {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 8px;
+      background: #4a6fa5;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #3c5c89;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <div id="status">状态：等待初始化</div>
+      <div>模型路径：<code>model/miki_uniform.model3.json</code></div>
+      <div>支持：拖拽移动、滚轮缩放</div>
+      <button id="resetBtn">重置位置</button>
+      <div id="error"></div>
+    </div>
+
+    <canvas id="live2d-canvas"></canvas>
+  </div>
+
+  <!-- 1. PixiJS v6 -->
+  <script src="https://unpkg.com/pixi.js@6/dist/browser/pixi.min.js"></script>
+
+  <!-- 2. 本地 Cubism Core：必须自己放到 libs/ 目录 -->
+  <script src="./libs/live2dcubismcore.min.js"></script>
+
+  <!-- 3. Cubism 4 bundle -->
+  <script src="https://unpkg.com/pixi-live2d-display/dist/cubism4.min.js"></script>
+
+  <script>
+    window.PIXI = PIXI;
+
+    const MODEL_PATH = "model/miki_uniform.model3.json";
+
+    let app = null;
+    let model = null;
+
+    const statusEl = document.getElementById("status");
+    const errorEl = document.getElementById("error");
+    const resetBtn = document.getElementById("resetBtn");
+    const canvas = document.getElementById("live2d-canvas");
+
+    function setStatus(text) {
+      statusEl.textContent = "状态：" + text;
+    }
+
+    function setError(text) {
+      errorEl.textContent = text || "";
+    }
+
+    function checkEnvironment() {
+      if (!canvas) {
+        throw new Error("没有找到 canvas 元素：#live2d-canvas");
+      }
+      if (!window.PIXI) {
+        throw new Error("PIXI 未加载成功");
+      }
+      if (!window.Live2DCubismCore) {
+        throw new Error("Live2DCubismCore 未加载成功。请确认 ./libs/live2dcubismcore.min.js 存在且能访问。");
+      }
+      if (!PIXI.live2d) {
+        throw new Error("PIXI.live2d 未定义，说明 pixi-live2d-display 没有正确挂载。");
+      }
+      if (!PIXI.live2d.Live2DModel) {
+        throw new Error("PIXI.live2d.Live2DModel 未定义。通常是 Cubism Core 没有成功加载。");
+      }
+    }
+
+    function fitModel() {
+      if (!app || !model) return;
+
+      const w = app.renderer.width;
+      const h = app.renderer.height;
+
+      const bounds = model.getLocalBounds();
+      const mw = Math.max(bounds.width, 1);
+      const mh = Math.max(bounds.height, 1);
+
+      const scale = Math.min((w * 0.45) / mw, (h * 0.8) / mh);
+
+      model.scale.set(scale);
+      model.x = w * 0.5;
+      model.y = h * 0.55;
+    }
+
+    function onDragStart(event) {
+      this.dragging = true;
+      this.data = event.data;
+      const pos = this.data.getLocalPosition(this.parent);
+      this.dragOffsetX = this.x - pos.x;
+      this.dragOffsetY = this.y - pos.y;
+    }
+
+    function onDragEnd() {
+      this.dragging = false;
+      this.data = null;
+    }
+
+    function onDragMove() {
+      if (!this.dragging || !this.data) return;
+      const pos = this.data.getLocalPosition(this.parent);
+      this.x = pos.x + this.dragOffsetX;
+      this.y = pos.y + this.dragOffsetY;
+    }
+
+    function onWheel(e) {
+      if (!model) return;
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 0.95 : 1.05;
+      const next = model.scale.x * factor;
+      const clamped = Math.max(0.05, Math.min(next, 10));
+      model.scale.set(clamped);
+    }
+
+    async function init() {
+      try {
+        setStatus("检查环境");
+        setError("");
+
+        checkEnvironment();
+
+        app = new PIXI.Application({
+          view: canvas,
+          autoStart: true,
+          resizeTo: window,
+          backgroundAlpha: 0,
+          antialias: true
+        });
+
+        app.stage.interactive = true;
+
+        setStatus("加载模型");
+
+        model = await PIXI.live2d.Live2DModel.from(MODEL_PATH, {
+          autoInteract: false
+        });
+
+        model.anchor.set(0.5, 0.5);
+        model.interactive = true;
+
+        app.stage.addChild(model);
+        fitModel();
+
+        model
+          .on("pointerdown", onDragStart)
+          .on("pointerup", onDragEnd)
+          .on("pointerupoutside", onDragEnd)
+          .on("pointermove", onDragMove);
+
+        canvas.addEventListener("wheel", onWheel, { passive: false });
+
+        resetBtn.addEventListener("click", () => {
+          fitModel();
+        });
+
+        window.addEventListener("resize", () => {
+          fitModel();
+        });
+
+        setStatus("加载成功");
+        console.log("model loaded:", model);
+      } catch (err) {
+        console.error(err);
+        setStatus("加载失败");
+        setError(err && err.message ? err.message : String(err));
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>
