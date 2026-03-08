@@ -3,90 +3,240 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Live2D 直接可运行示例</title>
+  <title>Miki Live2D Chat</title>
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #eef3f9;
+      background: linear-gradient(135deg, #eef3f9 0%, #dfe9f3 100%);
       font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #223;
     }
 
     #app {
-      position: relative;
       width: 100vw;
       height: 100vh;
+      display: flex;
+      flex-direction: row;
     }
 
-    #live2d-canvas {
-      display: block;
-      width: 100%;
+    /* 左侧聊天区 */
+    #chat-panel {
+      width: 42%;
+      min-width: 360px;
+      max-width: 560px;
       height: 100%;
+      padding: 24px 20px;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(8px);
+      border-right: 1px solid rgba(0, 0, 0, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow: hidden;
     }
 
-    #panel {
-      position: absolute;
-      top: 16px;
-      left: 16px;
-      z-index: 20;
-      background: rgba(255,255,255,0.95);
-      border-radius: 12px;
-      padding: 14px 16px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
-      max-width: 520px;
-      color: #223;
-      line-height: 1.5;
+    #title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    #subtitle {
       font-size: 14px;
+      color: #667;
+      margin-bottom: 4px;
     }
 
-    #status {
+    .box-title {
+      font-size: 15px;
       font-weight: 700;
       margin-bottom: 8px;
+      color: #334;
     }
 
-    #error {
-      color: #c0392b;
+    .display-box {
+      background: #f8fbff;
+      border: 1px solid #d8e2ee;
+      border-radius: 14px;
+      padding: 14px;
+      min-height: 120px;
       white-space: pre-wrap;
-      margin-top: 8px;
+      overflow-y: auto;
+      line-height: 1.6;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    #user-display {
+      min-height: 90px;
+      max-height: 140px;
+    }
+
+    #llm-display {
+      flex: 1;
+      min-height: 180px;
+    }
+
+    #input-area {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #user-input {
+      width: 100%;
+      min-height: 100px;
+      resize: none;
+      border: 1px solid #cfd9e6;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 15px;
+      outline: none;
+      background: white;
+      line-height: 1.6;
+    }
+
+    #user-input:focus {
+      border-color: #7aa7d9;
+      box-shadow: 0 0 0 3px rgba(122, 167, 217, 0.16);
+    }
+
+    #btn-row {
+      display: flex;
+      gap: 10px;
     }
 
     button {
-      margin-top: 10px;
-      padding: 8px 12px;
       border: none;
-      border-radius: 8px;
-      background: #4a6fa5;
-      color: white;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
       cursor: pointer;
+      transition: 0.2s ease;
     }
 
-    button:hover {
-      background: #3c5c89;
+    #send-btn {
+      background: #4a6fa5;
+      color: white;
+    }
+
+    #send-btn:hover {
+      background: #3d5f90;
+    }
+
+    #clear-btn {
+      background: #e8eef5;
+      color: #334;
+    }
+
+    #clear-btn:hover {
+      background: #dbe5ef;
+    }
+
+    #status {
+      font-size: 13px;
+      color: #667;
+      min-height: 18px;
+    }
+
+    /* 右侧模型区 */
+    #stage-panel {
+      flex: 1;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #live2d-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #model-info {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      z-index: 10;
+      background: rgba(255,255,255,0.90);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.10);
+      font-size: 13px;
+      color: #445;
+      max-width: 320px;
+    }
+
+    @media (max-width: 900px) {
+      #app {
+        flex-direction: column;
+      }
+
+      #chat-panel {
+        width: 100%;
+        max-width: none;
+        height: 48%;
+        min-width: 0;
+        border-right: none;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      }
+
+      #stage-panel {
+        height: 52%;
+      }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <div id="panel">
-      <div id="status">状态：等待初始化</div>
-      <div>模型路径：<code>model/miki_uniform.model3.json</code></div>
-      <div>支持：拖拽移动、滚轮缩放</div>
-      <button id="resetBtn">重置位置</button>
-      <div id="error"></div>
-    </div>
+    <section id="chat-panel">
+      <div>
+        <div id="title">Miki Assistant</div>
+        <div id="subtitle">左边聊天，右边固定显示 Live2D 模型</div>
+      </div>
 
-    <canvas id="live2d-canvas"></canvas>
+      <div>
+        <div class="box-title">用户输入</div>
+        <div id="user-display" class="display-box">（这里显示最近一次用户发送的内容）</div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; min-height:0; flex:1;">
+        <div class="box-title">LLM 输出</div>
+        <div id="llm-display" class="display-box">（这里显示模型回复）</div>
+      </div>
+
+      <div id="input-area">
+        <textarea id="user-input" placeholder="输入你想问的问题，比如：请解释一下CCQE二维微分截面的变量关系"></textarea>
+        <div id="btn-row">
+          <button id="send-btn">发送</button>
+          <button id="clear-btn">清空</button>
+        </div>
+        <div id="status">状态：等待输入</div>
+      </div>
+    </section>
+
+    <section id="stage-panel">
+      <canvas id="live2d-canvas"></canvas>
+      <div id="model-info">
+        <div><strong>模型：</strong>miki_uniform</div>
+        <div><strong>路径：</strong>model/miki_uniform.model3.json</div>
+        <div><strong>行为：</strong>固定位置显示，不允许拖拽</div>
+      </div>
+    </section>
   </div>
 
-  <!-- 1. PixiJS v6 -->
+  <!-- PixiJS v6 -->
   <script src="https://unpkg.com/pixi.js@6/dist/browser/pixi.min.js"></script>
-
-  <!-- 2. 本地 Cubism Core：必须自己放到 libs/ 目录 -->
+  <!-- 本地 Cubism Core -->
   <script src="./libs/live2dcubismcore.min.js"></script>
-
-  <!-- 3. Cubism 4 bundle -->
+  <!-- Cubism 4 bundle -->
   <script src="https://unpkg.com/pixi-live2d-display/dist/cubism4.min.js"></script>
 
   <script>
@@ -97,38 +247,35 @@
     let app = null;
     let model = null;
 
-    const statusEl = document.getElementById("status");
-    const errorEl = document.getElementById("error");
-    const resetBtn = document.getElementById("resetBtn");
     const canvas = document.getElementById("live2d-canvas");
+    const userInput = document.getElementById("user-input");
+    const userDisplay = document.getElementById("user-display");
+    const llmDisplay = document.getElementById("llm-display");
+    const sendBtn = document.getElementById("send-btn");
+    const clearBtn = document.getElementById("clear-btn");
+    const statusEl = document.getElementById("status");
+    const stagePanel = document.getElementById("stage-panel");
 
     function setStatus(text) {
       statusEl.textContent = "状态：" + text;
     }
 
-    function setError(text) {
-      errorEl.textContent = text || "";
-    }
-
     function checkEnvironment() {
       if (!canvas) {
-        throw new Error("没有找到 canvas 元素：#live2d-canvas");
+        throw new Error("没有找到 canvas：#live2d-canvas");
       }
       if (!window.PIXI) {
         throw new Error("PIXI 未加载成功");
       }
       if (!window.Live2DCubismCore) {
-        throw new Error("Live2DCubismCore 未加载成功。请确认 ./libs/live2dcubismcore.min.js 存在且能访问。");
+        throw new Error("Live2DCubismCore 未加载成功");
       }
-      if (!PIXI.live2d) {
-        throw new Error("PIXI.live2d 未定义，说明 pixi-live2d-display 没有正确挂载。");
-      }
-      if (!PIXI.live2d.Live2DModel) {
-        throw new Error("PIXI.live2d.Live2DModel 未定义。通常是 Cubism Core 没有成功加载。");
+      if (!PIXI.live2d || !PIXI.live2d.Live2DModel) {
+        throw new Error("PIXI.live2d.Live2DModel 未加载成功");
       }
     }
 
-    function fitModel() {
+    function positionModelFixed() {
       if (!app || !model) return;
 
       const w = app.renderer.width;
@@ -138,97 +285,125 @@
       const mw = Math.max(bounds.width, 1);
       const mh = Math.max(bounds.height, 1);
 
-      const scale = Math.min((w * 0.45) / mw, (h * 0.8) / mh);
+      // 固定缩放：让模型占右侧区域较大部分
+      const scale = Math.min((w * 0.6) / mw, (h *1.0) / mh);
 
       model.scale.set(scale);
-      model.x = w * 0.5;
-      model.y = h * 0.55;
+
+      // 固定在右侧偏中下
+      model.x = w * 0.3;
+      model.y = h * 0.5;
     }
 
-    function onDragStart(event) {
-      this.dragging = true;
-      this.data = event.data;
-      const pos = this.data.getLocalPosition(this.parent);
-      this.dragOffsetX = this.x - pos.x;
-      this.dragOffsetY = this.y - pos.y;
+    async function initLive2D() {
+      checkEnvironment();
+
+      app = new PIXI.Application({
+        view: canvas,
+        autoStart: true,
+        resizeTo: stagePanel,
+        backgroundAlpha: 0,
+        antialias: true
+      });
+
+      model = await PIXI.live2d.Live2DModel.from(MODEL_PATH, {
+        autoInteract: false
+      });
+
+      model.anchor.set(0.5, 0.5);
+
+      // 不开启拖拽，不绑定 pointer 事件
+      model.interactive = false;
+
+      app.stage.addChild(model);
+      positionModelFixed();
+
+      window.addEventListener("resize", () => {
+        positionModelFixed();
+      });
     }
 
-    function onDragEnd() {
-      this.dragging = false;
-      this.data = null;
+    async function callLLM(userText) {
+      // 这里默认请求你自己的后端
+      // 你的后端再去调用真正的 LLM API
+      const response = await fetch("http://localhost:5000/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: userText
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`接口请求失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // 约定后端返回格式:
+      // { "reply": "..." }
+      if (!data.reply) {
+        throw new Error("接口返回中缺少 reply 字段");
+      }
+
+      return data.reply;
     }
 
-    function onDragMove() {
-      if (!this.dragging || !this.data) return;
-      const pos = this.data.getLocalPosition(this.parent);
-      this.x = pos.x + this.dragOffsetX;
-      this.y = pos.y + this.dragOffsetY;
-    }
+    async function handleSend() {
+      const text = userInput.value.trim();
+      if (!text) {
+        setStatus("请输入内容");
+        return;
+      }
 
-    function onWheel(e) {
-      if (!model) return;
-      e.preventDefault();
-      const factor = e.deltaY > 0 ? 0.95 : 1.05;
-      const next = model.scale.x * factor;
-      const clamped = Math.max(0.05, Math.min(next, 10));
-      model.scale.set(clamped);
-    }
+      userDisplay.textContent = text;
+      llmDisplay.textContent = "正在思考...";
+      setStatus("正在请求 LLM");
+      sendBtn.disabled = true;
 
-    async function init() {
       try {
-        setStatus("检查环境");
-        setError("");
-
-        checkEnvironment();
-
-        app = new PIXI.Application({
-          view: canvas,
-          autoStart: true,
-          resizeTo: window,
-          backgroundAlpha: 0,
-          antialias: true
-        });
-
-        app.stage.interactive = true;
-
-        setStatus("加载模型");
-
-        model = await PIXI.live2d.Live2DModel.from(MODEL_PATH, {
-          autoInteract: false
-        });
-
-        model.anchor.set(0.5, 0.5);
-        model.interactive = true;
-
-        app.stage.addChild(model);
-        fitModel();
-
-        model
-          .on("pointerdown", onDragStart)
-          .on("pointerup", onDragEnd)
-          .on("pointerupoutside", onDragEnd)
-          .on("pointermove", onDragMove);
-
-        canvas.addEventListener("wheel", onWheel, { passive: false });
-
-        resetBtn.addEventListener("click", () => {
-          fitModel();
-        });
-
-        window.addEventListener("resize", () => {
-          fitModel();
-        });
-
-        setStatus("加载成功");
-        console.log("model loaded:", model);
+        const reply = await callLLM(text);
+        llmDisplay.textContent = reply;
+        setStatus("回复完成");
       } catch (err) {
         console.error(err);
-        setStatus("加载失败");
-        setError(err && err.message ? err.message : String(err));
+        llmDisplay.textContent = `请求失败：${err.message}`;
+        setStatus("请求失败");
+      } finally {
+        sendBtn.disabled = false;
       }
     }
 
-    window.addEventListener("DOMContentLoaded", init);
+    function handleClear() {
+      userInput.value = "";
+      userDisplay.textContent = "（这里显示最近一次用户发送的内容）";
+      llmDisplay.textContent = "（这里显示模型回复）";
+      setStatus("已清空");
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      try {
+        setStatus("初始化 Live2D");
+        await initLive2D();
+        setStatus("等待输入");
+      } catch (err) {
+        console.error(err);
+        setStatus("初始化失败");
+        llmDisplay.textContent = "Live2D 初始化失败：" + err.message;
+      }
+    });
+
+    sendBtn.addEventListener("click", handleSend);
+    clearBtn.addEventListener("click", handleClear);
+
+    userInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        handleSend();
+      }
+    });
   </script>
 </body>
 </html>
