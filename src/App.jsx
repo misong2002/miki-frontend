@@ -27,7 +27,36 @@ export default function App() {
   const [training, setTraining] = useState(initialTrainingState);
   const [battle, setBattle] = useState(initialBattleState);
   const [battleExiting, setBattleExiting] = useState(false);
+
   const streamRef = useRef(null);
+  const pollTimerRef = useRef(null);
+
+  async function loadBattleLoss() {
+    try {
+      const result = await fetchLossData();
+      setBattle((prev) => ({
+        ...prev,
+        lossData: result.data ?? [],
+      }));
+    } catch (err) {
+      console.error("[battle] fetch loss failed:", err);
+    }
+  }
+
+  function startLossPolling() {
+    stopLossPolling();
+
+    pollTimerRef.current = setInterval(() => {
+      loadBattleLoss();
+    }, APP_CONFIG.lossPollIntervalMs);
+  }
+
+  function stopLossPolling() {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
 
   async function handleEnterBattleMode() {
     if (mode !== AppMode.CHAT) return;
@@ -38,8 +67,9 @@ export default function App() {
 
     try {
       startResult = await startBattle(params);
+      console.log("[battle] startBattle ok:", startResult);
     } catch (err) {
-      console.error(err);
+      console.error("[battle] startBattle failed:", err);
       setMode(AppMode.CHAT);
       return;
     }
@@ -50,18 +80,18 @@ export default function App() {
 
     try {
       const result = await fetchLossData();
+
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
-          `魔女结界已启动：PID ${startResult?.pid ?? "unknown"}`,
-          "...准备好了吗？这边就先顶上了。",
-          "你那边盯好魔力波动，我来处理前线。",
-          "站在我身后就好，正义的魔法少女会保护你哒！",
+          "通信接通。现在开始进入战斗界面。",
+          "我会继续盯着前线，你负责看右边的 loss。",
+          `战斗脚本已启动：PID ${startResult?.pid ?? "unknown"}`,
         ],
         lossData: result.data ?? [],
       }));
     } catch (err) {
-      console.error(err);
+      console.error("[battle] fetchLossData failed:", err);
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
@@ -79,6 +109,7 @@ export default function App() {
     if (mode !== AppMode.BATTLE || battleExiting) return;
 
     setBattleExiting(true);
+    stopLossPolling();
 
     try {
       await stopBattle();
@@ -93,8 +124,24 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (mode === AppMode.BATTLE) {
+      // 先立即拉一次，保证进入时就刷新
+      loadBattleLoss();
+      // 再开始轮询
+      startLossPolling();
+    } else {
+      stopLossPolling();
+    }
+
+    return () => {
+      stopLossPolling();
+    };
+  }, [mode]);
+
+  useEffect(() => {
     return () => {
       streamRef.current?.close?.();
+      stopLossPolling();
     };
   }, []);
 

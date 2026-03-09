@@ -52,7 +52,7 @@ export default function ChatPanel({ disabled }) {
   return (
     <div className="chat-shell">
       <div className="chat-header">
-        <div className="chat-title">和美樹ちゃん面对面！</div>
+        <div className="chat-title">和美樹さん面对面！</div>
         <div className="chat-subtitle">（和她交流一下与原子核魔女战斗的情报吧）</div>
       </div>
 

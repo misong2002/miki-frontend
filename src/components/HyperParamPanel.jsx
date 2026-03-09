@@ -13,7 +13,7 @@ export default function HyperParamPanel({
 
   return (
     <div className="panel param-panel">
-      <h2>超参数</h2>
+      <h2>战斗计划</h2>
 
       <label>
         learning rate
