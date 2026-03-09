@@ -13,46 +13,77 @@ export default function HyperParamPanel({
 
   return (
     <div className="panel param-panel">
-      <h2>战斗计划</h2>
+      <h2>战斗参数</h2>
 
       <label>
-        learning rate
+        model name
+        <input
+          type="text"
+          value={params.modelName}
+          onChange={(e) => updateField("modelName", e.target.value)}
+          disabled={disabled}
+        />
+      </label>
+
+      <label>
+        dataset
+        <input
+          type="text"
+          value={params.dataset}
+          onChange={(e) => updateField("dataset", e.target.value)}
+          disabled={disabled}
+        />
+      </label>
+
+      <label>
+        flux
+        <input
+          type="text"
+          value={params.flux}
+          onChange={(e) => updateField("flux", e.target.value)}
+          disabled={disabled}
+        />
+      </label>
+
+      <label>
+        output
+        <input
+          type="text"
+          value={params.output}
+          onChange={(e) => updateField("output", e.target.value)}
+          disabled={disabled}
+        />
+      </label>
+
+      <label>
+        rounds
+        <input
+          type="number"
+          value={params.rounds}
+          onChange={(e) => updateField("rounds", Number(e.target.value))}
+          disabled={disabled}
+        />
+      </label>
+
+      <label>
+        lr
         <input
           type="number"
           step="0.0001"
-          value={params.learningRate}
-          onChange={(e) => updateField("learningRate", Number(e.target.value))}
+          value={params.lr}
+          onChange={(e) => updateField("lr", Number(e.target.value))}
           disabled={disabled}
         />
       </label>
 
       <label>
-        batch size
+        layer sizes
         <input
-          type="number"
-          value={params.batchSize}
-          onChange={(e) => updateField("batchSize", Number(e.target.value))}
+          type="text"
+          value={params.layerSizes}
+          onChange={(e) => updateField("layerSizes", e.target.value)}
           disabled={disabled}
-        />
-      </label>
-
-      <label>
-        epochs
-        <input
-          type="number"
-          value={params.epochs}
-          onChange={(e) => updateField("epochs", Number(e.target.value))}
-          disabled={disabled}
-        />
-      </label>
-
-      <label>
-        hidden dim
-        <input
-          type="number"
-          value={params.hiddenDim}
-          onChange={(e) => updateField("hiddenDim", Number(e.target.value))}
-          disabled={disabled}
+          placeholder="2,128,128,3"
         />
       </label>
 

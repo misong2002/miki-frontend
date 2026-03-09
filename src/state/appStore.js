@@ -6,10 +6,13 @@ export const AppMode = {
 };
 
 export const initialHyperParams = {
-  learningRate: 1e-3,
-  batchSize: 64,
-  epochs: 20,
-  hiddenDim: 128,
+  modelName: "hadron_Matrix_siren",
+  dataset: "data/simulation.hdf5",
+  flux: "data/flux.dat",
+  output: "data/siren_params.npz",
+  rounds: 200,
+  lr: 1e-3,
+  layerSizes: "2,128,128,3",
 };
 
 export const initialTrainingState = {

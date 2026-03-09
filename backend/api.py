@@ -6,58 +6,36 @@ import subprocess
 import os
 import signal
 from pathlib import Path
-from config import LOSS_FILE_PATH, BATTLE_SCRIPT_PATH
+from config import LOSS_FILE_PATH, BATTLE_SCRIPT_PATH, BATTLE_CONFIG_PATH, MIKI_ROOT
 
 app = Flask(__name__)
 CORS(app)
 
 LOSS_FILE_PATH = Path(LOSS_FILE_PATH)
 BATTLE_SCRIPT_PATH = Path(BATTLE_SCRIPT_PATH)
+BATTLE_CONFIG_PATH = Path(BATTLE_CONFIG_PATH)
+MIKI_ROOT = Path(MIKI_ROOT).resolve()
 
-# 全局 battle 进程句柄
 battle_process = None
 
 
-@app.route("/api/chat", methods=["POST"])
-def chat():
-    data = request.get_json()
-    message = data.get("message", "")
-    reply = f"我收到了你的问题：{message}"
-    return jsonify({"reply": reply})
+def parse_layer_sizes(layer_sizes_raw):
+    if isinstance(layer_sizes_raw, list):
+        return [int(x) for x in layer_sizes_raw]
 
+    if isinstance(layer_sizes_raw, str):
+        parts = [x.strip() for x in layer_sizes_raw.split(",") if x.strip()]
+        return [int(x) for x in parts]
 
-@app.route("/api/train/stream/<job_id>")
-def train_stream(job_id):
-    def generate():
-        for step in range(1, 21):
-            metric = {
-                "epoch": (step - 1) // 10 + 1,
-                "step": step,
-                "loss": round(2.0 / step, 4),
-                "status": "running"
-            }
-            yield f"event: metric\ndata: {json.dumps(metric)}\n\n"
-
-            log = {
-                "message": f"[{job_id}] step {step}, loss = {metric['loss']}"
-            }
-            yield f"event: log\ndata: {json.dumps(log)}\n\n"
-
-            time.sleep(0.5)
-
-        finish = {"status": "finished"}
-        yield f"event: finish\ndata: {json.dumps(finish)}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream")
+    raise ValueError("Invalid layerSizes format")
 
 
 @app.route("/api/battle/start", methods=["POST"])
 def battle_start():
     global battle_process
 
-    data = request.get_json() or {}
+    payload = request.get_json() or {}
 
-    # 如果已有 battle 进程还活着，就直接返回
     if battle_process is not None and battle_process.poll() is None:
         return jsonify({
             "status": "already_running",
@@ -70,9 +48,37 @@ def battle_start():
             "message": f"battle script not found: {BATTLE_SCRIPT_PATH}"
         }), 500
 
-    # 用新的进程组启动，后面便于整组杀掉
+    try:
+        layer_sizes = parse_layer_sizes(payload.get("layerSizes", "2,128,128,3"))
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"invalid layerSizes: {e}"
+        }), 400
+
+    battle_config = {
+        "model_name": payload.get("modelName", "hadron_Matrix_siren"),
+        "dataset": payload.get("dataset", "data/simulation.hdf5"),
+        "flux": payload.get("flux", "data/flux.dat"),
+        "output": payload.get("output", "data/siren_params.npz"),
+        "rounds": int(payload.get("rounds", 200)),
+        "lr": float(payload.get("lr", 1e-3)),
+        "layer_sizes": layer_sizes,
+        "loss_file": "data/loss.txt",
+    }
+
+    BATTLE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(BATTLE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(battle_config, f, ensure_ascii=False, indent=2)
+
+    # 清空旧 loss，避免战斗界面读到上次残留
+    LOSS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOSS_FILE_PATH, "w", encoding="utf-8") as f:
+        pass
+
     battle_process = subprocess.Popen(
-        ["bash", str(BATTLE_SCRIPT_PATH)],
+        ["bash", str(BATTLE_SCRIPT_PATH.resolve()), str(BATTLE_CONFIG_PATH.resolve())],
+        cwd=str(MIKI_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid,
@@ -81,7 +87,8 @@ def battle_start():
     return jsonify({
         "status": "started",
         "pid": battle_process.pid,
-        "config": data,
+        "config_path": str(BATTLE_CONFIG_PATH),
+        "config": battle_config,
     })
 
 
@@ -91,12 +98,9 @@ def battle_stop():
 
     if battle_process is None or battle_process.poll() is not None:
         battle_process = None
-        return jsonify({
-            "status": "not_running"
-        })
+        return jsonify({"status": "not_running"})
 
     try:
-        # 杀整个进程组，避免脚本里再起子进程时漏掉
         os.killpg(os.getpgid(battle_process.pid), signal.SIGTERM)
         battle_process.wait(timeout=3)
     except subprocess.TimeoutExpired:
@@ -106,9 +110,7 @@ def battle_stop():
     finally:
         battle_process = None
 
-    return jsonify({
-        "status": "stopped"
-    })
+    return jsonify({"status": "stopped"})
 
 
 @app.route("/api/battle/loss", methods=["GET"])
@@ -146,7 +148,10 @@ def battle_loss():
         "path": str(path),
         "data": data
     })
-
-
+    
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
