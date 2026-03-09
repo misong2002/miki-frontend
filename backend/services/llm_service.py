@@ -30,7 +30,7 @@ def chat_with_miki(history, user_message: str):
         model="gpt-5.4",
         messages=messages,
         temperature=0.7,
-        max_tokens=128000
+        max_tokens=300000
     )
 
     text = response.choices[0].message.content

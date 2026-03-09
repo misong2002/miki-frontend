@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendChat } from "../services/chatService";
+import { sendChatStream } from "../services/chatService";
 
 function makeMessage({
   role,
@@ -71,7 +71,7 @@ export default function ChatPanel({ disabled }) {
 
     const pendingAssistant = makeMessage({
       role: "assistant",
-      content: "正在思考……",
+      content: "",
       status: "pending",
     });
 
@@ -79,23 +79,34 @@ export default function ChatPanel({ disabled }) {
     setInput("");
     setSending(true);
 
-    try {
-      const result = await sendChat(text);
+    let fullReply = "";
 
-      const replyText =
-        typeof result === "string" ? result : (result?.reply ?? "……咦，我刚刚一下子卡住了。");
-      const emotion = typeof result === "object" ? (result?.emotion ?? null) : null;
-      const references = typeof result === "object" ? (result?.references ?? []) : [];
+    try {
+      await sendChatStream(text, (token) => {
+        fullReply += token;
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === pendingAssistant.id
+              ? {
+                  ...msg,
+                  content: fullReply || "正在思考……",
+                  status: "pending",
+                }
+              : msg
+          )
+        );
+      });
 
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === pendingAssistant.id
             ? {
                 ...msg,
-                content: replyText,
+                content: fullReply || "……咦，我刚刚一下子卡住了。",
                 status: "done",
-                emotion,
-                references,
+                emotion: null,
+                references: [],
               }
             : msg
         )
