@@ -10,11 +10,12 @@ export const SAYAKA_EXPRESSIONS = {
 };
 
 export const SAYAKA_MOTIONS = {
-  "000": "motion_000",
-  "001": "motion_001",
-  "100": "motion_100",
-  "200": "motion_200",
-  "201": "motion_201",
-  "300": "motion_300",
-  "400": "motion_400",
+  "000": "motion_000.motion3.json",
+  "001": "motion_001.motion3.json",
+  "100": "motion_100.motion3.json",
+  "200": "motion_200.motion3.json",
+  "201": "motion_201.motion3.json",
+  "300": "motion_300.motion3.json",
+  "400": "motion_400.motion3.json",
 };
+

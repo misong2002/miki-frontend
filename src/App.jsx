@@ -152,7 +152,6 @@ export default function App() {
       {mode === AppMode.CHAT && (
         <>
           <aside className="param-column">
-            <Live2DDebugPanel />
             <HyperParamPanel
               params={params}
               setParams={setParams}

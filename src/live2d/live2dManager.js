@@ -20,7 +20,9 @@ export class Live2DManager {
       throw new Error("Live2D container is missing");
     }
 
-    // 让 PIXI 自己创建 canvas，不要传 view
+    // 关键：清空旧 canvas，防止重复 append
+    this.container.innerHTML = "";
+
     this.app = new PIXI.Application({
       autoStart: true,
       resizeTo: this.container,
@@ -45,25 +47,32 @@ export class Live2DManager {
     }
 
     if (this.model) {
-      this.app.stage.removeChild(this.model);
-      this.model.destroy();
+      try {
+        this.app.stage.removeChild(this.model);
+      } catch (e) {
+        console.warn("[Live2DManager] removeChild failed:", e);
+      }
+
+      try {
+        this.model.destroy();
+      } catch (e) {
+        console.warn("[Live2DManager] model destroy failed:", e);
+      }
+
       this.model = null;
     }
 
-    const model = await Live2DModel.from(path, {
-      autoInteract: false,
-    });
-
-    // 防止在 await 期间组件已经卸载
+    const model = await Live2DModel.from(path, { autoInteract: false });
+      
+    
     if (!this.app) {
       model.destroy();
       return;
     }
 
-    model.anchor.set(0.5, 0.5);
-    model.interactive = false;
-
+    this.app.stage.removeChildren(); // 关键：确保舞台清空
     this.app.stage.addChild(model);
+
     this.model = model;
     this.currentModelKey = modelKey;
 
@@ -80,13 +89,19 @@ export class Live2DManager {
     const mw = Math.max(bounds.width, 1);
     const mh = Math.max(bounds.height, 1);
 
-    // 目标：模型高度约为舞台高度的 90%
-    const scale = (h * 1.1) / mh;
+    // 先按高度缩放
+    const scale = (h * 1) / mh;
     this.model.scale.set(scale);
 
-    // 中间偏左
-    this.model.x = w * 0.5;
-    this.model.y = h * 0.5;
+    // 关键：不要直接拿 x/y 当中心
+    // 用 bounds 把“角色底部中心”放到舞台某个点
+    const scaledBounds = this.model.getLocalBounds();
+
+    const targetFootX = w * 0.5;  // 左右位置
+    const targetFootY = h * 1;  // 脚底落点，越大越靠下
+
+    this.model.x = targetFootX - (scaledBounds.x + scaledBounds.width / 2) * this.model.scale.x;
+    this.model.y = targetFootY - (scaledBounds.y + scaledBounds.height) * this.model.scale.y;
   }
 
   async switchTo(modelKey) {
@@ -100,37 +115,83 @@ export class Live2DManager {
 
   destroy() {
     if (this.model && this.app) {
-      this.app.stage.removeChild(this.model);
-      this.model.destroy();
+      try {
+        this.app.stage.removeChild(this.model);
+      } catch (e) {}
+
+      try {
+        this.model.destroy();
+      } catch (e) {}
+
       this.model = null;
     }
 
     if (this.app) {
       const view = this.app.view;
-      this.app.destroy(true, true);
+
+      try {
+        this.app.destroy(true, true);
+      } catch (e) {}
+
       if (view && view.parentNode) {
         view.parentNode.removeChild(view);
       }
+
       this.app = null;
+    }
+
+    if (this.container) {
+      this.container.innerHTML = "";
     }
 
     this.initialized = false;
   }
   setExpressionByFileName(fileName) {
-    if (!this.model?.internalModel?.expressionManager) {
-      console.warn("[Live2DManager] expressionManager not available");
+    if (!this.model) {
+      console.warn("[Live2DManager] model not ready");
       return;
     }
 
-    const expressions = this.model.internalModel.settings?.expressions || [];
-    const targetIndex = expressions.findIndex((exp) => exp.File === fileName || exp.Name === fileName);
+    const settings = this.model.internalModel?.settings;
+    const expressions = settings?.expressions || settings?.Expressions || [];
+
+    console.log("[Live2DManager] setExpressionByFileName called:", fileName);
+    console.log("[Live2DManager] available expressions:", expressions);
+    console.log("[Live2DManager] model.expression:", typeof this.model.expression);
+    console.log(
+      "[Live2DManager] expressionManager:",
+      this.model.internalModel?.expressionManager
+    );
+
+    const targetIndex = expressions.findIndex(
+      (exp) => exp.File === fileName || exp.Name === fileName
+    );
+
+    console.log("[Live2DManager] matched expression index:", targetIndex);
 
     if (targetIndex < 0) {
       console.warn("[Live2DManager] expression not found:", fileName);
       return;
     }
 
-    this.model.expression(targetIndex);
+    try {
+      if (typeof this.model.expression === "function") {
+        this.model.expression(targetIndex);
+        console.log("[Live2DManager] expression applied by model.expression");
+        return;
+      }
+
+      const expressionManager = this.model.internalModel?.expressionManager;
+      if (expressionManager && typeof expressionManager.setExpression === "function") {
+        expressionManager.setExpression(targetIndex);
+        console.log("[Live2DManager] expression applied by expressionManager");
+        return;
+      }
+
+      console.warn("[Live2DManager] no expression API available");
+    } catch (err) {
+      console.error("[Live2DManager] setExpression failed:", err);
+    }
   }
 
   playMotionByName(motionName) {
@@ -139,24 +200,48 @@ export class Live2DManager {
       return;
     }
 
-    // 这里要根据你当前使用的 pixi-live2d-display 版本做适配
-    // 常见情况是 motions 在 internalModel.settings.motions 里
-    const motions = this.model.internalModel?.settings?.motions;
-    if (!motions) {
-      console.warn("[Live2DManager] motions not available");
-      return;
-    }
+    const settings = this.model.internalModel?.settings;
+    const motions = settings?.motions || settings?.Motions || {};
+
+    console.log("[Live2DManager] playMotionByName called:", motionName);
+    console.log("[Live2DManager] available motion groups:", motions);
+    console.log("[Live2DManager] model.motion:", typeof this.model.motion);
 
     for (const groupName of Object.keys(motions)) {
       const group = motions[groupName];
-      const index = group.findIndex((m) => m.Name === motionName || m.File?.includes(motionName));
+      if (!Array.isArray(group)) continue;
+
+      console.log(`[Live2DManager] checking group ${groupName}:`, group);
+
+      const index = group.findIndex((m) => {
+        return (
+          m.Name === motionName ||
+          m.File === motionName ||
+          m.File?.includes(motionName)
+        );
+      });
 
       if (index >= 0) {
-        this.model.motion(groupName, index);
-        return;
+        console.log(
+          `[Live2DManager] matched motion in group=${groupName}, index=${index}`
+        );
+
+        try {
+          if (typeof this.model.motion === "function") {
+            this.model.motion(groupName, index);
+            console.log("[Live2DManager] motion applied by model.motion");
+            return;
+          }
+
+          console.warn("[Live2DManager] no motion API available");
+          return;
+        } catch (err) {
+          console.error("[Live2DManager] playMotion failed:", err);
+          return;
+        }
       }
     }
 
     console.warn("[Live2DManager] motion not found:", motionName);
   }
-}
+  }

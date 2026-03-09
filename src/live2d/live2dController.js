@@ -7,6 +7,7 @@ class Live2DController {
 
   bindManager(manager) {
     this.manager = manager;
+    console.log("[Live2DController] manager bound:", manager);
   }
 
   hasManager() {
@@ -14,37 +15,40 @@ class Live2DController {
   }
 
   setExpressionById(expressionId) {
-    if (!this.hasManager()) {
-      console.warn("[Live2DController] manager/model not ready");
-      return;
-    }
+    const fileName = SAYAKA_EXPRESSIONS[String(expressionId)];
+    console.log("[Live2DController] setExpressionById:", expressionId, fileName);
 
-    const expressionName = SAYAKA_EXPRESSIONS[String(expressionId)];
-    if (!expressionName) {
+    if (!fileName) {
       console.warn("[Live2DController] unknown expression id:", expressionId);
       return;
     }
 
-    this.manager.setExpressionByFileName?.(expressionName);
-  }
-
-  playMotionById(motionId) {
     if (!this.hasManager()) {
       console.warn("[Live2DController] manager/model not ready");
       return;
     }
 
-    const motionName = SAYAKA_MOTIONS[String(motionId)];
-    if (!motionName) {
+    this.manager.setExpressionByFileName(fileName);
+  }
+
+  playMotionById(motionId) {
+    const fileName = SAYAKA_MOTIONS[String(motionId)];
+    console.log("[Live2DController] playMotionById:", motionId, fileName);
+
+    if (!fileName) {
       console.warn("[Live2DController] unknown motion id:", motionId);
       return;
     }
 
-    this.manager.playMotionByName?.(motionName);
+    if (!this.hasManager()) {
+      console.warn("[Live2DController] manager/model not ready");
+      return;
+    }
+
+    this.manager.playMotionByName(fileName);
   }
 
   resetToIdle() {
-    if (!this.hasManager()) return;
     this.playMotionById("000");
     this.setExpressionById("10");
   }

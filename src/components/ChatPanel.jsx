@@ -5,7 +5,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-
+import { parseControlTags } from "../live2d/controlTagParser";
+import { emotionEngine } from "../live2d/emotionEngine";
 function makeMessage({
   role,
   content,
@@ -32,6 +33,7 @@ function formatTime(ts) {
 }
 
 export default function ChatPanel({ disabled }) {
+  const startedSpeakingRef = useRef(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState([
@@ -186,6 +188,7 @@ export default function ChatPanel({ disabled }) {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+      emotionEngine.interrupt();
     }
 
     stopAllTimers();
@@ -242,13 +245,37 @@ export default function ChatPanel({ disabled }) {
     startTypewriterLoop();
 
     abortControllerRef.current = new AbortController();
-
+    emotionEngine.notifyUserActivity();
+    emotionEngine.setTypingState("thinking");
+    startedSpeakingRef.current = false;
     try {
       await sendChatStream(
         text,
-        (token) => {
-          networkBufferRef.current += token;
-        },
+          (token) => {
+
+            const parsed = parseControlTags(token)
+
+            for (const event of parsed.events) {
+
+              if (event.type === "emotion") {
+                emotionEngine.requestEmotion(event.value, {
+                  source: "llm"
+                })
+              }
+
+              if (event.type === "motion") {
+                emotionEngine.requestMotion(event.value, {
+                  source: "llm"
+                })
+              }
+
+            }
+
+            if (parsed.text) {
+              networkBufferRef.current += parsed.text
+            }
+
+          },
         abortControllerRef.current.signal
       );
 

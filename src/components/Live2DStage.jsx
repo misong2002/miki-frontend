@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Live2DManager } from "../live2d/live2dManager";
 import { live2dController } from "../live2d/live2dController";
+
 export default function Live2DStage({ modelKey }) {
   const containerRef = useRef(null);
   const managerRef = useRef(null);
@@ -11,36 +12,23 @@ export default function Live2DStage({ modelKey }) {
 
     async function setup() {
       if (!containerRef.current) return;
+      if (managerRef.current) return; // 防重复初始化
 
       const manager = new Live2DManager(containerRef.current);
       managerRef.current = manager;
 
-      initPromiseRef.current = manager.init();
-      await initPromiseRef.current;
-
-      live2dController.bindManager(manager);
-
+      await manager.init();
       if (disposed) return;
 
       await manager.loadModel(modelKey);
     }
 
-    setup().catch((err) => {
-      console.error("Live2D setup failed:", err);
-    });
-    
-    const onResize = () => {
-      managerRef.current?.resize();
-    };
-
-    window.addEventListener("resize", onResize);
+    setup().catch(console.error);
 
     return () => {
       disposed = true;
-      window.removeEventListener("resize", onResize);
       managerRef.current?.destroy();
       managerRef.current = null;
-      initPromiseRef.current = null;
     };
   }, []);
 
@@ -56,6 +44,33 @@ export default function Live2DStage({ modelKey }) {
       console.error("Live2D switch failed:", err);
     });
   }, [modelKey]);
+  useEffect(() => {
+    let disposed = false;
 
+    async function setup() {
+      if (!containerRef.current) return;
+
+      if (!managerRef.current) {
+        const manager = new Live2DManager(containerRef.current);
+        managerRef.current = manager;
+        await manager.init();
+      }
+
+      const manager = managerRef.current;
+      await manager.loadModel(modelKey);
+
+      if (disposed) return;
+
+      live2dController.bindManager(manager);
+    }
+
+    setup().catch(console.error);
+
+    return () => {
+      disposed = true;
+    };
+  }, [modelKey]);
   return <div ref={containerRef} className="stage-panel" />;
+
 }
+
