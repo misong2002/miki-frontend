@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { sendChatStream } from "../services/chatService";
-
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 function makeMessage({
   role,
   content,
@@ -165,7 +169,12 @@ export default function ChatPanel({ disabled }) {
                 )}
 
                 <div className={`chat-bubble ${msg.role} ${msg.status}`}>
-                  {msg.content}
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
                 </div>
 
                 {msg.references && msg.references.length > 0 && (

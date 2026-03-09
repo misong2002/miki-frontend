@@ -521,7 +521,34 @@ input {
   opacity: 0.6;
   cursor: not-allowed;
 }
+.chat-bubble {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
+.chat-bubble p {
+  margin: 0.4em 0;
+}
+
+.chat-bubble pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.chat-bubble code {
+  background: rgba(0,0,0,0.06);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.chat-bubble pre code {
+  background: transparent;
+  padding: 0;
+}
 /* ===== PARAM PANEL ===== */
 
 .param-panel {
