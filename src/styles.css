@@ -549,6 +549,19 @@ input {
   background: transparent;
   padding: 0;
 }
+.chat-interrupt-btn {
+  margin-left: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(200,200,210,0.5);
+  background: rgba(255,230,230,0.8);
+  color: #803030;
+  cursor: pointer;
+}
+
+.chat-interrupt-btn:hover {
+  background: rgba(255,200,200,0.9);
+}
 /* ===== PARAM PANEL ===== */
 
 .param-panel {

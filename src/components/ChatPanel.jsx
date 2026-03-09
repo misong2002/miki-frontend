@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+
 function makeMessage({
   role,
   content,
@@ -43,6 +44,16 @@ export default function ChatPanel({ disabled }) {
 
   const historyRef = useRef(null);
   const textareaRef = useRef(null);
+  const abortControllerRef = useRef(null);
+
+  const activeMessageIdRef = useRef(null);
+  const networkBufferRef = useRef("");
+  const displayQueueRef = useRef("");
+  const displayedTextRef = useRef("");
+  const streamFinishedRef = useRef(false);
+
+  const transferTimerRef = useRef(null);
+  const typewriterTimerRef = useRef(null);
 
   useEffect(() => {
     const el = historyRef.current;
@@ -64,6 +75,145 @@ export default function ChatPanel({ disabled }) {
     resetTextareaHeight();
   }, [input]);
 
+  function updateAssistantMessage(messageId, content, status = "pending") {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? {
+              ...msg,
+              content,
+              status,
+            }
+          : msg
+      )
+    );
+  }
+
+  function stopAllTimers() {
+    if (transferTimerRef.current) {
+      clearInterval(transferTimerRef.current);
+      transferTimerRef.current = null;
+    }
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+  }
+
+  function resetStreamState() {
+    networkBufferRef.current = "";
+    displayQueueRef.current = "";
+    displayedTextRef.current = "";
+    streamFinishedRef.current = false;
+    activeMessageIdRef.current = null;
+  }
+
+  function startTransferLoop() {
+    if (transferTimerRef.current) return;
+
+    transferTimerRef.current = setInterval(() => {
+      const chunk = networkBufferRef.current;
+      if (!chunk) return;
+
+      displayQueueRef.current += chunk;
+      networkBufferRef.current = "";
+    }, 600);
+  }
+
+  function getCharsPerTick(queue) {
+    if (!queue) return 0;
+    if (queue.length > 120) return 8;
+    if (queue.length > 60) return 6;
+    if (queue.length > 24) return 4;
+    return 2;
+  }
+
+  function takeNaturalChunk(queue) {
+    if (!queue) return "";
+
+    const punctuationRegex = /[，。！？；：\n]/;
+    const charsPerTick = getCharsPerTick(queue);
+    const searchWindow = queue.slice(0, Math.min(queue.length, 12));
+    const punctuationIndex = searchWindow.search(punctuationRegex);
+
+    if (punctuationIndex !== -1) {
+      return queue.slice(0, punctuationIndex + 1);
+    }
+
+    return queue.slice(0, charsPerTick);
+  }
+
+  function startTypewriterLoop() {
+    if (typewriterTimerRef.current) return;
+
+    typewriterTimerRef.current = setInterval(() => {
+      const messageId = activeMessageIdRef.current;
+      if (!messageId) return;
+
+      const queue = displayQueueRef.current;
+
+      if (!queue) {
+        if (
+          streamFinishedRef.current &&
+          !networkBufferRef.current &&
+          !displayQueueRef.current
+        ) {
+          updateAssistantMessage(
+            messageId,
+            displayedTextRef.current || "……咦，我刚刚一下子卡住了。",
+            "done"
+          );
+          stopAllTimers();
+        }
+        return;
+      }
+
+      const chunk = takeNaturalChunk(queue);
+      if (!chunk) return;
+
+      displayQueueRef.current = queue.slice(chunk.length);
+      displayedTextRef.current += chunk;
+
+      updateAssistantMessage(
+        messageId,
+        displayedTextRef.current || "正在思考……",
+        "pending"
+      );
+    }, 200);
+  }
+
+  function interruptAssistant() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    stopAllTimers();
+    streamFinishedRef.current = true;
+
+    if (networkBufferRef.current) {
+      displayQueueRef.current += networkBufferRef.current;
+      networkBufferRef.current = "";
+    }
+
+    if (displayQueueRef.current) {
+      displayedTextRef.current += displayQueueRef.current;
+      displayQueueRef.current = "";
+    }
+
+    const messageId = activeMessageIdRef.current;
+    if (messageId) {
+      updateAssistantMessage(
+        messageId,
+        (displayedTextRef.current || "……") + "\n\n[对话被中断]\n诶诶诶，怎么啦？你先说~",
+        "done"
+      );
+    }
+
+    setSending(false);
+    activeMessageIdRef.current = null;
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending || disabled) return;
@@ -75,59 +225,70 @@ export default function ChatPanel({ disabled }) {
 
     const pendingAssistant = makeMessage({
       role: "assistant",
-      content: "",
+      content: "正在思考……",
       status: "pending",
     });
+
+    stopAllTimers();
+    resetStreamState();
+
+    activeMessageIdRef.current = pendingAssistant.id;
 
     setMessages((prev) => [...prev, userMessage, pendingAssistant]);
     setInput("");
     setSending(true);
 
-    let fullReply = "";
+    startTransferLoop();
+    startTypewriterLoop();
+
+    abortControllerRef.current = new AbortController();
 
     try {
-      await sendChatStream(text, (token) => {
-        fullReply += token;
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === pendingAssistant.id
-              ? {
-                  ...msg,
-                  content: fullReply || "正在思考……",
-                  status: "pending",
-                }
-              : msg
-          )
-        );
-      });
-
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === pendingAssistant.id
-            ? {
-                ...msg,
-                content: fullReply || "……咦，我刚刚一下子卡住了。",
-                status: "done",
-                emotion: null,
-                references: [],
-              }
-            : msg
-        )
+      await sendChatStream(
+        text,
+        (token) => {
+          networkBufferRef.current += token;
+        },
+        abortControllerRef.current.signal
       );
+
+      streamFinishedRef.current = true;
     } catch (err) {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === pendingAssistant.id
-            ? {
-                ...msg,
-                content: `请求失败：${err.message}`,
-                status: "error",
-              }
-            : msg
-        )
-      );
+      if (err?.name === "AbortError") {
+        return;
+      }
+
+      if (networkBufferRef.current) {
+        displayQueueRef.current += networkBufferRef.current;
+        networkBufferRef.current = "";
+      }
+
+      streamFinishedRef.current = true;
+
+      const suffix =
+        displayedTextRef.current || displayQueueRef.current
+          ? `\n\n[流式中断：${err.message}]`
+          : `请求失败：${err.message}`;
+
+      displayQueueRef.current += suffix;
+
+      const messageId = pendingAssistant.id;
+
+      const failWatcher = setInterval(() => {
+        const empty = !networkBufferRef.current && !displayQueueRef.current;
+
+        if (empty) {
+          clearInterval(failWatcher);
+          updateAssistantMessage(
+            messageId,
+            displayedTextRef.current || `请求失败：${err.message}`,
+            "error"
+          );
+          stopAllTimers();
+        }
+      }, 50);
     } finally {
+      abortControllerRef.current = null;
       setSending(false);
       textareaRef.current?.focus();
     }
@@ -139,6 +300,15 @@ export default function ChatPanel({ disabled }) {
       handleSend();
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      stopAllTimers();
+    };
+  }, []);
 
   return (
     <div className="chat-shell">
@@ -154,7 +324,8 @@ export default function ChatPanel({ disabled }) {
           const showMeta =
             index === 0 ||
             messages[index - 1].role !== msg.role ||
-            Math.abs(msg.createdAt - messages[index - 1].createdAt) > 5 * 60 * 1000;
+            Math.abs(msg.createdAt - messages[index - 1].createdAt) >
+              5 * 60 * 1000;
 
           return (
             <div key={msg.id} className={`chat-row ${msg.role}`}>
@@ -173,7 +344,7 @@ export default function ChatPanel({ disabled }) {
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
                   >
-                    {msg.content}
+                    {msg.content || (msg.status === "pending" ? "正在思考……" : "")}
                   </ReactMarkdown>
                 </div>
 
@@ -211,6 +382,14 @@ export default function ChatPanel({ disabled }) {
             disabled={disabled || sending || !input.trim()}
           >
             {sending ? "发送中..." : "发送"}
+          </button>
+
+          <button
+            className="chat-interrupt-btn"
+            onClick={interruptAssistant}
+            disabled={!sending}
+          >
+            打断
           </button>
         </div>
       </div>

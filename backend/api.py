@@ -191,7 +191,7 @@ def chat():
             model="gpt-5.4",
             messages=messages,
             temperature=0.7,
-            max_tokens=512,
+            max_tokens=50000,
             stream=True,
         )
     except Exception as e:
