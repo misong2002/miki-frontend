@@ -847,3 +847,56 @@ input {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.live2d-debug-panel {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.live2d-debug-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-soft);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.live2d-debug-panel input {
+  width: 100%;
+  border: 1px solid rgba(199, 213, 234, 0.82);
+  border-radius: 12px;
+  padding: 10px 11px;
+  font-size: 13px;
+  color: var(--text-main);
+  background:
+    linear-gradient(180deg, rgba(252,253,255,0.96), rgba(246,250,255,0.96));
+  outline: none;
+}
+
+.live2d-debug-panel input:focus {
+  border-color: rgba(109, 167, 223, 0.68);
+  box-shadow:
+    0 0 0 3px rgba(109, 167, 223, 0.10),
+    inset 0 1px 0 rgba(255,255,255,0.7);
+}
+
+.debug-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.debug-actions button {
+  border: 1px solid rgba(169, 191, 225, 0.66);
+  border-radius: 12px;
+  padding: 8px 12px;
+  background:
+    linear-gradient(135deg, rgba(115, 163, 223, 0.96), rgba(88, 130, 205, 0.98));
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}

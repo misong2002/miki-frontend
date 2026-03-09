@@ -116,4 +116,47 @@ export class Live2DManager {
 
     this.initialized = false;
   }
+  setExpressionByFileName(fileName) {
+    if (!this.model?.internalModel?.expressionManager) {
+      console.warn("[Live2DManager] expressionManager not available");
+      return;
+    }
+
+    const expressions = this.model.internalModel.settings?.expressions || [];
+    const targetIndex = expressions.findIndex((exp) => exp.File === fileName || exp.Name === fileName);
+
+    if (targetIndex < 0) {
+      console.warn("[Live2DManager] expression not found:", fileName);
+      return;
+    }
+
+    this.model.expression(targetIndex);
+  }
+
+  playMotionByName(motionName) {
+    if (!this.model) {
+      console.warn("[Live2DManager] model not ready");
+      return;
+    }
+
+    // 这里要根据你当前使用的 pixi-live2d-display 版本做适配
+    // 常见情况是 motions 在 internalModel.settings.motions 里
+    const motions = this.model.internalModel?.settings?.motions;
+    if (!motions) {
+      console.warn("[Live2DManager] motions not available");
+      return;
+    }
+
+    for (const groupName of Object.keys(motions)) {
+      const group = motions[groupName];
+      const index = group.findIndex((m) => m.Name === motionName || m.File?.includes(motionName));
+
+      if (index >= 0) {
+        this.model.motion(groupName, index);
+        return;
+      }
+    }
+
+    console.warn("[Live2DManager] motion not found:", motionName);
+  }
 }

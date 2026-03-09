@@ -117,7 +117,7 @@ export default function ChatPanel({ disabled }) {
 
       displayQueueRef.current += chunk;
       networkBufferRef.current = "";
-    }, 600);
+    }, 180);
   }
 
   function getCharsPerTick(queue) {
@@ -179,7 +179,7 @@ export default function ChatPanel({ disabled }) {
         displayedTextRef.current || "正在思考……",
         "pending"
       );
-    }, 200);
+    }, 120);
   }
 
   function interruptAssistant() {

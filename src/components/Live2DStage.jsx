@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Live2DManager } from "../live2d/live2dManager";
-
+import { live2dController } from "../live2d/live2dController";
 export default function Live2DStage({ modelKey }) {
   const containerRef = useRef(null);
   const managerRef = useRef(null);
@@ -18,6 +18,8 @@ export default function Live2DStage({ modelKey }) {
       initPromiseRef.current = manager.init();
       await initPromiseRef.current;
 
+      live2dController.bindManager(manager);
+
       if (disposed) return;
 
       await manager.loadModel(modelKey);
@@ -26,7 +28,7 @@ export default function Live2DStage({ modelKey }) {
     setup().catch((err) => {
       console.error("Live2D setup failed:", err);
     });
-
+    
     const onResize = () => {
       managerRef.current?.resize();
     };

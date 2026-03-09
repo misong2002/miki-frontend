@@ -15,7 +15,7 @@ import {
 import { connectTrainingStream } from "./services/trainingService";
 import { startBattle, stopBattle, fetchLossData } from "./services/battleService";
 import { APP_CONFIG } from "./config";
-
+import Live2DDebugPanel from "./components/Live2DDebugPanel";
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -152,6 +152,7 @@ export default function App() {
       {mode === AppMode.CHAT && (
         <>
           <aside className="param-column">
+            <Live2DDebugPanel />
             <HyperParamPanel
               params={params}
               setParams={setParams}
