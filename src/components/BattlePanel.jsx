@@ -15,7 +15,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
     <div className="battle-shell">
       <div className="battle-header">
         <div>
-          <div className="battle-title">Loss Monitoring</div>
+          <div className="battle-title">Magic Power Monitoring</div>
           <div className="battle-subtitle">source: {sourcePath}</div>
         </div>
 
@@ -29,7 +29,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
       </div>
 
       <div className="battle-chart-block">
-        <div className="battle-chart-title">整体 Loss</div>
+        <div className="battle-chart-title">魔力波动记录（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={lossData}>
@@ -50,7 +50,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
       </div>
 
       <div className="battle-chart-block">
-        <div className="battle-chart-title">最近 100 个 Epoch</div>
+        <div className="battle-chart-title">最近魔力波动（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={recentData}>

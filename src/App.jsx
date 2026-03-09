@@ -84,9 +84,9 @@ export default function App() {
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
-          "通信接通。现在开始进入战斗界面。",
-          "我会继续盯着前线，你负责看右边的 loss。",
-          `战斗脚本已启动：PID ${startResult?.pid ?? "unknown"}`,
+          "准备好了吗？要进入结界了！",
+          `*已进入魔女结界：PID ${startResult?.pid ?? "unknown"}`,
+          "站在我身后就好，帮我盯着魔力波动！",
         ],
         lossData: result.data ?? [],
       }));

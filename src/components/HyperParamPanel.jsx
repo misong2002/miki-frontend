@@ -13,10 +13,10 @@ export default function HyperParamPanel({
 
   return (
     <div className="panel param-panel">
-      <h2>战斗参数</h2>
+      <h2>战斗计划</h2>
 
       <label>
-        model name
+        模型构筑
         <input
           type="text"
           value={params.modelName}
@@ -26,7 +26,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        dataset
+        数据集
         <input
           type="text"
           value={params.dataset}
@@ -36,7 +36,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        flux
+        束流
         <input
           type="text"
           value={params.flux}
@@ -46,7 +46,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        output
+        输出模型参数
         <input
           type="text"
           value={params.output}
@@ -56,7 +56,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        rounds
+        轮数
         <input
           type="number"
           value={params.rounds}
@@ -66,7 +66,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        lr
+        学习率
         <input
           type="number"
           step="0.0001"
@@ -77,7 +77,7 @@ export default function HyperParamPanel({
       </label>
 
       <label>
-        layer sizes
+        层级大小
         <input
           type="text"
           value={params.layerSizes}
