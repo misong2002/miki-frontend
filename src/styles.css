@@ -1,0 +1,366 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background:
+    radial-gradient(circle at top left, #f8fbff 0%, #eaf2fb 35%, #dbe7f5 100%);
+  color: #223;
+}
+
+button,
+textarea,
+input {
+  font-family: inherit;
+}
+
+.app-root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* ===== CHAT MODE LAYOUT ===== */
+
+.mode-chat {
+  display: grid;
+  grid-template-columns: 0.8fr 1.4fr 1.8fr;
+  gap: 18px;
+  padding: 18px;
+}
+
+.param-column,
+.stage-column,
+.chat-column {
+  min-width: 0;
+  height: 100%;
+}
+
+.stage-column {
+  position: relative;
+}
+
+/* ===== TRAINING MODE LAYOUT ===== */
+
+.training-stage-layout {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  padding: 18px;
+}
+
+.training-stage-column,
+.training-info-column {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ===== LIVE2D STAGE ===== */
+
+.stage-panel {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0.12) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.4),
+    0 14px 40px rgba(41, 69, 110, 0.12);
+  backdrop-filter: blur(6px);
+}
+
+.live2d-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ===== GENERAL PANEL ===== */
+
+.panel {
+  background: rgba(255, 255, 255, 0.86);
+  border-radius: 22px;
+  padding: 16px;
+  box-shadow:
+    0 10px 30px rgba(40, 60, 90, 0.10),
+    inset 0 1px 0 rgba(255,255,255,0.45);
+  backdrop-filter: blur(10px);
+  min-height: 0;
+}
+
+.param-panel,
+.training-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.param-panel h2,
+.training-panel h2 {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+}
+
+/* ===== CHAT ===== */
+
+.chat-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.88);
+  box-shadow:
+    0 10px 30px rgba(40, 60, 90, 0.10),
+    inset 0 1px 0 rgba(255,255,255,0.45);
+  backdrop-filter: blur(10px);
+}
+
+.chat-header {
+  padding: 16px 18px 12px 18px;
+  border-bottom: 1px solid rgba(210, 220, 235, 0.9);
+  background: linear-gradient(180deg, rgba(255,255,255,0.65), rgba(245,249,255,0.78));
+}
+
+.chat-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #20304a;
+}
+
+.chat-subtitle {
+  font-size: 13px;
+  color: #6a7891;
+  margin-top: 4px;
+}
+
+.chat-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(246,250,255,0.95), rgba(238,245,252,0.95));
+}
+
+.chat-row {
+  display: flex;
+  max-width: 100%;
+}
+
+.chat-row.assistant {
+  justify-content: flex-start;
+}
+
+.chat-row.user {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  max-width: 78%;
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-size: 14px;
+  padding: 11px 14px;
+  border-radius: 16px;
+  word-break: break-word;
+  box-shadow: 0 6px 16px rgba(40, 60, 90, 0.08);
+}
+
+.chat-row.assistant .chat-bubble {
+  background: white;
+  color: #253248;
+  border-top-left-radius: 6px;
+}
+
+.chat-row.user .chat-bubble {
+  background: linear-gradient(135deg, #9ed9bb, #77c99b);
+  color: #133321;
+  border-top-right-radius: 6px;
+}
+
+.chat-bubble.typing {
+  color: #6a7891;
+  font-style: italic;
+}
+
+.chat-input-bar {
+  padding: 12px 14px 14px 14px;
+  background: rgba(255,255,255,0.94);
+  border-top: 1px solid rgba(210, 220, 235, 0.95);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-textarea {
+  width: 100%;
+  min-height: 92px;
+  max-height: 180px;
+  resize: vertical;
+  border: 1px solid #d4dfec;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  background: #fbfdff;
+  outline: none;
+}
+
+.chat-textarea:focus {
+  border-color: #7aa7d9;
+  box-shadow: 0 0 0 3px rgba(122, 167, 217, 0.15);
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.chat-send-btn {
+  min-width: 92px;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #4f84d8, #6ca8ff);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(79, 132, 216, 0.28);
+}
+
+.chat-send-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ===== PARAM PANEL ===== */
+
+.param-panel {
+  width: 100%;
+}
+
+.param-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #46546d;
+}
+
+.param-panel input {
+  width: 100%;
+  border: 1px solid #d0dceb;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 13px;
+  background: #fbfdff;
+  outline: none;
+}
+
+.param-panel input:focus {
+  border-color: #7aa7d9;
+  box-shadow: 0 0 0 3px rgba(122, 167, 217, 0.12);
+}
+
+.param-panel button {
+  margin-top: auto;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #4f84d8, #6ca8ff);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(79, 132, 216, 0.28);
+}
+
+.param-panel button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ===== TRAINING PANEL ===== */
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef2f6;
+}
+
+.box-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #2c3b53;
+  margin-top: 6px;
+}
+
+.display-box {
+  background: #f8fbff;
+  border: 1px solid #d7e3ef;
+  border-radius: 12px;
+  padding: 12px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  overflow-y: auto;
+}
+
+.display-box.grow {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ===== TRANSITION ===== */
+
+.transition-overlay {
+  position: fixed;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 999;
+  transition: opacity 0.35s ease;
+}
+
+.transition-overlay.visible {
+  opacity: 0.96;
+}
+
+/* ===== RESPONSIVE ===== */
+
+@media (max-width: 980px) {
+  .mode-chat,
+  .training-stage-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .param-column,
+  .stage-column,
+  .chat-column,
+  .training-stage-column,
+  .training-info-column {
+    height: auto;
+  }
+
+  .stage-column {
+    height: 42%;
+  }
+}
