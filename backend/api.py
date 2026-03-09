@@ -17,7 +17,15 @@ BATTLE_CONFIG_PATH = Path(BATTLE_CONFIG_PATH)
 MIKI_ROOT = Path(MIKI_ROOT).resolve()
 
 battle_process = None
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
 
+from services.llm_service import chat_with_miki
+from services.memory_service import append_message, get_recent_messages
+from services.emotion_service import infer_emotion
+
+app = Flask(__name__)
+CORS(app)
 
 def parse_layer_sizes(layer_sizes_raw):
     if isinstance(layer_sizes_raw, list):
@@ -148,7 +156,43 @@ def battle_loss():
         "path": str(path),
         "data": data
     })
-    
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    print("=== /api/chat called ===", flush=True)
+
+    data = request.get_json() or {}
+    print("request json:", data, flush=True)
+
+    session_id = data.get("session_id", "default-session")
+    user_message = data.get("message", "").strip()
+
+    print("session:", session_id, flush=True)
+    print("user_message:", user_message, flush=True)
+
+    history = get_recent_messages(session_id, limit=12)
+    print("history length:", len(history), flush=True)
+
+    try:
+        reply = chat_with_miki(history, user_message)
+        print("LLM reply:", reply[:200], flush=True)
+    except Exception as e:
+        print("LLM error:", e, flush=True)
+        return jsonify({"error": str(e)}), 500
+
+    append_message(session_id, "user", user_message)
+    append_message(session_id, "assistant", reply)
+
+    emotion = infer_emotion(user_message, reply)
+
+    print("emotion:", emotion, flush=True)
+
+    return jsonify({
+        "reply": reply,
+        "emotion": emotion,
+        "references": []
+    })
+
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
