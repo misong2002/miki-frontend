@@ -125,6 +125,7 @@ input {
     0 10px 30px rgba(40, 60, 90, 0.10),
     inset 0 1px 0 rgba(255,255,255,0.45);
   backdrop-filter: blur(10px);
+  
 }
 
 .chat-header {
@@ -358,9 +359,152 @@ input {
   .training-stage-column,
   .training-info-column {
     height: auto;
+    min-width: 0;
+    min-height: 0;
   }
 
   .stage-column {
     height: 42%;
   }
+}
+/* ===== BATTLE MODE ===== */
+
+.battle-layout {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 18px;
+  padding: 18px;
+}
+
+.battle-contact-column,
+.battle-stage-column,
+.battle-loss-column {
+  min-width: 0;
+  min-height: 0;
+}
+
+.contact-shell,
+.battle-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.88);
+  border: 1px solid rgba(186, 200, 223, 0.42);
+  box-shadow: 0 16px 42px rgba(50, 74, 112, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.contact-header,
+.battle-header {
+  padding: 16px 18px 12px 18px;
+  border-bottom: 1px solid rgba(210, 220, 235, 0.82);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(245,249,255,0.84));
+}
+
+.contact-title,
+.battle-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #243149;
+}
+
+.contact-subtitle,
+.battle-subtitle {
+  font-size: 12px;
+  color: #6a7790;
+  margin-top: 4px;
+}
+
+.contact-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.contact-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.contact-bubble {
+  max-width: 88%;
+  white-space: pre-wrap;
+  line-height: 1.68;
+  font-size: 14px;
+  padding: 12px 15px;
+  border-radius: 18px;
+  border-top-left-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(246,250,255,0.90));
+  border: 1px solid rgba(196, 208, 226, 0.42);
+  color: #253248;
+  box-shadow: 0 8px 20px rgba(40, 60, 90, 0.07);
+}
+
+.battle-chart-block {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  gap: 10px;
+}
+
+.battle-chart-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2d3a54;
+}
+
+.battle-chart-box {
+  flex: 1;
+  min-height: 0;
+  background: linear-gradient(180deg, rgba(250,252,255,0.92), rgba(244,248,253,0.90));
+  border: 1px solid rgba(210, 222, 238, 0.78);
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.battle-btn {
+  margin-top: 8px;
+  background: linear-gradient(135deg, rgba(115, 163, 223, 0.96), rgba(88, 130, 205, 0.98));
+  color: white;
+}
+
+@media (max-width: 980px) {
+  .battle-layout {
+    display: flex;
+    flex-direction: column;
+  }
+}
+.battle-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.battle-exit-btn {
+  border: 1px solid rgba(205, 122, 122, 0.42);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(220, 150, 150, 0.96), rgba(196, 106, 106, 0.98));
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 10px 20px rgba(180, 90, 90, 0.18);
+  white-space: nowrap;
+}
+
+.battle-exit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

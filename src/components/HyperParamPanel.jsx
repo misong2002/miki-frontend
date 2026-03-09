@@ -1,4 +1,9 @@
-export default function HyperParamPanel({ params, setParams, onStart, disabled }) {
+export default function HyperParamPanel({
+  params,
+  setParams,
+  onBattle,
+  disabled,
+}) {
   function updateField(key, value) {
     setParams((prev) => ({
       ...prev,
@@ -8,7 +13,7 @@ export default function HyperParamPanel({ params, setParams, onStart, disabled }
 
   return (
     <div className="panel param-panel">
-      <h2>作战计划</h2>
+      <h2>超参数</h2>
 
       <label>
         learning rate
@@ -51,8 +56,8 @@ export default function HyperParamPanel({ params, setParams, onStart, disabled }
         />
       </label>
 
-      <button onClick={onStart} disabled={disabled}>
-        开始训练
+      <button onClick={onBattle} disabled={disabled}>
+        开启战斗
       </button>
     </div>
   );

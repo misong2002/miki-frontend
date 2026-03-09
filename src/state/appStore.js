@@ -2,6 +2,7 @@ export const AppMode = {
   CHAT: "chat",
   TRANSFORMING: "transforming",
   TRAINING: "training",
+  BATTLE: "battle",
 };
 
 export const initialHyperParams = {
@@ -19,4 +20,13 @@ export const initialTrainingState = {
   loss: null,
   logs: [],
   lossHistory: [],
+};
+
+export const initialBattleState = {
+  contactMessages: [
+    "……准备好了吗？这边就先顶上了。",
+    "你那边盯好魔力波动，我来处理前线。",
+    "站在我身后就好，正义的魔法少女会保护你哒！",
+  ],
+  lossData: [],
 };

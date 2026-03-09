@@ -1,0 +1,37 @@
+export async function startBattle(config) {
+  const response = await fetch("/api/battle/start", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to start battle: ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+export async function stopBattle() {
+  const response = await fetch("/api/battle/stop", {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to stop battle: ${response.status}`);
+  }
+
+  return await response.json();
+}
+
+export async function fetchLossData() {
+  const response = await fetch("/api/battle/loss");
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch loss data: ${response.status}`);
+  }
+
+  return await response.json();
+}
