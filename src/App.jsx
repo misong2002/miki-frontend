@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ChatPanel from "./components/ChatPanel";
 import HyperParamPanel from "./components/HyperParamPanel";
-import TrainingPanel from "./components/TrainingPanel";
 import TransitionOverlay from "./components/TransitionOverlay";
 import Live2DStage from "./components/Live2DStage";
 import ContactPanel from "./components/ContactPanel";
@@ -12,7 +11,7 @@ import {
   initialTrainingState,
   initialBattleState,
 } from "./state/appStore";
-import { connectTrainingStream } from "./services/trainingService";
+
 import { startBattle, stopBattle, fetchLossData } from "./services/battleService";
 import { APP_CONFIG } from "./config";
 import Live2DDebugPanel from "./components/Live2DDebugPanel";

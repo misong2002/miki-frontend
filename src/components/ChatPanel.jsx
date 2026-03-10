@@ -5,8 +5,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { parseControlTags } from "../live2d/controlTagParser";
 import { emotionEngine } from "../live2d/emotionEngine";
+
 function makeMessage({
   role,
   content,
@@ -32,8 +32,106 @@ function formatTime(ts) {
   return `${hh}:${mm}`;
 }
 
+/**
+ * 全程增量控制符状态机
+ *
+ * 识别：
+ *   <emotion:happy>
+ *   <motion:001>
+ *
+ * 设计原则：
+ * 1. 按字符流式处理，可跨 chunk 保持状态
+ * 2. 只有完整闭合且合法的标签才触发控制事件
+ * 3. 半截标签先缓存，不显示
+ * 4. 非法标签/普通尖括号内容按正文输出
+ */
+function createControlStreamParser() {
+  return {
+    state: "TEXT", // TEXT | TAG
+    tagBuffer: "",
+
+    /**
+     * 输入一段新文本，输出：
+     * - text: 可以安全显示的正文
+     * - events: 解析出的控制事件
+     */
+    push(chunk) {
+      let text = "";
+      const events = [];
+
+      for (let i = 0; i < chunk.length; i += 1) {
+        const ch = chunk[i];
+
+        if (this.state === "TEXT") {
+          if (ch === "<") {
+            this.state = "TAG";
+            this.tagBuffer = "<";
+          } else {
+            text += ch;
+          }
+          continue;
+        }
+
+        // TAG 状态
+        this.tagBuffer += ch;
+
+        // 完整闭合
+        if (ch === ">") {
+          const tag = this.tagBuffer;
+          const emotionMatch = tag.match(/^<emotion:([a-zA-Z0-9_-]+)>$/);
+          const motionMatch = tag.match(/^<motion:([a-zA-Z0-9_-]+)>$/);
+
+          if (emotionMatch) {
+            events.push({ type: "emotion", value: emotionMatch[1] });
+          } else if (motionMatch) {
+            events.push({ type: "motion", value: motionMatch[1] });
+          } else {
+            // 非法/未知标签，按正文原样输出
+            text += tag;
+          }
+
+          this.state = "TEXT";
+          this.tagBuffer = "";
+          continue;
+        }
+
+        // 如果 tag 太长还没闭合，基本可以判定不是控制符，回退成正文
+        if (this.tagBuffer.length > 64) {
+          text += this.tagBuffer;
+          this.state = "TEXT";
+          this.tagBuffer = "";
+        }
+      }
+
+      return { text, events };
+    },
+
+    /**
+     * 流结束时把残留内容刷出来
+     * - 半截 tag 不再等待，直接按正文输出
+     */
+    flush() {
+      let text = "";
+      if (this.state === "TAG" && this.tagBuffer) {
+        text = this.tagBuffer;
+      }
+
+      this.state = "TEXT";
+      this.tagBuffer = "";
+
+      return { text, events: [] };
+    },
+
+    reset() {
+      this.state = "TEXT";
+      this.tagBuffer = "";
+    },
+  };
+}
+
 export default function ChatPanel({ disabled }) {
   const startedSpeakingRef = useRef(false);
+
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState([
@@ -56,6 +154,9 @@ export default function ChatPanel({ disabled }) {
 
   const transferTimerRef = useRef(null);
   const typewriterTimerRef = useRef(null);
+
+  // 新增：全程增量 parser
+  const controlParserRef = useRef(createControlStreamParser());
 
   useEffect(() => {
     const el = historyRef.current;
@@ -108,6 +209,43 @@ export default function ChatPanel({ disabled }) {
     displayedTextRef.current = "";
     streamFinishedRef.current = false;
     activeMessageIdRef.current = null;
+    controlParserRef.current.reset();
+  }
+
+  function dispatchControlEvents(events) {
+    for (const event of events) {
+      if (event.type === "emotion") {
+        emotionEngine.requestEmotion(event.value, { source: "llm" });
+      } else if (event.type === "motion") {
+        emotionEngine.requestMotion(event.value, { source: "llm" });
+      }
+    }
+  }
+
+  function handleIncomingToken(token) {
+    if (!token) return;
+
+    const parsed = controlParserRef.current.push(token);
+
+    if (parsed.events.length > 0) {
+      dispatchControlEvents(parsed.events);
+    }
+
+    if (parsed.text) {
+      networkBufferRef.current += parsed.text;
+    }
+  }
+
+  function flushParserRemainder() {
+    const parsed = controlParserRef.current.flush();
+
+    if (parsed.events.length > 0) {
+      dispatchControlEvents(parsed.events);
+    }
+
+    if (parsed.text) {
+      networkBufferRef.current += parsed.text;
+    }
   }
 
   function startTransferLoop() {
@@ -194,6 +332,8 @@ export default function ChatPanel({ disabled }) {
     stopAllTimers();
     streamFinishedRef.current = true;
 
+    flushParserRemainder();
+
     if (networkBufferRef.current) {
       displayQueueRef.current += networkBufferRef.current;
       networkBufferRef.current = "";
@@ -208,7 +348,8 @@ export default function ChatPanel({ disabled }) {
     if (messageId) {
       updateAssistantMessage(
         messageId,
-        (displayedTextRef.current || "……") + "\n\n[对话被中断]\n诶诶诶，怎么啦？你先说~",
+        (displayedTextRef.current || "……") +
+          "\n\n[对话被中断]\n诶诶诶，怎么啦？你先说~",
         "done"
       );
     }
@@ -248,42 +389,24 @@ export default function ChatPanel({ disabled }) {
     emotionEngine.notifyUserActivity();
     emotionEngine.setTypingState("thinking");
     startedSpeakingRef.current = false;
+
     try {
       await sendChatStream(
         text,
-          (token) => {
-
-            const parsed = parseControlTags(token)
-
-            for (const event of parsed.events) {
-
-              if (event.type === "emotion") {
-                emotionEngine.requestEmotion(event.value, {
-                  source: "llm"
-                })
-              }
-
-              if (event.type === "motion") {
-                emotionEngine.requestMotion(event.value, {
-                  source: "llm"
-                })
-              }
-
-            }
-
-            if (parsed.text) {
-              networkBufferRef.current += parsed.text
-            }
-
-          },
+        (token) => {
+          handleIncomingToken(token);
+        },
         abortControllerRef.current.signal
       );
 
+      flushParserRemainder();
       streamFinishedRef.current = true;
     } catch (err) {
       if (err?.name === "AbortError") {
         return;
       }
+
+      flushParserRemainder();
 
       if (networkBufferRef.current) {
         displayQueueRef.current += networkBufferRef.current;

@@ -125,11 +125,7 @@ class EmotionEngine {
     current: this.current
     });
     
-    this.log("REQUEST_MOTION", {
-    source: options.source ?? "unknown",
-    motion,
-    current: this.current
-    });
+
     return this.applyBehavior({
       emotion,
       source: options.source ?? "idle",
@@ -141,6 +137,11 @@ class EmotionEngine {
 
   requestMotion(motion, options = {}) {
     const emotion = options.emotion ?? this.current.emotion ?? "neutral";
+    this.log("REQUEST_MOTION", {
+    source: options.source ?? "unknown",
+    motion,
+    current: this.current
+    });
     return this.applyBehavior({
       emotion,
       motion,
