@@ -23,10 +23,10 @@ import {
 import { APP_CONFIG } from "./config";
 
 import { emotionEngine } from "./live2d/emotionEngine";
-import { createCharacterOrchestrator } from "./agent/features/character/characterOrchestrator";
-import { createCharacterRuntimeBridge } from "./agent/features/character/characterRuntimeBridge";
-import { emotionMapper } from "./agent/features/character/emotionMapper";
-import { motionMapper } from "./agent/features/character/motionMapper";
+import { createCharacterOrchestrator } from "./agent/features/Motor/characterOrchestrator";
+import { createCharacterRuntimeBridge } from "./agent/features/Motor/characterRuntimeBridge";
+import { emotionMapper } from "./agent/features/Motor/emotionMapper";
+import { motionMapper } from "./agent/features/Motor/motionMapper";
 
 import { createLanguageModule } from "./agent/features/language/languageModule";
 import { createMikiAgent } from "./agent/createMikiAgent";
@@ -229,9 +229,15 @@ export default function App() {
       // ===== 原始角色事件入口 =====
       dispatchCharacter: (event) => characterOrchestrator.dispatch(event),
 
-      startChat: (messageId = "debug-chat") =>
+      beginChat: (messageId = "debug-chat") =>
         characterOrchestrator.dispatch({
-          type: "CHAT_START",
+          type: "CHAT_BEGIN",
+          messageId,
+        }),
+
+      startSpeaking: (messageId = "debug-chat") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_SPEAK_START",
           messageId,
         }),
 
@@ -276,6 +282,52 @@ export default function App() {
           type: "APP_MODE_CHANGED",
           mode: nextMode,
         }),
+
+      demoThink: (messageId = "debug-chat") => {
+        characterOrchestrator.dispatch({
+          type: "CHAT_BEGIN",
+          messageId,
+        });
+      },
+
+      demoSpeak: (messageId = "debug-chat") => {
+        characterOrchestrator.dispatch({
+          type: "CHAT_SPEAK_START",
+          messageId,
+        });
+      },
+
+      demoLine: (
+        {
+          messageId = "debug-chat",
+          emotion = null,
+          motion = null,
+        } = {}
+      ) => {
+        characterOrchestrator.dispatch({
+          type: "CHAT_BEGIN",
+          messageId,
+        });
+
+        if (emotion) {
+          characterOrchestrator.dispatch({
+            type: "CHAT_CONTROL_EMOTION",
+            value: emotion,
+          });
+        }
+
+        if (motion) {
+          characterOrchestrator.dispatch({
+            type: "CHAT_CONTROL_MOTION",
+            value: motion,
+          });
+        }
+
+        characterOrchestrator.dispatch({
+          type: "CHAT_SPEAK_START",
+          messageId,
+        });
+      },
       // ===== language 级调试 =====
       getLanguage: () => languageRef.current,
 

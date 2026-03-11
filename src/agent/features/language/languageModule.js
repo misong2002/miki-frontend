@@ -44,7 +44,7 @@ export function createLanguageModule({
 
     stopTimers(run);
 
-    if (run.chatStarted) {
+    if (run.chatBegun) {
       emitCharacterEvent({
         type: "CHAT_END",
         messageId: run.messageId,
@@ -60,33 +60,43 @@ export function createLanguageModule({
   }
 
   function dispatchControlEvents(run, events) {
-    for (const event of events) {
-      run.handlers.onControl?.(event);
+    console.log("[LANG CONTROL EVENTS RAW]", JSON.stringify(events));
 
+    for (const event of events) {
       if (event.type === "emotion") {
+        console.log("[LANG -> CHARACTER EMOTION]", event.value);
         emitCharacterEvent({
           type: "CHAT_CONTROL_EMOTION",
           value: event.value,
         });
       } else if (event.type === "motion") {
+        console.log("[LANG -> CHARACTER MOTION]", event.value);
         emitCharacterEvent({
           type: "CHAT_CONTROL_MOTION",
           value: event.value,
         });
       }
+
+      run.handlers.onControl?.(event);
     }
   }
 
   function handleIncomingToken(run, token) {
+    
     if (!token || run.finalized) return;
 
     emitCharacterEvent({
       type: "CHAT_TOKEN",
       token,
     });
+    //console.log("[LANG RAW TOKEN]", JSON.stringify(token));
 
     const parsed = run.parser.push(token);
 
+    // console.log("[LANG PARSED RESULT]", {
+    //   text: parsed.text,
+    //   events: parsed.events,
+    // });
     if (parsed.events.length > 0) {
       dispatchControlEvents(run, parsed.events);
     }
@@ -152,17 +162,17 @@ export function createLanguageModule({
       run.displayQueue = queue.slice(chunk.length);
       run.displayedText += chunk;
 
-      if (!run.chatStarted) {
-        run.chatStarted = true;
-
+      if (!run.speakingStarted) {
+        run.speakingStarted = true;
+        console.log("[LANG -> CHARACTER EVENT] CHAT_SPEAK_START");
         emitCharacterEvent({
-          type: "CHAT_START",
+          type: "CHAT_SPEAK_START",
           messageId: run.messageId,
         });
 
         run.handlers.onSpeakingStart?.();
+        run.handlers.onPhase?.("speaking");
       }
-
       run.handlers.onTextChunk?.(chunk, run.displayedText);
       run.handlers.onTextUpdate?.(
         run.displayedText || "正在思考……",
@@ -193,7 +203,7 @@ export function createLanguageModule({
     const run = {
       messageId,
       inputText: trimmed,
-      memoryContext: finalMemoryContext, // 预留给 future prompt/agent
+      memoryContext: finalMemoryContext,
       handlers,
       parser: parserFactory(),
 
@@ -208,8 +218,8 @@ export function createLanguageModule({
       transferTimer: null,
       typewriterTimer: null,
 
+      chatBegun: false,
       speakingStarted: false,
-      chatStarted: false,
       finalized: false,
     };
 
@@ -223,6 +233,13 @@ export function createLanguageModule({
       source: "chat_input",
     });
 
+    emitCharacterEvent({
+      type: "CHAT_BEGIN",
+      messageId,
+    });
+
+    run.chatBegun = true;
+
     startTransferLoop(run);
     startTypewriterLoop(run);
 
@@ -231,10 +248,11 @@ export function createLanguageModule({
         trimmed,
         (token) => {
           handleIncomingToken(run, token);
+          //console.log("[LANG RAW TOKEN]", JSON.stringify(token));
         },
         run.abortController.signal
       );
-
+      
       flushParserRemainder(run);
       run.streamFinished = true;
     } catch (err) {

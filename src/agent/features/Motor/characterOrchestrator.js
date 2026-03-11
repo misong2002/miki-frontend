@@ -2,12 +2,13 @@ import { pickIdleMotion } from "./idlePolicy";
 
 function createInitialCharacterState() {
   return {
-    appMode: "idle",
+    appMode: "chat",
 
     activeIntent: null,
 
     chat: {
-      streaming: false,
+      active: false,
+      speaking: false,
       lastTokenAt: 0,
       pendingEmotion: null,
       pendingMotion: null,
@@ -47,13 +48,59 @@ function makeIntent({
 }
 
 function mapTrainingSemanticToEmotion(semantic) {
- // TODO: 这里的映射关系需要根据实际的表情设计来调整
- return "neutral";
+  switch (semantic) {
+    case "focused":
+    case "stable":
+    case "running":
+      return "focused";
+
+    case "smile":
+    case "completed":
+    case "success":
+      return "smile";
+
+    case "worried":
+    case "unstable":
+    case "plateau":
+      return "worried";
+
+    case "angry":
+    case "diverging":
+    case "error":
+      return "angry";
+
+    case "idle":
+    default:
+      return "neutral";
+  }
 }
 
 function mapTrainingSemanticToMotion(semantic) {
- // TODO: 这里的映射关系需要根据实际的动作设计来调整
- return "idle_default";
+  switch (semantic) {
+    case "focused":
+    case "stable":
+    case "running":
+      return "assertive";
+
+    case "smile":
+    case "completed":
+    case "success":
+      return "excited";
+
+    case "angry":
+    case "diverging":
+    case "error":
+      return "angry";
+
+    case "worried":
+    case "unstable":
+    case "plateau":
+      return "confident";
+
+    case "idle":
+    default:
+      return "idle_default";
+  }
 }
 
 function reduceState(state, event) {
@@ -64,15 +111,32 @@ function reduceState(state, event) {
         appMode: event.mode,
       };
 
-    case "CHAT_START":
+    case "CHAT_BEGIN":
       return {
         ...state,
         chat: {
           ...state.chat,
-          streaming: true,
+          active: true,
+          speaking: false,
           lastTokenAt: Date.now(),
+          // 进入思考阶段时清空上一轮缓存
           pendingEmotion: null,
           pendingMotion: null,
+        },
+        idle: {
+          ...state.idle,
+          lastActiveAt: Date.now(),
+        },
+      };
+
+    case "CHAT_SPEAK_START":
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          active: true,
+          speaking: true,
+          lastTokenAt: Date.now(),
         },
         idle: {
           ...state.idle,
@@ -118,7 +182,9 @@ function reduceState(state, event) {
         ...state,
         chat: {
           ...state.chat,
-          streaming: false,
+          active: false,
+          speaking: false,
+          // 不清空 pending 也可以，但这里建议清空，避免下一轮串味
           pendingEmotion: null,
           pendingMotion: null,
         },
@@ -148,7 +214,20 @@ function reduceState(state, event) {
 }
 
 function resolveIntent(state) {
-  if (state.chat.streaming) {
+  // 1. chat 思考阶段：固定思考动作，不吃缓存
+  if (state.chat.active && !state.chat.speaking) {
+    return makeIntent({
+      source: "chat",
+      priority: 100,
+      emotion: "focused", // <<emotion:focused>>
+      motion: "shy",      // <<motion:shy>>
+      speech: false,
+      interruptible: true,
+    });
+  }
+
+  // 2. chat 说话阶段：先吃缓存，之后继续吃后续控制符
+  if (state.chat.active && state.chat.speaking) {
     return makeIntent({
       source: "chat",
       priority: 100,
@@ -159,6 +238,7 @@ function resolveIntent(state) {
     });
   }
 
+  // 3. training
   if (state.training.status === "running") {
     return makeIntent({
       source: "training",
@@ -170,6 +250,7 @@ function resolveIntent(state) {
     });
   }
 
+  // 4. idle
   return makeIntent({
     source: "idle",
     priority: 10,
@@ -196,14 +277,14 @@ function applyIntent(intent, { runtimeBridge, emotionMapper, motionMapper }) {
   if (intent.emotion) {
     runtimeBridge.apply({
       type: "SET_EMOTION",
-      value: emotionMapper(intent.emotion), 
+      value: emotionMapper(intent.emotion),
     });
   }
 
   if (intent.motion) {
     runtimeBridge.apply({
       type: "PLAY_MOTION",
-      value: motionMapper(intent.motion), 
+      value: motionMapper(intent.motion),
     });
   }
 
@@ -217,13 +298,19 @@ function applyIntent(intent, { runtimeBridge, emotionMapper, motionMapper }) {
     });
   }
 
-  console.log("[CharacterIntent]", intent);
+  console.log(
+    "[CharacterIntent]",
+    intent.source,
+    "emotion=",
+    intent.emotion,
+    "motion=",
+    intent.motion,
+    "speech=",
+    intent.speech
+  );
 }
 
-export function 
-
-
-createCharacterOrchestrator({
+export function createCharacterOrchestrator({
   runtimeBridge,
   emotionMapper,
   motionMapper,
@@ -265,10 +352,19 @@ createCharacterOrchestrator({
       ...state,
       activeIntent: nextIntent,
     };
-
-    console.log("[CharacterEvent]", event);
+    // 如果是CHAT_TOKEN事件，不更新log
+    if (!event.type === "CHAT_TOKEN") {
+    console.log(
+      "[CharacterEvent]",
+      event.type,
+      event.value ?? "",
+      event.messageId ?? "",
+      event.token ?? ""
+    );
     console.log("[CharacterState:before]", prevState);
     console.log("[CharacterState:after]", state);
+  }
+    
 
     emit();
   }
