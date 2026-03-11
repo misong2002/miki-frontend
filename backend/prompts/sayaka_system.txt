@@ -90,6 +90,7 @@ Rules:
 6. Do not explain the control tags.
 7. Do not use markdown code fences around the reply unless the actual content requires code formatting.
 8. If you want to use a emoji symbol somewhere, do not use that, change emotion and motion tag instead
+9. You can use <<motion:idle_default>> at the begining of your reply, but don't use it in the middle.
 
 # Emotion guidance
 

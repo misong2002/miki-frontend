@@ -1,5 +1,3 @@
-import { pickIdleMotion } from "./idlePolicy";
-
 function createInitialCharacterState() {
   return {
     appMode: "chat",
@@ -21,7 +19,9 @@ function createInitialCharacterState() {
 
     idle: {
       enabled: true,
+      active: true,
       lastActiveAt: Date.now(),
+      motion: null,
     },
   };
 }
@@ -47,28 +47,30 @@ function makeIntent({
   };
 }
 
+function pickIdleMotion() {
+  return Math.random() < 0.5 ? "idle_default" : "idle_relaxing";
+}
+
+
+
 function mapTrainingSemanticToEmotion(semantic) {
   switch (semantic) {
     case "focused":
     case "stable":
     case "running":
       return "focused";
-
     case "smile":
     case "completed":
     case "success":
       return "smile";
-
     case "worried":
     case "unstable":
     case "plateau":
       return "worried";
-
     case "angry":
     case "diverging":
     case "error":
       return "angry";
-
     case "idle":
     default:
       return "neutral";
@@ -81,22 +83,18 @@ function mapTrainingSemanticToMotion(semantic) {
     case "stable":
     case "running":
       return "assertive";
-
     case "smile":
     case "completed":
     case "success":
       return "excited";
-
     case "angry":
     case "diverging":
     case "error":
       return "angry";
-
     case "worried":
     case "unstable":
     case "plateau":
       return "confident";
-
     case "idle":
     default:
       return "idle_default";
@@ -119,12 +117,13 @@ function reduceState(state, event) {
           active: true,
           speaking: false,
           lastTokenAt: Date.now(),
-          // 进入思考阶段时清空上一轮缓存
           pendingEmotion: null,
           pendingMotion: null,
         },
         idle: {
           ...state.idle,
+          active: false,
+          motion: null,
           lastActiveAt: Date.now(),
         },
       };
@@ -140,6 +139,7 @@ function reduceState(state, event) {
         },
         idle: {
           ...state.idle,
+          active: false,
           lastActiveAt: Date.now(),
         },
       };
@@ -184,20 +184,36 @@ function reduceState(state, event) {
           ...state.chat,
           active: false,
           speaking: false,
-          // 不清空 pending 也可以，但这里建议清空，避免下一轮串味
           pendingEmotion: null,
           pendingMotion: null,
         },
+        idle: {
+          ...state.idle,
+          active: true,
+          motion: null, // 关键：先不立刻给 idle 动作
+          lastActiveAt: Date.now(),
+        },
       };
 
-    case "TRAINING_STATUS":
+    case "TRAINING_STATUS": {
+      const nextStatus = event.payload?.status ?? "idle";
+      const nextSemantic = event.payload?.semantic ?? "idle";
+      const trainingRunning = nextStatus === "running";
+
       return {
         ...state,
         training: {
-          status: event.payload?.status ?? "idle",
-          semantic: event.payload?.semantic ?? "idle",
+          status: nextStatus,
+          semantic: nextSemantic,
+        },
+        idle: {
+          ...state.idle,
+          active: !trainingRunning && !state.chat.active,
+          motion: trainingRunning ? null : state.idle.motion,
+          lastActiveAt: Date.now(),
         },
       };
+    }
 
     case "USER_ACTIVE":
       return {
@@ -208,25 +224,40 @@ function reduceState(state, event) {
         },
       };
 
+    case "IDLE_TICK":
+      if (!state.idle.enabled) return state;
+      if (state.chat.active) return state;
+      if (state.training.status === "running") return state;
+
+      return {
+        ...state,
+        idle: {
+          ...state.idle,
+          active: true,
+          motion: pickIdleMotion(),
+          lastActiveAt: Date.now(),
+        },
+      };
+
     default:
       return state;
   }
 }
 
-function resolveIntent(state) {
-  // 1. chat 思考阶段：固定思考动作，不吃缓存
+function resolveIntent(state, prevIntent) {
+  // 1. chat 思考阶段
   if (state.chat.active && !state.chat.speaking) {
     return makeIntent({
       source: "chat",
       priority: 100,
-      emotion: "focused", // <<emotion:focused>>
-      motion: "shy",      // <<motion:shy>>
+      emotion: "focused",
+      motion: "shy",
       speech: false,
       interruptible: true,
     });
   }
 
-  // 2. chat 说话阶段：先吃缓存，之后继续吃后续控制符
+  // 2. chat 说话阶段
   if (state.chat.active && state.chat.speaking) {
     return makeIntent({
       source: "chat",
@@ -250,12 +281,24 @@ function resolveIntent(state) {
     });
   }
 
-  // 4. idle
-  return makeIntent({
+  // 4. idle：只有 tick 选中了动作才真正播
+  if (state.idle.active && state.idle.motion) {
+    return makeIntent({
+      source: "idle",
+      priority: 10,
+      emotion: "smile",
+      motion: state.idle.motion,
+      speech: false,
+      interruptible: true,
+    });
+  }
+
+  // 5. 没有新 intent 时，保持上一帧，不要硬切回 idle_default
+  return prevIntent || makeIntent({
     source: "idle",
     priority: 10,
     emotion: "neutral",
-    motion: pickIdleMotion(state),
+    motion: null,
     speech: false,
     interruptible: true,
   });
@@ -273,28 +316,28 @@ function isSameIntent(a, b) {
   );
 }
 
-function applyIntent(intent, { runtimeBridge, emotionMapper, motionMapper }) {
-  if (intent.emotion) {
+function applyIntent(intent, prevIntent, { runtimeBridge, emotionMapper, motionMapper }) {
+  const emotionChanged = !prevIntent || intent.emotion !== prevIntent.emotion;
+  const motionChanged = !prevIntent || intent.motion !== prevIntent.motion;
+  const speechChanged = !prevIntent || intent.speech !== prevIntent.speech;
+
+  if (emotionChanged && intent.emotion) {
     runtimeBridge.apply({
       type: "SET_EMOTION",
       value: emotionMapper(intent.emotion),
     });
   }
 
-  if (intent.motion) {
+  if (motionChanged && intent.motion) {
     runtimeBridge.apply({
       type: "PLAY_MOTION",
       value: motionMapper(intent.motion),
     });
   }
 
-  if (intent.speech) {
+  if (speechChanged) {
     runtimeBridge.apply({
-      type: "SET_SPEECH",
-    });
-  } else {
-    runtimeBridge.apply({
-      type: "STOP_SPEECH",
+      type: intent.speech ? "SET_SPEECH" : "STOP_SPEECH",
     });
   }
 
@@ -309,14 +352,16 @@ function applyIntent(intent, { runtimeBridge, emotionMapper, motionMapper }) {
     intent.speech
   );
 }
-
 export function createCharacterOrchestrator({
   runtimeBridge,
   emotionMapper,
   motionMapper,
+  idleIntervalMs = 4000,
 }) {
   let state = createInitialCharacterState();
   const listeners = new Set();
+
+  let idleTimer = null;
 
   function getState() {
     return state;
@@ -333,15 +378,34 @@ export function createCharacterOrchestrator({
     }
   }
 
+  function clearIdleTimer() {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  }
+
+  function scheduleIdleIfNeeded() {
+    clearIdleTimer();
+
+    if (!state.idle.enabled) return;
+    if (state.chat.active) return;
+    if (state.training.status === "running") return;
+
+    idleTimer = setTimeout(() => {
+      dispatch({ type: "IDLE_TICK" });
+    }, idleIntervalMs);
+  }
+
   function dispatch(event) {
     const prevState = state;
     const prevIntent = state.activeIntent;
 
     state = reduceState(state, event);
-    const nextIntent = resolveIntent(state);
+    const nextIntent = resolveIntent(state, prevIntent);
 
     if (!isSameIntent(prevIntent, nextIntent)) {
-      applyIntent(nextIntent, {
+      applyIntent(nextIntent,prevIntent, {
         runtimeBridge,
         emotionMapper,
         motionMapper,
@@ -352,8 +416,7 @@ export function createCharacterOrchestrator({
       ...state,
       activeIntent: nextIntent,
     };
-    // 如果是CHAT_TOKEN事件，不更新log
-    if (!event.type === "CHAT_TOKEN") {
+
     console.log(
       "[CharacterEvent]",
       event.type,
@@ -363,15 +426,21 @@ export function createCharacterOrchestrator({
     );
     console.log("[CharacterState:before]", prevState);
     console.log("[CharacterState:after]", state);
-  }
-    
 
     emit();
+    scheduleIdleIfNeeded();
   }
+
+  // 初始化后就开始 idle 调度
+  scheduleIdleIfNeeded();
 
   return {
     getState,
     subscribe,
     dispatch,
+    destroy() {
+      clearIdleTimer();
+      listeners.clear();
+    },
   };
 }
