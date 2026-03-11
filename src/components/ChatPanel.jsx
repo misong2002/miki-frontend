@@ -50,11 +50,6 @@ function createControlStreamParser() {
     state: "TEXT", // TEXT | TAG
     tagBuffer: "",
 
-    /**
-     * 输入一段新文本，输出：
-     * - text: 可以安全显示的正文
-     * - events: 解析出的控制事件
-     */
     push(chunk) {
       let text = "";
       const events = [];
@@ -72,10 +67,8 @@ function createControlStreamParser() {
           continue;
         }
 
-        // TAG 状态
         this.tagBuffer += ch;
 
-        // 完整闭合
         if (ch === ">") {
           const tag = this.tagBuffer;
           const emotionMatch = tag.match(/^<emotion:([a-zA-Z0-9_-]+)>$/);
@@ -86,7 +79,6 @@ function createControlStreamParser() {
           } else if (motionMatch) {
             events.push({ type: "motion", value: motionMatch[1] });
           } else {
-            // 非法/未知标签，按正文原样输出
             text += tag;
           }
 
@@ -95,7 +87,6 @@ function createControlStreamParser() {
           continue;
         }
 
-        // 如果 tag 太长还没闭合，基本可以判定不是控制符，回退成正文
         if (this.tagBuffer.length > 64) {
           text += this.tagBuffer;
           this.state = "TEXT";
@@ -106,12 +97,9 @@ function createControlStreamParser() {
       return { text, events };
     },
 
-    /**
-     * 流结束时把残留内容刷出来
-     * - 半截 tag 不再等待，直接按正文输出
-     */
     flush() {
       let text = "";
+
       if (this.state === "TAG" && this.tagBuffer) {
         text = this.tagBuffer;
       }
@@ -129,7 +117,7 @@ function createControlStreamParser() {
   };
 }
 
-export default function ChatPanel({ disabled }) {
+export default function ChatPanel({ disabled, characterOrchestrator }) {
   const startedSpeakingRef = useRef(false);
 
   const [input, setInput] = useState("");
@@ -155,12 +143,12 @@ export default function ChatPanel({ disabled }) {
   const transferTimerRef = useRef(null);
   const typewriterTimerRef = useRef(null);
 
-  // 新增：全程增量 parser
   const controlParserRef = useRef(createControlStreamParser());
 
   useEffect(() => {
     const el = historyRef.current;
     if (!el) return;
+
     el.scrollTo({
       top: el.scrollHeight,
       behavior: "smooth",
@@ -170,6 +158,7 @@ export default function ChatPanel({ disabled }) {
   function resetTextareaHeight() {
     const el = textareaRef.current;
     if (!el) return;
+
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }
@@ -197,6 +186,7 @@ export default function ChatPanel({ disabled }) {
       clearInterval(transferTimerRef.current);
       transferTimerRef.current = null;
     }
+
     if (typewriterTimerRef.current) {
       clearInterval(typewriterTimerRef.current);
       typewriterTimerRef.current = null;
@@ -212,18 +202,34 @@ export default function ChatPanel({ disabled }) {
     controlParserRef.current.reset();
   }
 
+  function dispatchCharacterEvent(event) {
+    if (!characterOrchestrator?.dispatch) return;
+    characterOrchestrator.dispatch(event);
+  }
+
   function dispatchControlEvents(events) {
     for (const event of events) {
       if (event.type === "emotion") {
-        emotionEngine.requestEmotion(event.value, { source: "llm" });
+        dispatchCharacterEvent({
+          type: "CHAT_CONTROL_EMOTION",
+          value: event.value,
+        });
       } else if (event.type === "motion") {
-        emotionEngine.requestMotion(event.value, { source: "llm" });
+        dispatchCharacterEvent({
+          type: "CHAT_CONTROL_MOTION",
+          value: event.value,
+        });
       }
     }
   }
 
   function handleIncomingToken(token) {
     if (!token) return;
+
+    dispatchCharacterEvent({
+      type: "CHAT_TOKEN",
+      token,
+    });
 
     const parsed = controlParserRef.current.push(token);
 
@@ -303,6 +309,12 @@ export default function ChatPanel({ disabled }) {
             displayedTextRef.current || "……咦，我刚刚一下子卡住了。",
             "done"
           );
+
+          dispatchCharacterEvent({
+            type: "CHAT_END",
+            messageId,
+          });
+
           stopAllTimers();
         }
         return;
@@ -313,6 +325,11 @@ export default function ChatPanel({ disabled }) {
 
       displayQueueRef.current = queue.slice(chunk.length);
       displayedTextRef.current += chunk;
+
+      if (!startedSpeakingRef.current) {
+        startedSpeakingRef.current = true;
+        emotionEngine.setTypingState?.("speaking");
+      }
 
       updateAssistantMessage(
         messageId,
@@ -326,7 +343,6 @@ export default function ChatPanel({ disabled }) {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
-      emotionEngine.interrupt();
     }
 
     stopAllTimers();
@@ -352,10 +368,19 @@ export default function ChatPanel({ disabled }) {
           "\n\n[对话被中断]\n诶诶诶，怎么啦？你先说~",
         "done"
       );
+
+      dispatchCharacterEvent({
+        type: "CHAT_END",
+        messageId,
+      });
     }
+
+    emotionEngine.interrupt?.();
+    emotionEngine.setTypingState?.("idle");
 
     setSending(false);
     activeMessageIdRef.current = null;
+    startedSpeakingRef.current = false;
   }
 
   async function handleSend() {
@@ -386,8 +411,19 @@ export default function ChatPanel({ disabled }) {
     startTypewriterLoop();
 
     abortControllerRef.current = new AbortController();
-    emotionEngine.notifyUserActivity();
-    emotionEngine.setTypingState("thinking");
+
+    dispatchCharacterEvent({
+      type: "USER_ACTIVE",
+      source: "chat_input",
+    });
+
+    dispatchCharacterEvent({
+      type: "CHAT_START",
+      messageId: pendingAssistant.id,
+    });
+
+    emotionEngine.notifyUserActivity?.();
+    emotionEngine.setTypingState?.("thinking");
     startedSpeakingRef.current = false;
 
     try {
@@ -429,11 +465,19 @@ export default function ChatPanel({ disabled }) {
 
         if (empty) {
           clearInterval(failWatcher);
+
           updateAssistantMessage(
             messageId,
             displayedTextRef.current || `请求失败：${err.message}`,
             "error"
           );
+
+          dispatchCharacterEvent({
+            type: "CHAT_END",
+            messageId,
+          });
+
+          emotionEngine.setTypingState?.("idle");
           stopAllTimers();
         }
       }, 50);
@@ -456,6 +500,12 @@ export default function ChatPanel({ disabled }) {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+
+      dispatchCharacterEvent({
+        type: "CHAT_END",
+        messageId: activeMessageIdRef.current,
+      });
+
       stopAllTimers();
     };
   }, []);

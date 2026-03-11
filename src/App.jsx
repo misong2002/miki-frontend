@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+
 import ChatPanel from "./components/ChatPanel";
 import HyperParamPanel from "./components/HyperParamPanel";
 import TransitionOverlay from "./components/TransitionOverlay";
 import Live2DStage from "./components/Live2DStage";
 import ContactPanel from "./components/ContactPanel";
 import BattlePanel from "./components/BattlePanel";
+import Live2DDebugPanel from "./components/Live2DDebugPanel";
+
 import {
   AppMode,
   initialHyperParams,
@@ -12,9 +15,19 @@ import {
   initialBattleState,
 } from "./state/appStore";
 
-import { startBattle, stopBattle, fetchLossData } from "./services/battleService";
+import {
+  startBattle,
+  stopBattle,
+  fetchLossData,
+} from "./services/battleService";
 import { APP_CONFIG } from "./config";
-import Live2DDebugPanel from "./components/Live2DDebugPanel";
+
+import { emotionEngine } from "./live2d/emotionEngine";
+import { createCharacterOrchestrator } from "./features/character/characterOrchestrator";
+import { createCharacterRuntimeBridge } from "./features/character/characterRuntimeBridge";
+import { emotionMapper } from "./features/character/emotionMapper";
+import { motionMapper } from "./features/character/motionMapper";
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -29,6 +42,29 @@ export default function App() {
 
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
+
+  const runtimeBridgeRef = useRef(null);
+  const characterOrchestratorRef = useRef(null);
+
+  if (!runtimeBridgeRef.current) {
+    runtimeBridgeRef.current = createCharacterRuntimeBridge({
+      emotionEngine,
+    });
+  }
+
+  if (!characterOrchestratorRef.current) {
+    characterOrchestratorRef.current = createCharacterOrchestrator({
+      runtimeBridge: runtimeBridgeRef.current,
+      emotionMapper,
+      motionMapper,
+    });
+  }
+
+  const characterOrchestrator = characterOrchestratorRef.current;
+
+  useEffect(() => {
+    emotionEngine.setAutonomousBehaviorEnabled?.(false);
+  }, []);
 
   async function loadBattleLoss() {
     try {
@@ -91,6 +127,7 @@ export default function App() {
       }));
     } catch (err) {
       console.error("[battle] fetchLossData failed:", err);
+
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
@@ -113,7 +150,7 @@ export default function App() {
     try {
       await stopBattle();
     } catch (err) {
-      console.error("stop battle failed:", err);
+      console.error("[battle] stop failed:", err);
     }
 
     setModelKey("normal");
@@ -122,20 +159,152 @@ export default function App() {
     setBattleExiting(false);
   }
 
+  // mode 变化时，同步给 orchestrator
   useEffect(() => {
+    characterOrchestrator.dispatch({
+      type: "APP_MODE_CHANGED",
+      mode,
+    });
+
     if (mode === AppMode.BATTLE) {
-      // 先立即拉一次，保证进入时就刷新
+      emotionEngine.setMode?.("battle");
+
       loadBattleLoss();
-      // 再开始轮询
       startLossPolling();
+
+      characterOrchestrator.dispatch({
+        type: "TRAINING_STATUS",
+        payload: {
+          status: "running",
+          semantic: "focused",
+        },
+      });
     } else {
+      emotionEngine.setMode?.("chat");
+
       stopLossPolling();
+
+      characterOrchestrator.dispatch({
+        type: "TRAINING_STATUS",
+        payload: {
+          status: "idle",
+          semantic: "idle",
+        },
+      });
     }
 
     return () => {
       stopLossPolling();
     };
-  }, [mode]);
+  }, [mode, characterOrchestrator]);
+
+  // 只暴露 orchestrator 级别的调试入口
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.mikiCharacterDebug = {
+      // ===== 状态 =====
+      getState: () => characterOrchestrator.getState(),
+
+      // ===== 原始事件入口 =====
+      dispatch: (event) => characterOrchestrator.dispatch(event),
+
+      // ===== chat 语义调试 =====
+      startChat: (messageId = "debug-chat") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_START",
+          messageId,
+        }),
+
+      token: (token = "debug token") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_TOKEN",
+          token,
+        }),
+
+      endChat: (messageId = "debug-chat") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_END",
+          messageId,
+        }),
+
+      setChatEmotion: (emotionKey) =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_CONTROL_EMOTION",
+          value: emotionKey,
+        }),
+
+      setChatMotion: (motionKey) =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_CONTROL_MOTION",
+          value: motionKey,
+        }),
+
+      // ===== 训练/战斗语义调试 =====
+      setTraining: (status = "running", semantic = "focused") =>
+        characterOrchestrator.dispatch({
+          type: "TRAINING_STATUS",
+          payload: { status, semantic },
+        }),
+
+      // ===== 用户活动 =====
+      userActive: (source = "debug") =>
+        characterOrchestrator.dispatch({
+          type: "USER_ACTIVE",
+          source,
+        }),
+
+      // ===== App mode 调试 =====
+      setMode: (nextMode) =>
+        characterOrchestrator.dispatch({
+          type: "APP_MODE_CHANGED",
+          mode: nextMode,
+        }),
+
+      // ===== 说话调试：也只走顶层事件 =====
+      startSpeech: (messageId = "debug-chat") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_START",
+          messageId,
+        }),
+
+      stopSpeech: (messageId = "debug-chat") =>
+        characterOrchestrator.dispatch({
+          type: "CHAT_END",
+          messageId,
+        }),
+
+      // ===== 一键测试 =====
+      demoSmile: () => {
+        const messageId = "debug-demo";
+        characterOrchestrator.dispatch({
+          type: "CHAT_START",
+          messageId,
+        });
+        characterOrchestrator.dispatch({
+          type: "CHAT_CONTROL_EMOTION",
+          value: "smile",
+        });
+        characterOrchestrator.dispatch({
+          type: "CHAT_CONTROL_MOTION",
+          value: "excited",
+        });
+      },
+
+      demoStop: () => {
+        characterOrchestrator.dispatch({
+          type: "CHAT_END",
+          messageId: "debug-demo",
+        });
+      },
+    };
+
+    console.log("[mikiCharacterDebug] ready");
+
+    return () => {
+      delete window.mikiCharacterDebug;
+    };
+  }, [characterOrchestrator]);
 
   useEffect(() => {
     return () => {
@@ -164,7 +333,10 @@ export default function App() {
           </main>
 
           <aside className="chat-column">
-            <ChatPanel disabled={false} />
+            <ChatPanel
+              disabled={false}
+              characterOrchestrator={characterOrchestrator}
+            />
           </aside>
         </>
       )}
@@ -174,6 +346,7 @@ export default function App() {
           <div className="training-stage-column">
             <Live2DStage modelKey={modelKey} />
           </div>
+
           <div className="training-info-column">
             <TrainingPanel training={training} />
           </div>
@@ -200,6 +373,8 @@ export default function App() {
           </aside>
         </main>
       )}
+
+      {APP_CONFIG?.showLive2DDebug && <Live2DDebugPanel />}
     </div>
   );
 }

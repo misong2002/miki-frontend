@@ -6,7 +6,7 @@ import subprocess
 import os
 import signal
 from pathlib import Path
-from config import LOSS_FILE_PATH, BATTLE_SCRIPT_PATH, BATTLE_CONFIG_PATH, MIKI_ROOT
+from config import LOSS_FILE_PATH, BATTLE_SCRIPT_PATH, BATTLE_CONFIG_PATH, MIKI_ROOT,OPENAI_MODEL
 from flask import Response, request
 import json
 app = Flask(__name__)
@@ -188,7 +188,7 @@ def chat():
 
     try:
         stream = client.chat.completions.create(
-            model="claude-opus-4-6",
+            model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
             max_tokens=50000,

@@ -1,5 +1,6 @@
 import os
 from openai import OpenAI
+from config import OPENAI_MODEL
 from services.persona_service import get_system_prompt
 
 client = OpenAI(
@@ -27,7 +28,7 @@ def chat_with_miki(history, user_message: str):
     })
 
     response = client.chat.completions.create(
-        model="claude-opus-4-6",
+        model=OPENAI_MODEL,
         messages=messages,
         temperature=0.7,
         max_tokens=50000

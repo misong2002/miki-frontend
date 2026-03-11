@@ -1,10 +1,12 @@
-import { SAYAKA_BEHAVIOR } from "./sayakaBehaviorMap";
 import { live2dController } from "./live2dController";
+
 const DEBUG_EMOTION_ENGINE = true;
+
 const SOURCE_PRIORITY = {
   idle: 1,
   battle: 2,
   typing: 3,
+  orchestrator: 4,
   llm: 4,
   interrupt: 5,
 };
@@ -13,24 +15,30 @@ const DEFAULT_LOCK_MS = {
   idle: 1200,
   battle: 1500,
   typing: 800,
-  llm: 1800,
+  orchestrator: 1200,
+  llm: 1200,
   interrupt: 2200,
 };
 
 class EmotionEngine {
   constructor() {
-    this.mode = "chat"; // chat | battle
+    this.mode = "chat";
+
     this.current = {
-      emotion: "neutral",
-      motion: "000",
+      expressionId: "50",
+      motionId: "000",
       source: "idle",
       priority: SOURCE_PRIORITY.idle,
       lockUntil: 0,
+      speaking: false,
     };
 
-    this.idleTimer = null;
-    this.idleDelayMs = 5000;
     this.listeners = new Set();
+
+    this.autonomousBehaviorEnabled = false;
+
+    this.mouthTimer = null;
+    this.mouthPhase = 0;
   }
 
   subscribe(fn) {
@@ -51,6 +59,14 @@ class EmotionEngine {
   setMode(mode) {
     this.mode = mode;
     this.emit({ type: "mode", mode });
+  }
+
+  setAutonomousBehaviorEnabled(enabled) {
+    this.autonomousBehaviorEnabled = !!enabled;
+
+    this.log("AUTONOMOUS_BEHAVIOR", {
+      enabled: this.autonomousBehaviorEnabled,
+    });
   }
 
   now() {
@@ -79,202 +95,236 @@ class EmotionEngine {
     return nextPriority > this.current.priority;
   }
 
-  applyBehavior({ emotion, motion = null, source = "idle", lockMs, force = false }) {
-    const behavior = SAYAKA_BEHAVIOR[emotion];
-    if (!behavior) {
-      console.warn("[EmotionEngine] unknown emotion:", emotion);
-      return false;
-    }
+  updateLock(source, lockMs) {
+    this.current = {
+      ...this.current,
+      source,
+      priority: this.getPriority(source),
+      lockUntil: this.now() + this.getLockMs(source, lockMs),
+    };
+  }
+
+  setExpressionById(expressionId, options = {}) {
+    const source = options.source ?? "idle";
+    const force = options.force ?? false;
+
+    this.log("SET_EXPRESSION_ID", {
+      expressionId,
+      source,
+      current: this.current,
+    });
 
     if (!this.canApply(source, force)) {
       return false;
     }
 
-    const finalMotion = motion ?? behavior.motion;
-    const finalExpression = behavior.expression;
-
-    live2dController.setExpressionById(finalExpression);
-    live2dController.playMotionById(finalMotion);
+    const nextId = String(expressionId);
+    live2dController.setExpressionById(nextId);
 
     this.current = {
-      emotion,
-      motion: finalMotion,
-      source,
-      priority: this.getPriority(source),
-      lockUntil: this.now() + this.getLockMs(source, lockMs),
+      ...this.current,
+      expressionId: nextId,
     };
+    this.updateLock(source, options.lockMs);
 
     this.emit({
-      type: "apply",
-      mode: this.mode,
-      emotion,
-      motion: finalMotion,
+      type: "expression",
+      expressionId: nextId,
       source,
-      expression: finalExpression,
       state: { ...this.current },
     });
 
     return true;
   }
 
-  requestEmotion(emotion, options = {}) {
-    this.log("REQUEST_EMOTION", {
-    source: options.source ?? "unknown",
-    emotion,
-    motion: options.motion ?? null,
-    current: this.current
-    });
-    
+  playMotionById(motionId, options = {}) {
+    const source = options.source ?? "idle";
+    const force = options.force ?? false;
 
-    return this.applyBehavior({
-      emotion,
-      source: options.source ?? "idle",
-      motion: options.motion ?? null,
-      lockMs: options.lockMs,
-      force: options.force ?? false,
+    this.log("PLAY_MOTION_ID", {
+      motionId,
+      source,
+      current: this.current,
     });
+
+    if (!this.canApply(source, force)) {
+      return false;
+    }
+
+    const nextId = String(motionId);
+    live2dController.playMotionById(nextId);
+
+    this.current = {
+      ...this.current,
+      motionId: nextId,
+    };
+    this.updateLock(source, options.lockMs);
+
+    this.emit({
+      type: "motion",
+      motionId: nextId,
+      source,
+      state: { ...this.current },
+    });
+
+    return true;
   }
 
-  requestMotion(motion, options = {}) {
-    const emotion = options.emotion ?? this.current.emotion ?? "neutral";
-    this.log("REQUEST_MOTION", {
-    source: options.source ?? "unknown",
-    motion,
-    current: this.current
+  setSpeaking(active, options = {}) {
+    const next = !!active;
+    const source = options.source ?? "typing";
+
+    if (this.current.speaking === next) return false;
+
+    this.current = {
+      ...this.current,
+      speaking: next,
+      source,
+      priority: this.getPriority(source),
+    };
+
+    live2dController.setSpeaking(next);
+
+    if (next) {
+      this.startMouthLoop();
+    } else {
+      this.stopMouthLoop();
+      live2dController.setMouthOpen(0);
+    }
+
+    this.emit({
+      type: "speaking",
+      active: next,
+      source,
+      state: { ...this.current },
     });
-    return this.applyBehavior({
-      emotion,
-      motion,
-      source: options.source ?? "idle",
-      lockMs: options.lockMs,
-      force: options.force ?? false,
+
+    this.log("SET_SPEAKING", {
+      active: next,
+      source,
     });
+
+    return true;
   }
 
-  interrupt() {
-    return this.applyBehavior({
-      emotion: "surprised",
-      motion: "100",
-      source: "interrupt",
-      lockMs: 2200,
-      force: true,
-    });
+  startMouthLoop() {
+    if (this.mouthTimer) return;
+
+    this.mouthPhase = 0;
+    this.mouthTimer = setInterval(() => {
+      this.mouthPhase += 1;
+
+      // 一个很轻量的口型循环，后面可替换成 token/音频驱动
+      const pattern = [0.15, 0.55, 0.9, 0.35, 0.7, 0.1];
+      const value = pattern[this.mouthPhase % pattern.length];
+
+      live2dController.setMouthOpen(value);
+    }, 90);
   }
 
+  stopMouthLoop() {
+    if (this.mouthTimer) {
+      clearInterval(this.mouthTimer);
+      this.mouthTimer = null;
+    }
+  }
+
+  interrupt(options = {}) {
+    const source = options.source ?? "interrupt";
+
+    this.log("INTERRUPT", {
+      source,
+      current: this.current,
+    });
+
+    this.stopMouthLoop();
+    live2dController.setMouthOpen(0);
+    live2dController.setSpeaking(false);
+    live2dController.interrupt();
+
+    this.current = {
+      ...this.current,
+      speaking: false,
+      source,
+      priority: this.getPriority(source),
+      lockUntil: this.now() + this.getLockMs(source, options.lockMs ?? 2200),
+    };
+
+    this.emit({
+      type: "interrupt",
+      source,
+      state: { ...this.current },
+    });
+
+    return true;
+  }
+
+  /**
+   * 旧接口保留，但不再控制模型行为。
+   */
   setTypingState(kind = "thinking") {
-    if (kind === "thinking") {
-      return this.requestEmotion("thinking", {
-        source: "typing",
-        motion: "200",
-        lockMs: 100,
-      });
-    }
-
-    if (kind === "speaking") {
-      return this.requestEmotion("explaining", {
-        source: "typing",
-        motion: "201",
-        lockMs: 1000,
-      });
-    }
+    this.log("SET_TYPING_STATE_IGNORED", {
+      kind,
+      autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
+    });
 
     return false;
   }
 
-  setBattleState(kind) {
-    const mapping = {
-      stable: { emotion: "neutral", motion: "000" },
-      focused: { emotion: "explaining", motion: "201" },
-      drop: { emotion: "happy", motion: "400" },
-      oscillating: { emotion: "thinking", motion: "200" },
-      diverging: { emotion: "angry", motion: "300" },
-      warning: { emotion: "worried", motion: "200" },
-      righteous: { emotion: "righteous", motion: "201" },
-    };
-
-    const target = mapping[kind];
-    if (!target) return false;
-
-    return this.requestEmotion(target.emotion, {
-      source: "battle",
-      motion: target.motion,
-      lockMs: 1800,
-    });
-  }
-
-  scheduleIdle() {
-    this.clearIdle();
-
-    this.idleTimer = setTimeout(() => {
-      this.runIdleBehavior();
-    }, this.idleDelayMs);
-  }
-
-  clearIdle() {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-  }
-
   notifyUserActivity() {
-    this.clearIdle();
-    this.scheduleIdle();
+    this.log("USER_ACTIVITY", {
+      autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
+    });
   }
 
-  runIdleBehavior() {
-    const candidates =
-      this.mode === "battle"
-        ? [
-            { emotion: "thinking", motion: "200" },
-            { emotion: "neutral", motion: "000" },
-            { emotion: "explaining", motion: "201" },
-          ]
-        : [
-            { emotion: "neutral", motion: "000" },
-            { emotion: "neutral", motion: "001" },
-            { emotion: "thinking", motion: "200" },
-            { emotion: "happy", motion: "001" },
-        ];
-
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-
-    this.requestEmotion(pick.emotion, {
-      source: "idle",
-      motion: pick.motion,
-      lockMs: 1400,
+  setBattleState(kind) {
+    this.log("SET_BATTLE_STATE_IGNORED", {
+      kind,
+      autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
     });
 
-    this.scheduleIdle();
+    return false;
   }
 
   reset() {
-    this.clearIdle();
+    this.stopMouthLoop();
+    live2dController.setMouthOpen(0);
+    live2dController.setSpeaking(false);
+
     this.current = {
-      emotion: "neutral",
-      motion: "000",
+      expressionId: "50",
+      motionId: "000",
       source: "idle",
       priority: SOURCE_PRIORITY.idle,
       lockUntil: 0,
+      speaking: false,
     };
 
-    live2dController.setExpressionById(SAYAKA_BEHAVIOR.neutral.expression);
-    live2dController.playMotionById(SAYAKA_BEHAVIOR.neutral.motion);
+    live2dController.setExpressionById("50");
+    live2dController.playMotionById("000");
+
+    this.emit({
+      type: "reset",
+      state: { ...this.current },
+    });
+
+    this.log("RESET", {
+      state: this.current,
+    });
   }
+
   log(type, payload) {
+    if (!DEBUG_EMOTION_ENGINE) return;
 
-    if (!DEBUG_EMOTION_ENGINE) return
-
-    const time = new Date().toLocaleTimeString()
+    const time = new Date().toLocaleTimeString();
 
     console.log(
-        `%c[EmotionEngine ${type}]`,
-        "color:#ff4d6d;font-weight:bold",
-        time,
-        payload
-    )
-
-    }
+      `%c[EmotionEngine ${type}]`,
+      "color:#ff4d6d;font-weight:bold",
+      time,
+      payload
+    );
+  }
 }
 
 export const emotionEngine = new EmotionEngine();
