@@ -23,10 +23,13 @@ import {
 import { APP_CONFIG } from "./config";
 
 import { emotionEngine } from "./live2d/emotionEngine";
-import { createCharacterOrchestrator } from "./features/character/characterOrchestrator";
-import { createCharacterRuntimeBridge } from "./features/character/characterRuntimeBridge";
-import { emotionMapper } from "./features/character/emotionMapper";
-import { motionMapper } from "./features/character/motionMapper";
+import { createCharacterOrchestrator } from "./agent/features/character/characterOrchestrator";
+import { createCharacterRuntimeBridge } from "./agent/features/character/characterRuntimeBridge";
+import { emotionMapper } from "./agent/features/character/emotionMapper";
+import { motionMapper } from "./agent/features/character/motionMapper";
+
+import { createLanguageModule } from "./agent/features/language/languageModule";
+import { createMikiAgent } from "./agent/createMikiAgent";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,6 +48,8 @@ export default function App() {
 
   const runtimeBridgeRef = useRef(null);
   const characterOrchestratorRef = useRef(null);
+  const languageRef = useRef(null);
+  const mikiAgentRef = useRef(null);
 
   if (!runtimeBridgeRef.current) {
     runtimeBridgeRef.current = createCharacterRuntimeBridge({
@@ -60,7 +65,24 @@ export default function App() {
     });
   }
 
+  if (!languageRef.current) {
+    languageRef.current = createLanguageModule({
+      onCharacterEvent: (event) => {
+        characterOrchestratorRef.current?.dispatch(event);
+      },
+    });
+  }
+
+  if (!mikiAgentRef.current) {
+    mikiAgentRef.current = createMikiAgent({
+      character: characterOrchestratorRef.current,
+      language: languageRef.current,
+      memory: null, // 以后接真实 memory 模块
+    });
+  }
+
   const characterOrchestrator = characterOrchestratorRef.current;
+  const mikiAgent = mikiAgentRef.current;
 
   useEffect(() => {
     emotionEngine.setAutonomousBehaviorEnabled?.(false);
@@ -159,7 +181,6 @@ export default function App() {
     setBattleExiting(false);
   }
 
-  // mode 变化时，同步给 orchestrator
   useEffect(() => {
     characterOrchestrator.dispatch({
       type: "APP_MODE_CHANGED",
@@ -198,18 +219,16 @@ export default function App() {
     };
   }, [mode, characterOrchestrator]);
 
-  // 只暴露 orchestrator 级别的调试入口
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     window.mikiCharacterDebug = {
-      // ===== 状态 =====
-      getState: () => characterOrchestrator.getState(),
+      // ===== 角色状态 =====
+      getCharacterState: () => characterOrchestrator.getState(),
 
-      // ===== 原始事件入口 =====
-      dispatch: (event) => characterOrchestrator.dispatch(event),
+      // ===== 原始角色事件入口 =====
+      dispatchCharacter: (event) => characterOrchestrator.dispatch(event),
 
-      // ===== chat 语义调试 =====
       startChat: (messageId = "debug-chat") =>
         characterOrchestrator.dispatch({
           type: "CHAT_START",
@@ -240,41 +259,81 @@ export default function App() {
           value: motionKey,
         }),
 
-      // ===== 训练/战斗语义调试 =====
       setTraining: (status = "running", semantic = "focused") =>
         characterOrchestrator.dispatch({
           type: "TRAINING_STATUS",
           payload: { status, semantic },
         }),
 
-      // ===== 用户活动 =====
       userActive: (source = "debug") =>
         characterOrchestrator.dispatch({
           type: "USER_ACTIVE",
           source,
         }),
 
-      // ===== App mode 调试 =====
-      setMode: (nextMode) =>
+      setCharacterMode: (nextMode) =>
         characterOrchestrator.dispatch({
           type: "APP_MODE_CHANGED",
           mode: nextMode,
         }),
+      // ===== language 级调试 =====
+      getLanguage: () => languageRef.current,
 
-      // ===== 说话调试：也只走顶层事件 =====
-      startSpeech: (messageId = "debug-chat") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_START",
-          messageId,
-        }),
+      remindLanguage: (memoryContext) =>
+        languageRef.current?.remind?.(memoryContext),
 
-      stopSpeech: (messageId = "debug-chat") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_END",
-          messageId,
-        }),
+      hearLanguage: async (text, extra = {}) => {
+        return languageRef.current?.hear(
+          {
+            text,
+            messageId: extra.messageId ?? "debug-language",
+            memoryContext: extra.memoryContext ?? null,
+          },
+          {
+            onThinkingStart: () => console.log("[debug language] thinking"),
+            onTextChunk: (chunk) => console.log("[debug language] chunk:", chunk),
+            onTextUpdate: (fullText) =>
+              console.log("[debug language] full:", fullText),
+            onControl: (event) =>
+              console.log("[debug language] control:", event),
+            onDone: (finalText) =>
+              console.log("[debug language] done:", finalText),
+            onInterrupted: (partialText) =>
+              console.log("[debug language] interrupted:", partialText),
+            onError: (err, partialText) =>
+              console.error("[debug language] error:", err, partialText),
+            ...extra.handlers,
+          }
+        );
+      },
 
-      // ===== 一键测试 =====
+      interruptLanguage: () => languageRef.current?.interrupt?.(),
+
+      isLanguageBusy: () => languageRef.current?.isBusy?.(),
+      // ===== Agent 级调试 =====
+      hear: async (text) => {
+        return mikiAgent.hear(
+          {
+            text,
+            messageId: "debug-agent",
+          },
+          {
+            onThinkingStart: () => console.log("[debug hear] thinking"),
+            onTextChunk: (chunk) => console.log("[debug hear] chunk:", chunk),
+            onTextUpdate: (fullText) => console.log("[debug hear] full:", fullText),
+            onDone: (finalText) => console.log("[debug hear] done:", finalText),
+            onInterrupted: (partialText) =>
+              console.log("[debug hear] interrupted:", partialText),
+            onError: (err, partialText) =>
+              console.error("[debug hear] error:", err, partialText),
+          }
+        );
+      },
+
+      interruptAgent: () => mikiAgent.interrupt(),
+
+      isAgentBusy: () => mikiAgent.isBusy?.(),
+
       demoSmile: () => {
         const messageId = "debug-demo";
         characterOrchestrator.dispatch({
@@ -304,14 +363,15 @@ export default function App() {
     return () => {
       delete window.mikiCharacterDebug;
     };
-  }, [characterOrchestrator]);
+  }, [characterOrchestrator, mikiAgent]);
 
   useEffect(() => {
     return () => {
       streamRef.current?.close?.();
       stopLossPolling();
+      mikiAgent?.interrupt?.();
     };
-  }, []);
+  }, [mikiAgent]);
 
   return (
     <div className={`app-root mode-${mode}`}>
@@ -335,7 +395,7 @@ export default function App() {
           <aside className="chat-column">
             <ChatPanel
               disabled={false}
-              characterOrchestrator={characterOrchestrator}
+              agent={mikiAgent}
             />
           </aside>
         </>
