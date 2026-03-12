@@ -1,8 +1,42 @@
+import { createCharacterRuntimeBridge } from "./motor/characterRuntimeBridge";
+import { createCharacterOrchestrator } from "./motor/characterOrchestrator";
+import { createLanguageModule } from "./language/languageModule";
+import { emotionEngine } from "./body/emotionEngine";
+import { emotionMapper } from "./motor/emotionMapper";
+import { motionMapper } from "./motor/motionMapper";
+import { createExternalityModule } from "./externality/createExternalityModule";
+
+function createMessageId(prefix = "miki") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function createMikiAgent({
-  character,
-  language,
   memory = null,
-}) {
+  onExternalityChange = null,
+} = {}) {
+  const runtimeBridge = createCharacterRuntimeBridge({
+    emotionEngine,
+  });
+
+  const character = createCharacterOrchestrator({
+    runtimeBridge,
+    emotionMapper,
+    motionMapper,
+  });
+
+  const language = createLanguageModule({
+    onCharacterEvent: (event) => {
+      character.dispatch(event);
+    },
+  });
+
+  const externality = createExternalityModule({
+    initialModelKey: "normal",
+    initialPosition: { x: 0.5, y: 0.85 },
+    initialScale: 1.0,
+    onChange: onExternalityChange,
+  });
+
   if (!character?.dispatch) {
     throw new Error("createMikiAgent: character.dispatch is required");
   }
@@ -11,13 +45,37 @@ export function createMikiAgent({
     throw new Error("createMikiAgent: language.hear and language.interrupt are required");
   }
 
+  function getStageProps() {
+    return externality.getState();
+  }
+
+  function setAppMode(mode) {
+    character.dispatch({
+      type: "APP_MODE_CHANGED",
+      mode,
+    });
+  }
+
+  function setTrainingStatus(status = "idle", semantic = "idle") {
+    character.dispatch({
+      type: "TRAINING_STATUS",
+      payload: { status, semantic },
+    });
+  }
+
+  function setUserActive(source = "app") {
+    character.dispatch({
+      type: "USER_ACTIVE",
+      source,
+    });
+  }
+
   async function hear(input, handlers = {}) {
     const userText = typeof input === "string" ? input : input?.text ?? "";
     const messageId =
       typeof input === "string"
-        ? `miki-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        : input?.messageId ??
-          `miki-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        ? createMessageId("miki")
+        : input?.messageId ?? createMessageId("miki");
 
     const trimmed = userText.trim();
     if (!trimmed) {
@@ -28,13 +86,11 @@ export function createMikiAgent({
       };
     }
 
-    // 1. 角色听到用户输入
     character.dispatch({
       type: "USER_ACTIVE",
       source: "chat_input",
     });
 
-    // 2. 回忆（先留最小接口，后面可接真实 memory）
     let memoryContext = null;
     if (memory?.recall) {
       try {
@@ -50,7 +106,6 @@ export function createMikiAgent({
       language.remind(memoryContext);
     }
 
-    // 3. 让 language 负责流式输出、控制符解析、printer、角色阶段事件
     const result = await language.hear(
       {
         text: trimmed,
@@ -60,7 +115,6 @@ export function createMikiAgent({
       handlers
     );
 
-    // 4. 写回记忆（先占位）
     if (memory?.rememberTurn) {
       try {
         await memory.rememberTurn({
@@ -83,12 +137,194 @@ export function createMikiAgent({
     return language.isBusy?.() ?? false;
   }
 
+  function getDebugAPI() {
+    return {
+      getCharacterState: () => character.getState?.(),
+      dispatchCharacter: (event) => character.dispatch(event),
+
+      beginChat: (messageId = "debug-chat") =>
+        character.dispatch({
+          type: "CHAT_BEGIN",
+          messageId,
+        }),
+
+      startSpeaking: (messageId = "debug-chat") =>
+        character.dispatch({
+          type: "CHAT_SPEAK_START",
+          messageId,
+        }),
+
+      token: (token = "debug token") =>
+        character.dispatch({
+          type: "CHAT_TOKEN",
+          token,
+        }),
+
+      endChat: (messageId = "debug-chat") =>
+        character.dispatch({
+          type: "CHAT_END",
+          messageId,
+        }),
+
+      setChatEmotion: (emotionKey) =>
+        character.dispatch({
+          type: "CHAT_CONTROL_EMOTION",
+          value: emotionKey,
+        }),
+
+      setChatMotion: (motionKey) =>
+        character.dispatch({
+          type: "CHAT_CONTROL_MOTION",
+          value: motionKey,
+        }),
+
+      setTraining: (status = "running", semantic = "focused") =>
+        character.dispatch({
+          type: "TRAINING_STATUS",
+          payload: { status, semantic },
+        }),
+
+      userActive: (source = "debug") =>
+        character.dispatch({
+          type: "USER_ACTIVE",
+          source,
+        }),
+
+      setCharacterMode: (nextMode) =>
+        character.dispatch({
+          type: "APP_MODE_CHANGED",
+          mode: nextMode,
+        }),
+
+      demoThink: (messageId = "debug-chat") => {
+        character.dispatch({
+          type: "CHAT_BEGIN",
+          messageId,
+        });
+      },
+
+      demoSpeak: (messageId = "debug-chat") => {
+        character.dispatch({
+          type: "CHAT_SPEAK_START",
+          messageId,
+        });
+      },
+
+      demoLine: (
+        {
+          messageId = "debug-chat",
+          emotion = null,
+          motion = null,
+        } = {}
+      ) => {
+        character.dispatch({
+          type: "CHAT_BEGIN",
+          messageId,
+        });
+
+        if (emotion) {
+          character.dispatch({
+            type: "CHAT_CONTROL_EMOTION",
+            value: emotion,
+          });
+        }
+
+        if (motion) {
+          character.dispatch({
+            type: "CHAT_CONTROL_MOTION",
+            value: motion,
+          });
+        }
+
+        character.dispatch({
+          type: "CHAT_SPEAK_START",
+          messageId,
+        });
+      },
+
+      getLanguage: () => language,
+
+      remindLanguage: (memoryContext) =>
+        language.remind?.(memoryContext),
+
+      hearLanguage: async (text, extra = {}) => {
+        return language.hear(
+          {
+            text,
+            messageId: extra.messageId ?? "debug-language",
+            memoryContext: extra.memoryContext ?? null,
+          },
+          {
+            onThinkingStart: () => console.log("[debug language] thinking"),
+            onTextChunk: (chunk) => console.log("[debug language] chunk:", chunk),
+            onTextUpdate: (fullText) =>
+              console.log("[debug language] full:", fullText),
+            onControl: (event) =>
+              console.log("[debug language] control:", event),
+            onDone: (finalText) =>
+              console.log("[debug language] done:", finalText),
+            onInterrupted: (partialText) =>
+              console.log("[debug language] interrupted:", partialText),
+            onError: (err, partialText) =>
+              console.error("[debug language] error:", err, partialText),
+            ...extra.handlers,
+          }
+        );
+      },
+
+      interruptLanguage: () => language.interrupt?.(),
+      isLanguageBusy: () => language.isBusy?.(),
+
+      hear: async (text) => {
+        return hear(
+          {
+            text,
+            messageId: "debug-agent",
+          },
+          {
+            onThinkingStart: () => console.log("[debug hear] thinking"),
+            onTextChunk: (chunk) => console.log("[debug hear] chunk:", chunk),
+            onTextUpdate: (fullText) => console.log("[debug hear] full:", fullText),
+            onDone: (finalText) => console.log("[debug hear] done:", finalText),
+            onInterrupted: (partialText) =>
+              console.log("[debug hear] interrupted:", partialText),
+            onError: (err, partialText) =>
+              console.error("[debug hear] error:", err, partialText),
+          }
+        );
+      },
+
+      interruptAgent: () => interrupt(),
+      isAgentBusy: () => isBusy(),
+
+      externality: {
+        getState: () => externality.getState(),
+        setModelKey: (modelKey) => externality.setModelKey(modelKey),
+        setPosition: (position) => externality.setPosition(position),
+        setScale: (scale) => externality.setScale(scale),
+        patch: (partial) => externality.patch(partial),
+        reset: () =>
+          externality.patch({
+            modelKey: "normal",
+            position: { x: 0.5, y: 0.85 },
+            scale: 1.0,
+          }),
+      },
+    };
+  }
+
   return {
     hear,
     interrupt,
     isBusy,
-    language,
-    memory,
-    character,
+
+    setAppMode,
+    setTrainingStatus,
+    setUserActive,
+
+    getStageProps,
+    getDebugAPI,
+
+    externality,
   };
 }

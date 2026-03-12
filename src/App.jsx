@@ -24,81 +24,55 @@ import {
 import { APP_CONFIG } from "./config";
 
 import { createMikiAgent } from "./domains/miki_san/createMikiAgent";
-import { createCharacterRuntimeBridge } from "./domains/miki_san/motor/characterRuntimeBridge";
-import { createCharacterOrchestrator } from "./domains/miki_san/motor/characterOrchestrator";
-import { createLanguageModule } from "./domains/miki_san/language/languageModule";
-import { emotionEngine } from "./domains/miki_san/body/emotionEngine";
-import { emotionMapper } from "./domains/miki_san/motor/emotionMapper";
-import { motionMapper } from "./domains/miki_san/motor/motionMapper";
-
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const DEFAULT_STAGE_PROPS = {
+  modelKey: "normal",
+  position: { x: 0.5, y: 1 },
+  scale: 1.0,
+};
+
+const MAGICAL_STAGE_PROPS = {
+  modelKey: "magical",
+  position: { x: 0.5, y: 1 },
+  scale: 1.0,
+};
+
 export default function App() {
   const [mode, setMode] = useState(AppMode.CHAT);
-  const [modelKey, setModelKey] = useState("normal");
   const [params, setParams] = useState(initialHyperParams);
   const [training, setTraining] = useState(initialTrainingState);
   const [battle, setBattle] = useState(initialBattleState);
   const [battleExiting, setBattleExiting] = useState(false);
+  const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
 
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
-
-  const runtimeBridgeRef = useRef(null);
-  const characterOrchestratorRef = useRef(null);
-  const languageRef = useRef(null);
+  const pollingRef = useRef(false);
   const mikiAgentRef = useRef(null);
 
-  if (!runtimeBridgeRef.current) {
-    runtimeBridgeRef.current = createCharacterRuntimeBridge({
-      emotionEngine,
-    });
-  }
-
-  if (!characterOrchestratorRef.current) {
-    characterOrchestratorRef.current = createCharacterOrchestrator({
-      runtimeBridge: runtimeBridgeRef.current,
-      emotionMapper,
-      motionMapper,
-    });
-  }
-
-  if (!languageRef.current) {
-    languageRef.current = createLanguageModule({
-      onCharacterEvent: (event) => {
-        characterOrchestratorRef.current?.dispatch(event);
+  if (!mikiAgentRef.current) {
+    mikiAgentRef.current = createMikiAgent({
+      memory: null,
+      onExternalityChange: (nextStageProps) => {
+        setStageProps(nextStageProps);
       },
     });
   }
 
-  if (!mikiAgentRef.current) {
-    mikiAgentRef.current = createMikiAgent({
-      character: characterOrchestratorRef.current,
-      language: languageRef.current,
-      memory: null, // 以后接真实 memory 模块
-    });
-  }
-
-  const characterOrchestrator = characterOrchestratorRef.current;
   const mikiAgent = mikiAgentRef.current;
-
-  useEffect(() => {
-    emotionEngine.setAutonomousBehaviorEnabled?.(false);
-  }, []);
 
   useEffect(() => {
     async function bootstrapTrainingState() {
       try {
         const status = await fetchBattleStatus();
-
         console.log("[bootstrap] battle status:", status);
 
         if (status.running) {
-          // 如果训练已经在运行
-          setModelKey("magical");
+          mikiAgent.externality.patch(MAGICAL_STAGE_PROPS);
 
           setBattle((prev) => ({
             ...prev,
@@ -112,20 +86,18 @@ export default function App() {
 
           setMode(AppMode.BATTLE);
         } else {
-          // 没有训练任务
-          setModelKey("normal");
+          mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
           setMode(AppMode.CHAT);
         }
       } catch (err) {
         console.error("[bootstrap] failed to get battle status:", err);
-
-        setModelKey("normal");
+        mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
         setMode(AppMode.CHAT);
       }
     }
 
     bootstrapTrainingState();
-  }, []);
+  }, [mikiAgent]);
 
   async function loadBattleLoss() {
     try {
@@ -137,6 +109,22 @@ export default function App() {
     } catch (err) {
       console.error("[battle] fetch loss failed:", err);
     }
+  }
+
+  async function handleTrainingFinishedExit() {
+    stopLossPolling();
+
+    setBattle((prev) => ({
+      ...prev,
+      contactMessages: ["已取得悲叹之种。", "辛苦啦，一起回去吧。"],
+    }));
+
+    await delay(800);
+
+    mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
+    setBattle(initialBattleState);
+    setBattleExiting(false);
+    setMode(AppMode.CHAT);
   }
 
   async function checkBattleStatus() {
@@ -153,8 +141,6 @@ export default function App() {
       console.error("[battle] fetch status failed:", err);
     }
   }
-
-  const pollingRef = useRef(false);
 
   function startLossPolling() {
     stopLossPolling();
@@ -191,13 +177,13 @@ export default function App() {
       console.log("[battle] startBattle ok:", startResult);
     } catch (err) {
       console.error("[battle] startBattle failed:", err);
+      mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
       setMode(AppMode.CHAT);
       return;
     }
 
-
     await delay(150);
-    setModelKey("magical");
+    mikiAgent.externality.patch(MAGICAL_STAGE_PROPS);
     await delay(350);
 
     try {
@@ -207,7 +193,11 @@ export default function App() {
         ...prev,
         contactMessages: [
           "准备好了吗？要进入结界了！",
-          `*已进入魔女结界：PID ${startResult?.pid ?? "unknown"}`,
+          `*已进入魔女结界：${
+            startResult?.result?.job_id
+              ? `JOB ${startResult.result.job_id}`
+              : `PID ${startResult?.result?.pid ?? startResult?.pid ?? "unknown"}`
+          }`,
           "站在我身后就好，帮我盯着魔力波动！",
         ],
         lossData: result.data ?? [],
@@ -240,263 +230,39 @@ export default function App() {
       console.error("[battle] stop failed:", err);
     }
 
-    setModelKey("normal");
+    mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
     setBattle(initialBattleState);
     setMode(AppMode.CHAT);
     setBattleExiting(false);
   }
 
-  async function handleTrainingFinishedExit() {
-    stopLossPolling();
-
-    setBattle((prev) => ({
-      ...prev,
-      contactMessages: [
-        "已取得悲叹之种。",
-        "辛苦啦，一起回去吧。",
-      ],
-    }));
-
-    setModelKey("normal");
-    setBattleExiting(false);
-    setMode(AppMode.CHAT);
-  }
-
   useEffect(() => {
-    characterOrchestrator.dispatch({
-      type: "APP_MODE_CHANGED",
-      mode,
-    });
+    mikiAgent.setAppMode(mode);
 
     if (mode === AppMode.BATTLE) {
-      emotionEngine.setMode?.("battle");
-
       loadBattleLoss();
       startLossPolling();
-
-      characterOrchestrator.dispatch({
-        type: "TRAINING_STATUS",
-        payload: {
-          status: "running",
-          semantic: "focused",
-        },
-      });
+      mikiAgent.setTrainingStatus("running", "focused");
     } else {
-      emotionEngine.setMode?.("chat");
-
       stopLossPolling();
-
-      characterOrchestrator.dispatch({
-        type: "TRAINING_STATUS",
-        payload: {
-          status: "idle",
-          semantic: "idle",
-        },
-      });
+      mikiAgent.setTrainingStatus("idle", "idle");
     }
 
     return () => {
       stopLossPolling();
     };
-  }, [mode, characterOrchestrator]);
+  }, [mode, mikiAgent]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    window.mikiCharacterDebug = {
-      // ===== 角色状态 =====
-      getCharacterState: () => characterOrchestrator.getState(),
-
-      // ===== 原始角色事件入口 =====
-      dispatchCharacter: (event) => characterOrchestrator.dispatch(event),
-
-      beginChat: (messageId = "debug-chat") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        }),
-
-      startSpeaking: (messageId = "debug-chat") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        }),
-
-      token: (token = "debug token") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_TOKEN",
-          token,
-        }),
-
-      endChat: (messageId = "debug-chat") =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_END",
-          messageId,
-        }),
-
-      setChatEmotion: (emotionKey) =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_CONTROL_EMOTION",
-          value: emotionKey,
-        }),
-
-      setChatMotion: (motionKey) =>
-        characterOrchestrator.dispatch({
-          type: "CHAT_CONTROL_MOTION",
-          value: motionKey,
-        }),
-
-      setTraining: (status = "running", semantic = "focused") =>
-        characterOrchestrator.dispatch({
-          type: "TRAINING_STATUS",
-          payload: { status, semantic },
-        }),
-
-      userActive: (source = "debug") =>
-        characterOrchestrator.dispatch({
-          type: "USER_ACTIVE",
-          source,
-        }),
-
-      setCharacterMode: (nextMode) =>
-        characterOrchestrator.dispatch({
-          type: "APP_MODE_CHANGED",
-          mode: nextMode,
-        }),
-
-      demoThink: (messageId = "debug-chat") => {
-        characterOrchestrator.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        });
-      },
-
-      demoSpeak: (messageId = "debug-chat") => {
-        characterOrchestrator.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        });
-      },
-
-      demoLine: (
-        {
-          messageId = "debug-chat",
-          emotion = null,
-          motion = null,
-        } = {}
-      ) => {
-        characterOrchestrator.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        });
-
-        if (emotion) {
-          characterOrchestrator.dispatch({
-            type: "CHAT_CONTROL_EMOTION",
-            value: emotion,
-          });
-        }
-
-        if (motion) {
-          characterOrchestrator.dispatch({
-            type: "CHAT_CONTROL_MOTION",
-            value: motion,
-          });
-        }
-
-        characterOrchestrator.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        });
-      },
-      // ===== language 级调试 =====
-      getLanguage: () => languageRef.current,
-
-      remindLanguage: (memoryContext) =>
-        languageRef.current?.remind?.(memoryContext),
-
-      hearLanguage: async (text, extra = {}) => {
-        return languageRef.current?.hear(
-          {
-            text,
-            messageId: extra.messageId ?? "debug-language",
-            memoryContext: extra.memoryContext ?? null,
-          },
-          {
-            onThinkingStart: () => console.log("[debug language] thinking"),
-            onTextChunk: (chunk) => console.log("[debug language] chunk:", chunk),
-            onTextUpdate: (fullText) =>
-              console.log("[debug language] full:", fullText),
-            onControl: (event) =>
-              console.log("[debug language] control:", event),
-            onDone: (finalText) =>
-              console.log("[debug language] done:", finalText),
-            onInterrupted: (partialText) =>
-              console.log("[debug language] interrupted:", partialText),
-            onError: (err, partialText) =>
-              console.error("[debug language] error:", err, partialText),
-            ...extra.handlers,
-          }
-        );
-      },
-
-      interruptLanguage: () => languageRef.current?.interrupt?.(),
-
-      isLanguageBusy: () => languageRef.current?.isBusy?.(),
-      // ===== Agent 级调试 =====
-      hear: async (text) => {
-        return mikiAgent.hear(
-          {
-            text,
-            messageId: "debug-agent",
-          },
-          {
-            onThinkingStart: () => console.log("[debug hear] thinking"),
-            onTextChunk: (chunk) => console.log("[debug hear] chunk:", chunk),
-            onTextUpdate: (fullText) => console.log("[debug hear] full:", fullText),
-            onDone: (finalText) => console.log("[debug hear] done:", finalText),
-            onInterrupted: (partialText) =>
-              console.log("[debug hear] interrupted:", partialText),
-            onError: (err, partialText) =>
-              console.error("[debug hear] error:", err, partialText),
-          }
-        );
-      },
-
-      interruptAgent: () => mikiAgent.interrupt(),
-
-      isAgentBusy: () => mikiAgent.isBusy?.(),
-
-      demoSmile: () => {
-        const messageId = "debug-demo";
-        characterOrchestrator.dispatch({
-          type: "CHAT_START",
-          messageId,
-        });
-        characterOrchestrator.dispatch({
-          type: "CHAT_CONTROL_EMOTION",
-          value: "smile",
-        });
-        characterOrchestrator.dispatch({
-          type: "CHAT_CONTROL_MOTION",
-          value: "excited",
-        });
-      },
-
-      demoStop: () => {
-        characterOrchestrator.dispatch({
-          type: "CHAT_END",
-          messageId: "debug-demo",
-        });
-      },
-    };
-
+    window.mikiCharacterDebug = mikiAgent.getDebugAPI();
     console.log("[mikiCharacterDebug] ready");
 
     return () => {
       delete window.mikiCharacterDebug;
     };
-  }, [characterOrchestrator, mikiAgent]);
+  }, [mikiAgent]);
 
   useEffect(() => {
     return () => {
@@ -513,21 +279,24 @@ export default function App() {
       {mode === AppMode.CHAT && (
         <>
           <aside className="param-column">
-          <HyperParamPanel
-            onBattle={handleEnterBattleMode}
-            disabled={false}
-          />
+            <HyperParamPanel
+              params={params}
+              setParams={setParams}
+              onBattle={handleEnterBattleMode}
+              disabled={false}
+            />
           </aside>
 
           <main className="stage-column">
-            <Live2DStage modelKey={modelKey} />
+            <Live2DStage
+              modelKey={stageProps.modelKey}
+              position={stageProps.position}
+              scale={stageProps.scale}
+            />
           </main>
 
           <aside className="chat-column">
-            <ChatPanel
-              disabled={false}
-              agent={mikiAgent}
-            />
+            <ChatPanel disabled={false} agent={mikiAgent} />
           </aside>
         </>
       )}
@@ -535,7 +304,11 @@ export default function App() {
       {mode === AppMode.TRAINING && (
         <main className="training-stage-layout">
           <div className="training-stage-column">
-            <Live2DStage modelKey={modelKey} />
+            <Live2DStage
+              modelKey={stageProps.modelKey}
+              position={stageProps.position}
+              scale={stageProps.scale}
+            />
           </div>
 
           <div className="training-info-column">
@@ -551,7 +324,11 @@ export default function App() {
           </aside>
 
           <section className="battle-stage-column">
-            <Live2DStage modelKey={modelKey} />
+            <Live2DStage
+              modelKey={stageProps.modelKey}
+              position={stageProps.position}
+              scale={stageProps.scale}
+            />
           </section>
 
           <aside className="battle-loss-column">

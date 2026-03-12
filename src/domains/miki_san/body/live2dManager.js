@@ -5,6 +5,11 @@ import { live2dController } from "./live2dController";
 
 window.PIXI = PIXI;
 
+const DEFAULT_LAYOUT = {
+  position: { x: 0.5, y: 1.0 },
+  scale: 1.0,
+};
+
 export class Live2DManager {
   constructor(container) {
     this.container = container;
@@ -14,6 +19,11 @@ export class Live2DManager {
     this.initialized = false;
 
     this._tickerBound = false;
+
+    this.layoutState = {
+      position: { ...DEFAULT_LAYOUT.position },
+      scale: DEFAULT_LAYOUT.scale,
+    };
 
     // 仅作调试/状态记录，不直接驱动口型逻辑
     this.speaking = false;
@@ -39,7 +49,6 @@ export class Live2DManager {
     this.app.view.classList.add("live2d-canvas");
     this.container.appendChild(this.app.view);
 
-    // 关键：每帧末尾重新覆盖 mouth 参数
     if (!this._tickerBound) {
       this.app.ticker.add(() => {
         live2dController.applyMouthOverride();
@@ -91,8 +100,29 @@ export class Live2DManager {
 
     this.layout();
 
-    // 模型切换后立刻补一次嘴型覆盖，避免 speaking 中切模型时口型丢失
     live2dController.applyMouthOverride();
+  }
+
+  setLayout({
+    position = this.layoutState.position,
+    scale = this.layoutState.scale,
+  } = {}) {
+    const nextPosition =
+      position &&
+      typeof position.x === "number" &&
+      typeof position.y === "number"
+        ? { x: position.x, y: position.y }
+        : { ...this.layoutState.position };
+
+    const nextScale =
+      typeof scale === "number" && Number.isFinite(scale) ? scale : this.layoutState.scale;
+
+    this.layoutState = {
+      position: nextPosition,
+      scale: nextScale,
+    };
+
+    this.layout();
   }
 
   layout() {
@@ -105,17 +135,23 @@ export class Live2DManager {
     const mw = Math.max(bounds.width, 1);
     const mh = Math.max(bounds.height, 1);
 
-    const scale = (h * 1) / mh;
-    this.model.scale.set(scale);
+    const { position, scale } = this.layoutState;
+
+    // 先按高度进行基准缩放，再乘外部 scale
+    const baseScale = h / mh;
+    const finalScale = baseScale * scale;
+
+    this.model.scale.set(finalScale);
 
     const scaledBounds = this.model.getLocalBounds();
 
-    const targetFootX = w * 0.5;
-    const targetFootY = h * 1;
+    const targetFootX = w * position.x;
+    const targetFootY = h * position.y;
 
     this.model.x =
       targetFootX -
       (scaledBounds.x + scaledBounds.width / 2) * this.model.scale.x;
+
     this.model.y =
       targetFootY -
       (scaledBounds.y + scaledBounds.height) * this.model.scale.y;
@@ -267,18 +303,12 @@ export class Live2DManager {
     console.warn("[Live2DManager] motion not found:", motionName);
   }
 
-  /**
-   * 供 controller 优先调用的统一口型接口
-   */
   setMouthOpen(value) {
     const v = Math.max(0, Math.min(1, Number(value) || 0));
     this.mouthOpen = v;
     return this.setParameterValueById("ParamMouthOpenY", v);
   }
 
-  /**
-   * 供 controller 使用的统一参数接口
-   */
   setParameterValueById(paramId, value) {
     if (!this.model) return false;
 
@@ -304,17 +334,11 @@ export class Live2DManager {
     return false;
   }
 
-  /**
-   * 只记录 speaking 状态，真正嘴型刷新由 controller+speechEngine 决定
-   */
   setSpeaking(active) {
     this.speaking = !!active;
     return true;
   }
 
-  /**
-   * motion 停止接口，供 controller.interrupt() 调用
-   */
   stopAllMotions() {
     if (!this.model) return false;
 

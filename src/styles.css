@@ -121,7 +121,7 @@ select:focus {
 
 .mode-chat {
   display: grid;
-  grid-template-columns: 0.82fr 1.42fr 1.76fr;
+  grid-template-columns: 1fr 1.2fr 1.8fr;
   gap: 18px;
   padding: 18px;
   width: 100%;
@@ -812,7 +812,7 @@ select:focus {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr 2fr;
+  grid-template-columns: 1fr 1.2fr 1.8fr;
   gap: 18px;
   padding: 18px;
   overflow: hidden;
