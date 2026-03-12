@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Live2DManager } from "../live2d/live2dManager";
-import { live2dController } from "../live2d/live2dController";
+import { Live2DManager } from "../miki_san/body/live2dManager";
+import { live2dController } from "../miki_san/body/live2dController";
 
 export default function Live2DStage({ modelKey }) {
   const containerRef = useRef(null);

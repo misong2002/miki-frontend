@@ -1,6 +1,6 @@
 import * as PIXI from "pixi.js";
 import { Live2DModel } from "pixi-live2d-display/cubism4";
-import { MODELS } from "../constants/models";
+import { MODELS } from "../../../constants/models";
 import { live2dController } from "./live2dController";
 
 window.PIXI = PIXI;

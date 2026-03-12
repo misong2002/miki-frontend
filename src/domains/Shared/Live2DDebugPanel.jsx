@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { live2dController } from "../live2d/live2dController";
+import { live2dController } from "../miki_san/body/live2dController";
 
 export default function Live2DDebugPanel() {
   const [expressionId, setExpressionId] = useState("10");

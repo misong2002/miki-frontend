@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import ChatPanel from "./components/ChatPanel";
-import HyperParamPanel from "./components/HyperParamPanel";
-import TransitionOverlay from "./components/TransitionOverlay";
-import Live2DStage from "./components/Live2DStage";
-import ContactPanel from "./components/ContactPanel";
-import BattlePanel from "./components/BattlePanel";
-import Live2DDebugPanel from "./components/Live2DDebugPanel";
+import ChatPanel from "./domains/Chat/components/ChatPanel";
+import HyperParamPanel from "./domains/Battle/components/HyperParamPanel";
+import TransitionOverlay from "./domains/Shared/TransitionOverlay";
+import Live2DStage from "./domains/Shared/Live2DStage";
+import ContactPanel from "./domains/Chat/components/ContactPanel";
+import BattlePanel from "./domains/Battle/components/BattlePanel";
+import Live2DDebugPanel from "./domains/Shared/Live2DDebugPanel";
 
 import {
   AppMode,
@@ -19,17 +19,17 @@ import {
   startBattle,
   stopBattle,
   fetchLossData,
-} from "./services/battleService";
+} from "./domains/Battle/services/battleService";
 import { APP_CONFIG } from "./config";
 
-import { emotionEngine } from "./live2d/emotionEngine";
-import { createCharacterOrchestrator } from "./agent/features/Motor/characterOrchestrator";
-import { createCharacterRuntimeBridge } from "./agent/features/Motor/characterRuntimeBridge";
-import { emotionMapper } from "./agent/features/Motor/emotionMapper";
-import { motionMapper } from "./agent/features/Motor/motionMapper";
+import { createMikiAgent } from "./domains/miki_san/createMikiAgent";
+import { createCharacterRuntimeBridge } from "./domains/miki_san/motor/characterRuntimeBridge";
+import { createCharacterOrchestrator } from "./domains/miki_san/motor/characterOrchestrator";
+import { createLanguageModule } from "./domains/miki_san/language/languageModule";
+import { emotionEngine } from "./domains/miki_san/body/emotionEngine";
+import { emotionMapper } from "./domains/miki_san/motor/emotionMapper";
+import { motionMapper } from "./domains/miki_san/motor/motionMapper";
 
-import { createLanguageModule } from "./agent/features/language/languageModule";
-import { createMikiAgent } from "./agent/createMikiAgent";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

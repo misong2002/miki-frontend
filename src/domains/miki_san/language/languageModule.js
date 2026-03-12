@@ -1,4 +1,4 @@
-import { sendChatStream } from "../../../services/chatService";
+import { sendChatStream } from "../../Chat/services/chatService";
 import { createControlStreamParser } from "./controlTagParser";
 import { createDeferred, takeNaturalChunk, normalizeHearInput } from "./languageUtils";
 
