@@ -19,6 +19,7 @@ import {
   startBattle,
   stopBattle,
   fetchLossData,
+  fetchBattleStatus,
 } from "./domains/Battle/services/battleService";
 import { APP_CONFIG } from "./config";
 
@@ -88,6 +89,44 @@ export default function App() {
     emotionEngine.setAutonomousBehaviorEnabled?.(false);
   }, []);
 
+  useEffect(() => {
+    async function bootstrapTrainingState() {
+      try {
+        const status = await fetchBattleStatus();
+
+        console.log("[bootstrap] battle status:", status);
+
+        if (status.running) {
+          // 如果训练已经在运行
+          setModelKey("magical");
+
+          setBattle((prev) => ({
+            ...prev,
+            contactMessages: [
+              "检测到已有训练任务仍在运行。",
+              status.session?.mode === "cluster"
+                ? `当前为集群任务：${status.session?.job_id ?? "unknown"}`
+                : `当前为本地任务：PID ${status.session?.pid ?? "unknown"}`,
+            ],
+          }));
+
+          setMode(AppMode.BATTLE);
+        } else {
+          // 没有训练任务
+          setModelKey("normal");
+          setMode(AppMode.CHAT);
+        }
+      } catch (err) {
+        console.error("[bootstrap] failed to get battle status:", err);
+
+        setModelKey("normal");
+        setMode(AppMode.CHAT);
+      }
+    }
+
+    bootstrapTrainingState();
+  }, []);
+
   async function loadBattleLoss() {
     try {
       const result = await fetchLossData();
@@ -100,11 +139,36 @@ export default function App() {
     }
   }
 
+  async function checkBattleStatus() {
+    if (mode !== AppMode.BATTLE || battleExiting) return;
+
+    try {
+      const status = await fetchBattleStatus();
+
+      if (!status.running) {
+        console.log("[battle] training finished, auto return to chat");
+        await handleTrainingFinishedExit();
+      }
+    } catch (err) {
+      console.error("[battle] fetch status failed:", err);
+    }
+  }
+
+  const pollingRef = useRef(false);
+
   function startLossPolling() {
     stopLossPolling();
 
-    pollTimerRef.current = setInterval(() => {
-      loadBattleLoss();
+    pollTimerRef.current = setInterval(async () => {
+      if (pollingRef.current) return;
+      pollingRef.current = true;
+
+      try {
+        await loadBattleLoss();
+        await checkBattleStatus();
+      } finally {
+        pollingRef.current = false;
+      }
     }, APP_CONFIG.lossPollIntervalMs);
   }
 
@@ -180,6 +244,22 @@ export default function App() {
     setBattle(initialBattleState);
     setMode(AppMode.CHAT);
     setBattleExiting(false);
+  }
+
+  async function handleTrainingFinishedExit() {
+    stopLossPolling();
+
+    setBattle((prev) => ({
+      ...prev,
+      contactMessages: [
+        "已取得悲叹之种。",
+        "辛苦啦，一起回去吧。",
+      ],
+    }));
+
+    setModelKey("normal");
+    setBattleExiting(false);
+    setMode(AppMode.CHAT);
   }
 
   useEffect(() => {

@@ -36,3 +36,13 @@ export async function fetchLossData() {
 
   return await response.json();
 }
+
+export async function fetchBattleStatus() {
+  const response = await fetch("/api/battle/status");
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch battle status: ${response.status}`);
+  }
+
+  return await response.json();
+}

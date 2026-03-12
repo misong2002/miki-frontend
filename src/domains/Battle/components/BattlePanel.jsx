@@ -35,7 +35,11 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
             <LineChart data={lossData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
               <XAxis dataKey="epoch" />
-              <YAxis domain={["auto", "auto"]} />
+              <YAxis
+              scale='log' 
+              domain={["auto", "auto"]} 
+              tickFormatter={(v) => v.toExponential(1)}
+              />
               <Tooltip />
               <Line
                 type="monotone"

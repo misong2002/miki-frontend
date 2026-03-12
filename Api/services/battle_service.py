@@ -5,18 +5,23 @@ import subprocess
 from pathlib import Path
 from threading import Lock
 from typing import Any
+import subprocess
+import json
+from urllib import request
 
 from config import (
     LOSS_FILE_PATH,
     BATTLE_SCRIPT_PATH,
     MIKI_ROOT,
     TRAIN_CONFIG_PATH,
+    BATTLE_STOP_SCRIPT_PATH
 )
 
 LOSS_FILE_PATH = Path(LOSS_FILE_PATH)
 BATTLE_SCRIPT_PATH = Path(BATTLE_SCRIPT_PATH)
 TRAIN_CONFIG_PATH = Path(TRAIN_CONFIG_PATH)
 MIKI_ROOT = Path(MIKI_ROOT).resolve()
+BATTLE_STOP_PATH = Path(BATTLE_STOP_SCRIPT_PATH)
 
 _battle_process = None
 _battle_lock = Lock()
@@ -65,75 +70,72 @@ def is_battle_running() -> bool:
     return _battle_process is not None and _battle_process.poll() is None
 
 
-def start_battle(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    global _battle_process
+def battle_start(payload: dict[str, Any]):
 
-    with _battle_lock:
-        if is_battle_running():
-            return {
-                "status": "already_running",
-                "pid": _battle_process.pid,
-            }, 200
+    battle_config = {
+        "model_name": payload.get("modelName", "hadron_Matrix_siren"),
+        "dataset": payload.get("dataset", "data/simulation.hdf5"),
+        "flux": payload.get("flux", "data/flux.dat"),
+        "output": payload.get("output", "data/siren_params.npz"),
+        "rounds": int(payload.get("rounds", 200)),
+        "lr": float(payload.get("lr", 1e-3)),
+        "layer_sizes": payload.get("layerSizes", [2, 128, 128, 3]),
+        "run_mode": payload.get("runMode", "local"),
+        "queue": payload.get("queue", "massive_distrib"),
+        "walltime": payload.get("walltime", "06:00:00"),
+        "nodes": int(payload.get("nodes", 1)),
+        "ppn": int(payload.get("ppn", 1)),
+    }
 
-        if not BATTLE_SCRIPT_PATH.exists():
-            return {
-                "status": "error",
-                "message": f"battle script not found: {BATTLE_SCRIPT_PATH}",
-            }, 500
+    with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(battle_config, f, ensure_ascii=False, indent=2)
 
-        try:
-            battle_config = build_battle_config(payload)
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"invalid payload: {e}",
-            }, 400
+    if LOSS_FILE_PATH.exists():
+        LOSS_FILE_PATH.unlink()
 
-        write_battle_config(battle_config)
-        clear_loss_file()
+    result = subprocess.run(
+        ["bash", str(BATTLE_SCRIPT_PATH), str(TRAIN_CONFIG_PATH)],
+        capture_output=True,
+        text=True,
+        cwd=str(MIKI_ROOT),
+    )
 
-        try:
-            _battle_process = subprocess.Popen(
-                ["bash", str(BATTLE_SCRIPT_PATH.resolve()), str(TRAIN_CONFIG_PATH.resolve())],
-                cwd=str(MIKI_ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=os.setsid,
-            )
-        except Exception as e:
-            _battle_process = None
-            return {
-                "status": "error",
-                "message": f"failed to start battle process: {e}",
-            }, 500
+    if result.returncode != 0:
+        {
+            "status": "error",
+            "message": result.stderr or result.stdout,
+        }, 500
 
+    stdout = result.stdout.strip()
+    try:
+        data = json.loads(stdout.splitlines()[-1])
+    except Exception:
+        data = {"raw_output": stdout}
+
+    return {
+        "status": "ok",
+        "result": data,
+    }
+
+
+def battle_stop():
+    result = subprocess.run(
+        ["bash", str(BATTLE_STOP_PATH)],
+        capture_output=True,
+        text=True,
+        cwd=str(MIKI_ROOT),
+    )
+
+    if result.returncode != 0:
         return {
-            "status": "started",
-            "pid": _battle_process.pid,
-            "config_path": str(TRAIN_CONFIG_PATH),
-            "config": battle_config,
-        }, 200
+            "status": "error",
+            "message": result.stderr or result.stdout,
+        }, 500
 
-
-def stop_battle() -> tuple[dict[str, Any], int]:
-    global _battle_process
-
-    with _battle_lock:
-        if _battle_process is None or _battle_process.poll() is not None:
-            _battle_process = None
-            return {"status": "not_running"}, 200
-
-        try:
-            os.killpg(os.getpgid(_battle_process.pid), signal.SIGTERM)
-            _battle_process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(_battle_process.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        finally:
-            _battle_process = None
-
-        return {"status": "stopped"}, 200
+    return {
+        "status": "ok",
+        "message": result.stdout.strip(),
+    }
 
 
 def read_battle_loss() -> tuple[dict[str, Any], int]:
