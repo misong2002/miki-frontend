@@ -1,17 +1,18 @@
 export async function startBattle(config) {
-  const response = await fetch("/api/battle/start", {
+  const res = await fetch("/api/battle/start", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(config),
+    body: JSON.stringify(config ?? {}),
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to start battle: ${response.status}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
   }
 
-  return await response.json();
+  return res.json();
 }
 
 export async function stopBattle() {

@@ -1,95 +1,248 @@
-export default function HyperParamPanel({
-  params,
-  setParams,
-  onBattle,
-  disabled,
-}) {
-  function updateField(key, value) {
-    setParams((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
+import { useEffect, useMemo, useState } from "react";
+import {
+  fetchTrainConfig,
+  saveTrainConfig,
+} from "../services/trainConfigService";
+
+function inferInputKind(value) {
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (Array.isArray(value) || (value && typeof value === "object")) return "json";
+  return "text";
+}
+
+function toDisplayValue(value) {
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return JSON.stringify(value, null, 2);
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return value ?? "";
+}
+
+function parseEditedValue(rawValue, originalValue) {
+  const kind = inferInputKind(originalValue);
+
+  if (kind === "number") {
+    const num = Number(rawValue);
+    if (Number.isNaN(num)) {
+      throw new Error(`invalid number: ${rawValue}`);
+    }
+    return num;
+  }
+
+  if (kind === "boolean") {
+    const lowered = String(rawValue).trim().toLowerCase();
+    if (lowered === "true") return true;
+    if (lowered === "false") return false;
+    throw new Error(`invalid boolean: ${rawValue}`);
+  }
+
+  if (kind === "json") {
+    return JSON.parse(rawValue);
+  }
+
+  return rawValue;
+}
+
+export default function HyperParamPanel({ onBattle, disabled }) {
+  const [config, setConfig] = useState({});
+  const [originalConfig, setOriginalConfig] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadConfig() {
+      setLoading(true);
+      setLoadError("");
+      setSaveError("");
+      setSaveMessage("");
+
+      try {
+        const result = await fetchTrainConfig();
+        if (cancelled) return;
+
+        const nextConfig = result?.config ?? {};
+        setConfig(nextConfig);
+        setOriginalConfig(nextConfig);
+      } catch (err) {
+        if (cancelled) return;
+        setLoadError(err.message || "failed to load train config");
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const entries = useMemo(() => Object.entries(config), [config]);
+
+  function updateField(key, rawValue) {
+    const originalValue = originalConfig[key];
+
+    try {
+      const parsed = parseEditedValue(rawValue, originalValue);
+      setConfig((prev) => ({
+        ...prev,
+        [key]: parsed,
+      }));
+      setSaveError("");
+    } catch {
+      setConfig((prev) => ({
+        ...prev,
+        [key]: rawValue,
+      }));
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError("");
+    setSaveMessage("");
+
+    try {
+      const result = await saveTrainConfig(config);
+      const nextConfig = result?.config ?? config;
+      setConfig(nextConfig);
+      setOriginalConfig(nextConfig);
+      setSaveMessage("saved");
+    } catch (err) {
+      setSaveError(err.message || "failed to save train config");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleBattle() {
+    if (disabled || saving || loading) return;
+
+    setSaveError("");
+    setSaveMessage("");
+
+    try {
+      const result = await saveTrainConfig(config);
+      const nextConfig = result?.config ?? config;
+
+      setConfig(nextConfig);
+      setOriginalConfig(nextConfig);
+
+      await onBattle?.(nextConfig);
+    } catch (err) {
+      setSaveError(err.message || "failed to save config before battle");
+    }
   }
 
   return (
-    <div className="panel param-panel">
-      <h2>战斗计划</h2>
+    <div className="panel param-panel train-config-panel">
+      <div className="train-config-header">
+        <h2 className="train-config-title">战斗计划</h2>
+        <div className="train-config-subtitle">edit and save directly</div>
+      </div>
 
-      <label>
-        模型构筑
-        <input
-          type="text"
-          value={params.modelName}
-          onChange={(e) => updateField("modelName", e.target.value)}
-          disabled={disabled}
-        />
-      </label>
+      {loading && <div className="panel-status">loading...</div>}
+      {loadError && <div className="panel-error">{loadError}</div>}
 
-      <label>
-        数据集
-        <input
-          type="text"
-          value={params.dataset}
-          onChange={(e) => updateField("dataset", e.target.value)}
-          disabled={disabled}
-        />
-      </label>
+      {!loading && !loadError && (
+        <>
+          <div className="train-config-scroll">
+            <div className="train-config-list">
+              {entries.map(([key, value]) => {
+                const originalValue = originalConfig[key];
+                const kind = inferInputKind(originalValue);
+                const displayValue = toDisplayValue(value);
 
-      <label>
-        束流
-        <input
-          type="text"
-          value={params.flux}
-          onChange={(e) => updateField("flux", e.target.value)}
-          disabled={disabled}
-        />
-      </label>
+                if (kind === "boolean") {
+                  return (
+                    <div key={key} className="train-config-item">
+                      <label className="train-config-label" htmlFor={`cfg-${key}`}>
+                        {key}
+                      </label>
+                      <select
+                        id={`cfg-${key}`}
+                        className="train-config-input"
+                        value={String(displayValue)}
+                        onChange={(e) => updateField(key, e.target.value)}
+                        disabled={disabled || saving}
+                      >
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    </div>
+                  );
+                }
 
-      <label>
-        输出模型参数
-        <input
-          type="text"
-          value={params.output}
-          onChange={(e) => updateField("output", e.target.value)}
-          disabled={disabled}
-        />
-      </label>
+                if (kind === "json") {
+                  return (
+                    <div key={key} className="train-config-item">
+                      <label className="train-config-label" htmlFor={`cfg-${key}`}>
+                        {key}
+                      </label>
+                      <textarea
+                        id={`cfg-${key}`}
+                        className="train-config-input train-config-textarea"
+                        value={displayValue}
+                        onChange={(e) => updateField(key, e.target.value)}
+                        disabled={disabled || saving}
+                        rows={4}
+                      />
+                    </div>
+                  );
+                }
 
-      <label>
-        轮数
-        <input
-          type="number"
-          value={params.rounds}
-          onChange={(e) => updateField("rounds", Number(e.target.value))}
-          disabled={disabled}
-        />
-      </label>
+                return (
+                  <div key={key} className="train-config-item">
+                    <label className="train-config-label" htmlFor={`cfg-${key}`}>
+                      {key}
+                    </label>
+                    <input
+                      id={`cfg-${key}`}
+                      className="train-config-input"
+                      type={kind === "number" ? "number" : "text"}
+                      value={displayValue}
+                      onChange={(e) => updateField(key, e.target.value)}
+                      disabled={disabled || saving}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
-      <label>
-        学习率
-        <input
-          type="number"
-          step="0.0001"
-          value={params.lr}
-          onChange={(e) => updateField("lr", Number(e.target.value))}
-          disabled={disabled}
-        />
-      </label>
+          {saveError && <div className="panel-error">{saveError}</div>}
+          {saveMessage && <div className="panel-success">{saveMessage}</div>}
 
-      <label>
-        层级大小
-        <input
-          type="text"
-          value={params.layerSizes}
-          onChange={(e) => updateField("layerSizes", e.target.value)}
-          disabled={disabled}
-          placeholder="2,128,128,3"
-        />
-      </label>
+          <div className="train-config-actions">
+            <button
+              className="train-config-btn"
+              onClick={handleSave}
+              disabled={disabled || saving || loading}
+            >
+              {saving ? "saving..." : "save"}
+            </button>
 
-      <button onClick={onBattle} disabled={disabled}>
-        开启战斗
-      </button>
+            <button
+              className="train-config-btn train-config-btn-primary"
+              onClick={handleBattle}
+              disabled={disabled || saving || loading}
+            >
+              start battle
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

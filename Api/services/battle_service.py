@@ -9,13 +9,13 @@ from typing import Any
 from config import (
     LOSS_FILE_PATH,
     BATTLE_SCRIPT_PATH,
-    BATTLE_CONFIG_PATH,
     MIKI_ROOT,
+    TRAIN_CONFIG_PATH,
 )
 
 LOSS_FILE_PATH = Path(LOSS_FILE_PATH)
 BATTLE_SCRIPT_PATH = Path(BATTLE_SCRIPT_PATH)
-BATTLE_CONFIG_PATH = Path(BATTLE_CONFIG_PATH)
+TRAIN_CONFIG_PATH = Path(TRAIN_CONFIG_PATH)
 MIKI_ROOT = Path(MIKI_ROOT).resolve()
 
 _battle_process = None
@@ -49,8 +49,8 @@ def build_battle_config(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_battle_config(config: dict[str, Any]) -> None:
-    BATTLE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(BATTLE_CONFIG_PATH, "w", encoding="utf-8") as f:
+    TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 
@@ -94,7 +94,7 @@ def start_battle(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
         try:
             _battle_process = subprocess.Popen(
-                ["bash", str(BATTLE_SCRIPT_PATH.resolve()), str(BATTLE_CONFIG_PATH.resolve())],
+                ["bash", str(BATTLE_SCRIPT_PATH.resolve()), str(TRAIN_CONFIG_PATH.resolve())],
                 cwd=str(MIKI_ROOT),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -110,7 +110,7 @@ def start_battle(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
         return {
             "status": "started",
             "pid": _battle_process.pid,
-            "config_path": str(BATTLE_CONFIG_PATH),
+            "config_path": str(TRAIN_CONFIG_PATH),
             "config": battle_config,
         }, 200
 

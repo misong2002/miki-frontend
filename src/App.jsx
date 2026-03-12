@@ -115,7 +115,7 @@ export default function App() {
     }
   }
 
-  async function handleEnterBattleMode() {
+  async function handleEnterBattleMode(trainConfig) {
     if (mode !== AppMode.CHAT) return;
 
     setMode(AppMode.TRANSFORMING);
@@ -123,13 +123,14 @@ export default function App() {
     let startResult = null;
 
     try {
-      startResult = await startBattle(params);
+      startResult = await startBattle(trainConfig);
       console.log("[battle] startBattle ok:", startResult);
     } catch (err) {
       console.error("[battle] startBattle failed:", err);
       setMode(AppMode.CHAT);
       return;
     }
+
 
     await delay(150);
     setModelKey("magical");
@@ -432,12 +433,10 @@ export default function App() {
       {mode === AppMode.CHAT && (
         <>
           <aside className="param-column">
-            <HyperParamPanel
-              params={params}
-              setParams={setParams}
-              onBattle={handleEnterBattleMode}
-              disabled={false}
-            />
+          <HyperParamPanel
+            onBattle={handleEnterBattleMode}
+            disabled={false}
+          />
           </aside>
 
           <main className="stage-column">
