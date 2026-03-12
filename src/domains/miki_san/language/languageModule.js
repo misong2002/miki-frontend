@@ -38,11 +38,9 @@ export function createLanguageModule({
     }
   }
 
-  function finalizeRun(run, payload = {}) {
-    if (run.finalized) return;
-    run.finalized = true;
-
-    stopTimers(run);
+  function endCharacterSpeech(run) {
+    if (run.characterEnded) return;
+    run.characterEnded = true;
 
     if (run.chatBegun) {
       emitCharacterEvent({
@@ -50,6 +48,13 @@ export function createLanguageModule({
         messageId: run.messageId,
       });
     }
+  }
+
+  function finalizeRun(run, payload = {}) {
+    if (run.finalized) return;
+    run.finalized = true;
+
+    stopTimers(run);
 
     currentRun = null;
     run.deferred.resolve({
@@ -146,16 +151,22 @@ export function createLanguageModule({
             run.handlers.onSpeakingStop?.();
           }
 
-          run.handlers.onDone?.(run.displayedText || "……咦，我刚刚一下子卡住了。");
+          // 先停角色说话
+          endCharacterSpeech(run);
+
+          const finalText = run.displayedText || "……咦，我刚刚一下子卡住了。";
+
+          // 再通知 UI 完成
+          run.handlers.onDone?.(finalText);
 
           finalizeRun(run, {
             status: "done",
-            text: run.displayedText || "……咦，我刚刚一下子卡住了。",
+            text: finalText,
           });
         }
         return;
       }
-
+      
       const chunk = takeNaturalChunk(queue);
       if (!chunk) return;
 
@@ -221,6 +232,7 @@ export function createLanguageModule({
       chatBegun: false,
       speakingStarted: false,
       finalized: false,
+      characterEnded: false,
     };
 
     currentRun = run;
@@ -256,32 +268,34 @@ export function createLanguageModule({
       flushParserRemainder(run);
       run.streamFinished = true;
     } catch (err) {
-      if (err?.name === "AbortError") {
-        flushParserRemainder(run);
+        if (err?.name === "AbortError") {
+          flushParserRemainder(run);
 
-        if (run.networkBuffer) {
-          run.displayQueue += run.networkBuffer;
-          run.networkBuffer = "";
+          if (run.networkBuffer) {
+            run.displayQueue += run.networkBuffer;
+            run.networkBuffer = "";
+          }
+
+          if (run.displayQueue) {
+            run.displayedText += run.displayQueue;
+            run.displayQueue = "";
+          }
+
+          if (run.speakingStarted) {
+            run.handlers.onSpeakingStop?.();
+          }
+
+          endCharacterSpeech(run);
+
+          run.handlers.onInterrupted?.(run.displayedText || "……");
+
+          finalizeRun(run, {
+            status: "interrupted",
+            text: run.displayedText || "……",
+          });
+
+          return deferred.promise;
         }
-
-        if (run.displayQueue) {
-          run.displayedText += run.displayQueue;
-          run.displayQueue = "";
-        }
-
-        if (run.chatStarted) {
-          run.handlers.onSpeakingStop?.();
-        }
-
-        run.handlers.onInterrupted?.(run.displayedText || "……");
-        finalizeRun(run, {
-          status: "interrupted",
-          text: run.displayedText || "……",
-        });
-
-        return deferred.promise;
-      }
-
       flushParserRemainder(run);
 
       if (run.networkBuffer) {
@@ -298,25 +312,30 @@ export function createLanguageModule({
 
       run.displayQueue += suffix;
 
-      const failWatcher = setInterval(() => {
-        const empty = !run.networkBuffer && !run.displayQueue;
+        const failWatcher = setInterval(() => {
+          const empty = !run.networkBuffer && !run.displayQueue;
 
-        if (empty) {
-          clearInterval(failWatcher);
+          if (empty) {
+            clearInterval(failWatcher);
 
-          if (run.chatStarted) {
-            run.handlers.onSpeakingStop?.();
+            if (run.speakingStarted) {
+              run.handlers.onSpeakingStop?.();
+            }
+
+            endCharacterSpeech(run);
+
+            run.handlers.onError?.(
+              err,
+              run.displayedText || `请求失败：${err.message}`
+            );
+
+            finalizeRun(run, {
+              status: "error",
+              text: run.displayedText || `请求失败：${err.message}`,
+              error: err,
+            });
           }
-
-          run.handlers.onError?.(err, run.displayedText || `请求失败：${err.message}`);
-
-          finalizeRun(run, {
-            status: "error",
-            text: run.displayedText || `请求失败：${err.message}`,
-            error: err,
-          });
-        }
-      }, 50);
+        }, 50);
     }
 
     return deferred.promise;

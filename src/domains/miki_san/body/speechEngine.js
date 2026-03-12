@@ -71,10 +71,23 @@ class SpeechEngine {
       this.stopMouthLoop();
       this.current = {
         ...this.current,
+        speaking: false,
         mouthOpen: 0,
       };
-      live2dController.setMouthOpen(0);
+    live2dController.setSpeaking(false);
+    live2dController.setMouthOpen(0);
+    live2dController.applyMouthOverride?.();
+
+    // 再补一帧，吃掉浏览器/动画系统的尾巴
+    requestAnimationFrame(() => {
       live2dController.applyMouthOverride?.();
+      });
+
+    console.log("[SpeechEngine] setSpeaking", {
+      time: new Date().toLocaleTimeString(),
+      active: next,
+      source,
+    });
     }
 
     this.emit({

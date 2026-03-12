@@ -22,6 +22,7 @@ function createInitialCharacterState() {
       active: true,
       lastActiveAt: Date.now(),
       motion: null,
+      expression: null,
     },
   };
 }
@@ -51,7 +52,9 @@ function pickIdleMotion() {
   return Math.random() < 0.5 ? "idle_default" : "idle_relaxing";
 }
 
-
+function pickIdleExpression() {
+  return Math.random() < 0.8 ? "smile" : "neutral";
+}
 
 function mapTrainingSemanticToEmotion(semantic) {
   switch (semantic) {
@@ -177,24 +180,24 @@ function reduceState(state, event) {
         },
       };
 
-    case "CHAT_END":
-      return {
-        ...state,
-        chat: {
-          ...state.chat,
-          active: false,
-          speaking: false,
-          pendingEmotion: null,
-          pendingMotion: null,
-        },
-        idle: {
-          ...state.idle,
-          active: true,
-          motion: null, // 关键：先不立刻给 idle 动作
-          lastActiveAt: Date.now(),
-        },
-      };
-
+      case "CHAT_END":
+        return {
+          ...state,
+          chat: {
+            ...state.chat,
+            active: false,
+            speaking: false,
+            pendingEmotion: null,
+            pendingMotion: null,
+          },
+          idle: {
+            ...state.idle,
+            active: true,
+            motion: null,   // 关键：这里必须清空
+            expression: null,
+            lastActiveAt: Date.now(),
+          },
+        };
     case "TRAINING_STATUS": {
       const nextStatus = event.payload?.status ?? "idle";
       const nextSemantic = event.payload?.semantic ?? "idle";
@@ -210,6 +213,7 @@ function reduceState(state, event) {
           ...state.idle,
           active: !trainingRunning && !state.chat.active,
           motion: trainingRunning ? null : state.idle.motion,
+          expression: trainingRunning ? null : state.idle.expression,
           lastActiveAt: Date.now(),
         },
       };
@@ -236,6 +240,7 @@ function reduceState(state, event) {
           active: true,
           motion: pickIdleMotion(),
           lastActiveAt: Date.now(),
+          expression: pickIdleExpression(),
         },
       };
 
@@ -244,65 +249,69 @@ function reduceState(state, event) {
   }
 }
 
-function resolveIntent(state, prevIntent) {
-  // 1. chat 思考阶段
-  if (state.chat.active && !state.chat.speaking) {
-    return makeIntent({
-      source: "chat",
-      priority: 100,
-      emotion: "focused",
-      motion: "shy",
-      speech: false,
-      interruptible: true,
-    });
-  }
+  function resolveIntent(state, prevIntent) {
+    if (state.chat.active && !state.chat.speaking) {
+      return makeIntent({
+        source: "chat",
+        priority: 100,
+        emotion: "focused",
+        motion: "shy",
+        speech: false,
+        interruptible: true,
+      });
+    }
 
-  // 2. chat 说话阶段
-  if (state.chat.active && state.chat.speaking) {
-    return makeIntent({
-      source: "chat",
-      priority: 100,
-      emotion: state.chat.pendingEmotion || "speaking",
-      motion: state.chat.pendingMotion || null,
-      speech: true,
-      interruptible: true,
-    });
-  }
+    if (state.chat.active && state.chat.speaking) {
+      return makeIntent({
+        source: "chat",
+        priority: 100,
+        emotion: state.chat.pendingEmotion || "speaking",
+        motion: state.chat.pendingMotion || null,
+        speech: true,
+        interruptible: true,
+      });
+    }
 
-  // 3. training
-  if (state.training.status === "running") {
-    return makeIntent({
-      source: "training",
-      priority: 50,
-      emotion: mapTrainingSemanticToEmotion(state.training.semantic),
-      motion: mapTrainingSemanticToMotion(state.training.semantic),
-      speech: false,
-      interruptible: true,
-    });
-  }
+    if (state.training.status === "running") {
+      return makeIntent({
+        source: "training",
+        priority: 50,
+        emotion: mapTrainingSemanticToEmotion(state.training.semantic),
+        motion: mapTrainingSemanticToMotion(state.training.semantic),
+        speech: false,
+        interruptible: true,
+      });
+    }
 
-  // 4. idle：只有 tick 选中了动作才真正播
-  if (state.idle.active && state.idle.motion) {
+    // 只有 idle tick 真正给了动作，才进入 idle intent
+    if (state.idle.active && state.idle.motion) {
+      return makeIntent({
+        source: "idle",
+        priority: 10,
+        emotion: "smile",
+        motion: state.idle.motion,
+        speech: false,
+        interruptible: true,
+      });
+    }
+
+    // 关键：默认保留上一帧表情/动作，只关嘴
+    if (prevIntent) {
+      return {
+        ...prevIntent,
+        speech: false,
+      };
+    }
+
     return makeIntent({
       source: "idle",
       priority: 10,
       emotion: "smile",
-      motion: state.idle.motion,
+      motion: null,
       speech: false,
       interruptible: true,
     });
   }
-
-  // 5. 没有新 intent 时，保持上一帧，不要硬切回 idle_default
-  return prevIntent || makeIntent({
-    source: "idle",
-    priority: 10,
-    emotion: "neutral",
-    motion: null,
-    speech: false,
-    interruptible: true,
-  });
-}
 
 function isSameIntent(a, b) {
   if (!a || !b) return false;
@@ -419,6 +428,7 @@ export function createCharacterOrchestrator({
 
     console.log(
       "[CharacterEvent]",
+      { time: Date.now() },
       event.type,
       event.value ?? "",
       event.messageId ?? "",
