@@ -40,13 +40,14 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
               domain={["auto", "auto"]} 
               tickFormatter={(v) => v.toExponential(1)}
               />
-              <Tooltip />
+              <Tooltip  isAnimationActive={false}/>
               <Line
                 type="monotone"
                 dataKey="loss"
                 stroke="#5b84c9"
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -61,13 +62,14 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
               <XAxis dataKey="epoch" />
               <YAxis domain={["auto", "auto"]} />
-              <Tooltip />
+              <Tooltip  isAnimationActive={false}/>
               <Line
                 type="monotone"
                 dataKey="loss"
                 stroke="#d1b56f"
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
               />
             </LineChart>
           </ResponsiveContainer>

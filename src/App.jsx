@@ -77,10 +77,10 @@ export default function App() {
           setBattle((prev) => ({
             ...prev,
             contactMessages: [
-              "检测到已有训练任务仍在运行。",
+              "你回来啦？不要再结界里乱跑哦！",
               status.session?.mode === "cluster"
-                ? `当前为集群任务：${status.session?.job_id ?? "unknown"}`
-                : `当前为本地任务：PID ${status.session?.pid ?? "unknown"}`,
+                ? `（当前为集群任务：${status.session?.job_id ?? "unknown"}）`
+                : `（当前为本地任务：PID ${status.session?.pid ?? "unknown"}）`,
             ],
           }));
 
@@ -102,9 +102,11 @@ export default function App() {
   async function loadBattleLoss() {
     try {
       const result = await fetchLossData();
+
       setBattle((prev) => ({
         ...prev,
         lossData: result.data ?? [],
+        lossMeta: result.meta ?? null,
       }));
     } catch (err) {
       console.error("[battle] fetch loss failed:", err);
@@ -144,7 +146,7 @@ export default function App() {
 
   function startLossPolling() {
     stopLossPolling();
-
+    console.log("[poll] start");
     pollTimerRef.current = setInterval(async () => {
       if (pollingRef.current) return;
       pollingRef.current = true;
@@ -159,6 +161,7 @@ export default function App() {
   }
 
   function stopLossPolling() {
+    console.log("[poll] stop");
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
