@@ -56,51 +56,60 @@ function pickIdleExpression() {
   return Math.random() < 0.8 ? "smile" : "neutral";
 }
 
+// 修改下面的映射实现这个映射
+// // perception/motorMapping.js
+
+// /**
+//  * 根据 loss 特征映射到 character 的表情和动作
+//  * @param {string} feature - loss 特征
+//  * @returns {{emotion: string, motion: string}}
+//  */
+// export function mapMotorInstruction(feature) {
+//   switch (feature) {
+//     case "rapid_drop":
+//       return { emotion: "smile", motion: "excited" };
+//     case "plateau":
+//       return { emotion: "worried", motion: "idle_relaxing" };
+//     case "rebound":
+//       return { emotion: "righteous_anger", motion: "anger" };
+//     case "stuck":
+//       return { emotion: "focused", motion: "shy" };
+//     default:
+//       return { emotion: "angry", motion: "idle_default" };
+//   }
+// }
+
 function mapTrainingSemanticToEmotion(semantic) {
   switch (semantic) {
-    case "focused":
-    case "stable":
-    case "running":
-      return "focused";
-    case "smile":
-    case "completed":
-    case "success":
-      return "smile";
-    case "worried":
-    case "unstable":
-    case "plateau":
-      return "worried";
-    case "angry":
-    case "diverging":
-    case "error":
-      return "angry";
-    case "idle":
+    case 'rapid_drop':
+      return 'smile';
+    case 'plateau':
+      return 'worried';
+    case 'rebound':
+      return 'righteous_anger';
+    case 'stuck':
+      return 'focused';
+    case 'normal':
+      return 'neutral';
     default:
-      return "neutral";
+      return 'angry';
   }
 }
 
 function mapTrainingSemanticToMotion(semantic) {
   switch (semantic) {
-    case "focused":
-    case "stable":
-    case "running":
-      return "assertive";
-    case "smile":
-    case "completed":
-    case "success":
-      return "excited";
-    case "angry":
-    case "diverging":
-    case "error":
-      return "angry";
-    case "worried":
-    case "unstable":
-    case "plateau":
-      return "confident";
-    case "idle":
+    case 'rapid_drop':
+      return 'assertive';
+    case 'plateau':
+      return 'idle_relaxing';
+    case 'rebound':
+      return 'anger';
+    case 'stuck':
+      return 'shy';
+    case 'normal':
+      return 'idle_relaxing';
     default:
-      return "idle_default";
+      return 'idle_default';
   }
 }
 

@@ -9,8 +9,8 @@ import {
 } from "recharts";
 
 export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
-  const recentData = lossData.slice(-100);
-
+  const recentData = lossData.slice(-200);
+  //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (
     <div className="battle-shell">
       <div className="battle-header">

@@ -827,6 +827,12 @@ select:focus {
   overflow: hidden;
 }
 
+.battle-contact-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .contact-shell,
 .battle-shell {
   height: 100%;
@@ -1063,4 +1069,59 @@ select:focus {
   .stage-column {
     height: 42%;
   }
+}
+
+.contact-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.contact-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.contact-history {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.contact-row {
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.contact-message-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.contact-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.contact-bubble {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: normal;
 }

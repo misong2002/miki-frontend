@@ -33,7 +33,6 @@ export async function fetchLossData() {
   if (!response.ok) {
     throw new Error(`Failed to fetch loss data: ${response.status}`);
   }
-
   return await response.json();
 }
 

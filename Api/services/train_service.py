@@ -309,7 +309,7 @@ def stop_training():
 
 def downsample_loss_data(
     data: list[dict[str, float]],
-    keep_recent: int = 100,
+    keep_recent: int = 200,
     max_history_samples: int = 1000,
 ) -> list[dict[str, float]]:
     n = len(data)
@@ -344,44 +344,6 @@ def downsample_loss_data(
 
     return sampled_history + recent
 
-
-def downsample_loss_data(
-    data: list[dict[str, float]],
-    keep_recent: int = 100,
-    max_history_samples: int = 1000,
-) -> list[dict[str, float]]:
-    n = len(data)
-
-    if n <= keep_recent + max_history_samples:
-        return data
-
-    split_index = max(0, n - keep_recent)
-    history = data[:split_index]
-    recent = data[split_index:]
-
-    if len(history) <= max_history_samples:
-        sampled_history = history
-    else:
-        step = len(history) / max_history_samples
-        sampled_history = []
-
-        for i in range(max_history_samples):
-            idx = int(i * step)
-            if idx >= len(history):
-                idx = len(history) - 1
-            sampled_history.append(history[idx])
-
-        # 去重
-        deduped = []
-        last_epoch = None
-        for item in sampled_history:
-            epoch = item["epoch"]
-            if epoch != last_epoch:
-                deduped.append(item)
-                last_epoch = epoch
-        sampled_history = deduped
-
-    return sampled_history + recent
 
 
 def read_training_loss():

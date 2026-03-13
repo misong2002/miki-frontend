@@ -21,8 +21,8 @@ import {
   fetchLossData,
   fetchBattleStatus,
 } from "./domains/Battle/services/battleService";
-import { APP_CONFIG } from "./config";
 
+import { APP_CONFIG } from "./config";
 import { createMikiAgent } from "./domains/miki_san/createMikiAgent";
 
 function delay(ms) {
@@ -31,21 +31,63 @@ function delay(ms) {
 
 const DEFAULT_STAGE_PROPS = {
   modelKey: "normal",
-  position: { x: 0.5, y: 1 },
+  position: { x: 0.5, y: 1.0 },
   scale: 1.0,
 };
 
 const MAGICAL_STAGE_PROPS = {
   modelKey: "magical",
-  position: { x: 0.5, y: 1 },
+  position: { x: 0.5, y: 1.0 },
   scale: 1.0,
 };
+
+function makeContactMessage({ comment, epoch = null, timestamp = Date.now() }) {
+  return {
+    id: `contact-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+    content: comment,
+    createdAt: timestamp,
+    epoch,
+  };
+}
+
+function normalizeContactMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .map((msg, index) => {
+      if (typeof msg === "string") {
+        return {
+          id: `contact-init-${Date.now()}-${index}`,
+          content: msg,
+          createdAt: Date.now(),
+          epoch: null,
+        };
+      }
+
+      if (msg && typeof msg === "object") {
+        return {
+          id:
+            msg.id ??
+            `contact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: msg.content ?? "",
+          createdAt: msg.createdAt ?? Date.now(),
+          epoch: msg.epoch ?? null,
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
 
 export default function App() {
   const [mode, setMode] = useState(AppMode.CHAT);
   const [params, setParams] = useState(initialHyperParams);
   const [training, setTraining] = useState(initialTrainingState);
-  const [battle, setBattle] = useState(initialBattleState);
+  const [battle, setBattle] = useState({
+    ...initialBattleState,
+    contactMessages: normalizeContactMessages(initialBattleState.contactMessages),
+  });
   const [battleExiting, setBattleExiting] = useState(false);
   const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
 
@@ -65,66 +107,45 @@ export default function App() {
 
   const mikiAgent = mikiAgentRef.current;
 
-  useEffect(() => {
-    async function bootstrapTrainingState() {
-      try {
-        const status = await fetchBattleStatus();
-        console.log("[bootstrap] battle status:", status);
-
-        if (status.running) {
-          mikiAgent.externality.patch(MAGICAL_STAGE_PROPS);
-
-          setBattle((prev) => ({
-            ...prev,
-            contactMessages: [
-              "你回来啦？不要再结界里乱跑哦！",
-              status.session?.mode === "cluster"
-                ? `（当前为集群任务：${status.session?.job_id ?? "unknown"}）`
-                : `（当前为本地任务：PID ${status.session?.pid ?? "unknown"}）`,
-            ],
-          }));
-
-          setMode(AppMode.BATTLE);
-        } else {
-          mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
-          setMode(AppMode.CHAT);
-        }
-      } catch (err) {
-        console.error("[bootstrap] failed to get battle status:", err);
-        mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
-        setMode(AppMode.CHAT);
-      }
-    }
-
-    bootstrapTrainingState();
-  }, [mikiAgent]);
-
   async function loadBattleLoss() {
     try {
       const result = await fetchLossData();
+      const lossData = result.data ?? [];
 
       setBattle((prev) => ({
         ...prev,
-        lossData: result.data ?? [],
+        lossData,
         lossMeta: result.meta ?? null,
       }));
+
+      return { lossData };
     } catch (err) {
       console.error("[battle] fetch loss failed:", err);
+      return { lossData: [] };
     }
   }
 
-  async function handleTrainingFinishedExit() {
+  async function handleBattleFinishedExit() {
     stopLossPolling();
 
     setBattle((prev) => ({
       ...prev,
-      contactMessages: ["已取得悲叹之种。", "辛苦啦，一起回去吧。"],
+      contactMessages: [
+        ...prev.contactMessages,
+        makeContactMessage({
+          comment: "已取得悲叹之种。辛苦啦，一起回去吧。",
+        }),
+      ].slice(-100),
     }));
 
     await delay(800);
 
     mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
-    setBattle(initialBattleState);
+
+    setBattle({
+      ...initialBattleState,
+      contactMessages: normalizeContactMessages(initialBattleState.contactMessages),
+    });
     setBattleExiting(false);
     setMode(AppMode.CHAT);
   }
@@ -136,8 +157,8 @@ export default function App() {
       const status = await fetchBattleStatus();
 
       if (!status.running) {
-        console.log("[battle] training finished, auto return to chat");
-        await handleTrainingFinishedExit();
+        console.log("[battle] battle finished, auto return to chat");
+        await handleBattleFinishedExit();
       }
     } catch (err) {
       console.error("[battle] fetch status failed:", err);
@@ -147,13 +168,16 @@ export default function App() {
   function startLossPolling() {
     stopLossPolling();
     console.log("[poll] start");
+
     pollTimerRef.current = setInterval(async () => {
       if (pollingRef.current) return;
       pollingRef.current = true;
 
       try {
-        await loadBattleLoss();
+        const { lossData } = await loadBattleLoss();
         await checkBattleStatus();
+
+        await mikiAgent.onLossUpdate?.(lossData);
       } finally {
         pollingRef.current = false;
       }
@@ -192,18 +216,20 @@ export default function App() {
     try {
       const result = await fetchLossData();
 
+      const pidOrJob =
+        startResult?.result?.job_id
+          ? `JOB ${startResult.result.job_id}`
+          : `PID ${startResult?.result?.pid ?? startResult?.pid ?? "unknown"}`;
+
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
-          "准备好了吗？要进入结界了！",
-          `*已进入魔女结界：${
-            startResult?.result?.job_id
-              ? `JOB ${startResult.result.job_id}`
-              : `PID ${startResult?.result?.pid ?? startResult?.pid ?? "unknown"}`
-          }`,
-          "站在我身后就好，帮我盯着魔力波动！",
+          makeContactMessage({ comment: "准备好了吗？要进入结界了！" }),
+          makeContactMessage({ comment: `已进入魔女结界：${pidOrJob}` }),
+          makeContactMessage({ comment: "站在我身后就好，帮我盯着魔力波动！" }),
         ],
         lossData: result.data ?? [],
+        lossMeta: result.meta ?? null,
       }));
     } catch (err) {
       console.error("[battle] fetchLossData failed:", err);
@@ -211,10 +237,11 @@ export default function App() {
       setBattle((prev) => ({
         ...prev,
         contactMessages: [
-          "通信接通，但 loss 数据读取失败了。",
-          `错误：${err.message}`,
+          makeContactMessage({ comment: "通信接通，但 loss 数据读取失败了。" }),
+          makeContactMessage({ comment: `错误：${err.message}` }),
         ],
         lossData: [],
+        lossMeta: null,
       }));
     }
 
@@ -234,10 +261,70 @@ export default function App() {
     }
 
     mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
-    setBattle(initialBattleState);
+
+    setBattle({
+      ...initialBattleState,
+      contactMessages: normalizeContactMessages(initialBattleState.contactMessages),
+    });
     setMode(AppMode.CHAT);
     setBattleExiting(false);
   }
+
+  useEffect(() => {
+    async function bootstrapBattleState() {
+      try {
+        const status = await fetchBattleStatus();
+        console.log("[bootstrap] battle status:", status);
+
+        if (status.running) {
+          mikiAgent.externality.patch(MAGICAL_STAGE_PROPS);
+
+          const introMessages = [
+            makeContactMessage({ comment: "你回来啦？不要在结界里乱跑哦！" }),
+            makeContactMessage({
+              comment:
+                status.session?.mode === "cluster"
+                  ? `当前为集群任务：${status.session?.job_id ?? "unknown"}`
+                  : `当前为本地任务：PID ${status.session?.pid ?? "unknown"}`,
+            }),
+          ];
+
+          setBattle((prev) => ({
+            ...prev,
+            contactMessages: introMessages,
+          }));
+
+          setMode(AppMode.BATTLE);
+        } else {
+          mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
+          setMode(AppMode.CHAT);
+        }
+      } catch (err) {
+        console.error("[bootstrap] failed to get battle status:", err);
+        mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
+        setMode(AppMode.CHAT);
+      }
+    }
+
+    bootstrapBattleState();
+  }, [mikiAgent]);
+
+  useEffect(() => {
+    if (!mikiAgent?.registerContactCallback) return;
+
+    mikiAgent.registerContactCallback((payload) => {
+      if (!payload?.comment) return;
+      if (payload.feature == 'none') return;
+      if (payload.feature == 'normal') return;
+
+      const msg = makeContactMessage(payload);
+
+      setBattle((prev) => ({
+        ...prev,
+        contactMessages: [...prev.contactMessages, msg].slice(-100),
+      }));
+    });
+  }, [mikiAgent]);
 
   useEffect(() => {
     mikiAgent.setAppMode(mode);
@@ -245,10 +332,18 @@ export default function App() {
     if (mode === AppMode.BATTLE) {
       loadBattleLoss();
       startLossPolling();
-      mikiAgent.setTrainingStatus("running", "focused");
+      mikiAgent.setTrainingStatus("running", "normal");
+      setTraining((prev) => ({
+        ...prev,
+        status: "running",
+      }));
     } else {
       stopLossPolling();
       mikiAgent.setTrainingStatus("idle", "idle");
+      setTraining((prev) => ({
+        ...prev,
+        status: "idle",
+      }));
     }
 
     return () => {
@@ -302,22 +397,6 @@ export default function App() {
             <ChatPanel disabled={false} agent={mikiAgent} />
           </aside>
         </>
-      )}
-
-      {mode === AppMode.TRAINING && (
-        <main className="training-stage-layout">
-          <div className="training-stage-column">
-            <Live2DStage
-              modelKey={stageProps.modelKey}
-              position={stageProps.position}
-              scale={stageProps.scale}
-            />
-          </div>
-
-          <div className="training-info-column">
-            <TrainingPanel training={training} />
-          </div>
-        </main>
       )}
 
       {mode === AppMode.BATTLE && (

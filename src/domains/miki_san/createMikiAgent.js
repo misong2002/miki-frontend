@@ -5,7 +5,7 @@ import { emotionEngine } from "./body/emotionEngine";
 import { emotionMapper } from "./motor/emotionMapper";
 import { motionMapper } from "./motor/motionMapper";
 import { createExternalityModule } from "./externality/createExternalityModule";
-
+import { createPerceptionModule } from "./perception/perceptionModule.js";
 function createMessageId(prefix = "miki") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -17,12 +17,13 @@ export function createMikiAgent({
   const runtimeBridge = createCharacterRuntimeBridge({
     emotionEngine,
   });
-
   const character = createCharacterOrchestrator({
     runtimeBridge,
     emotionMapper,
     motionMapper,
   });
+  
+  const perception = createPerceptionModule();
 
   const language = createLanguageModule({
     onCharacterEvent: (event) => {
@@ -36,6 +37,15 @@ export function createMikiAgent({
     initialScale: 1.0,
     onChange: onExternalityChange,
   });
+
+  let contactCallback = null;
+  let lastPerceptionTime = 0;
+  let lastPerceptionComment = null;
+  let lastPerceptionFeature = null;
+
+
+  const COOLDOWN_MS = 5000;
+
 
   if (!character?.dispatch) {
     throw new Error("createMikiAgent: character.dispatch is required");
@@ -57,11 +67,16 @@ export function createMikiAgent({
   }
 
   function setTrainingStatus(status = "idle", semantic = "idle") {
+    if (semantic === "none") {
+      return;
+    }
+    console.log("[MikiAgent] setTrainingStatus:", { status, semantic });
     character.dispatch({
       type: "TRAINING_STATUS",
       payload: { status, semantic },
     });
   }
+
 
   function setUserActive(source = "app") {
     character.dispatch({
@@ -129,6 +144,57 @@ export function createMikiAgent({
     return result;
   }
 
+
+
+  function registerContactCallback(cb) {
+    contactCallback = cb;
+  }
+
+  function formatBattleCommentPrefix(timestamp, epoch) {
+    const d = new Date(timestamp);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    const epochText = epoch != null ? `epoch ${epoch}` : "epoch ?";
+    return `(${hh}:${mm}:${ss} || ${epochText})`;
+  }
+
+  async function onLossUpdate(lossData) {
+    const now = Date.now();
+    
+    if (!lossData || lossData.length === 0) return null;
+    if (now - lastPerceptionTime < COOLDOWN_MS) return null;
+
+    const result = perception.comment(lossData);
+    const { comment, feature, epoch } = result;
+    console.log("[onLossUpdate] perception result:", result);
+    if (!comment || feature === "none") return null;
+
+    // 去重
+    if (feature === lastPerceptionFeature || comment === lastPerceptionComment) {
+      return null;
+    }
+
+    lastPerceptionTime = now;
+    lastPerceptionFeature = feature;
+    lastPerceptionComment = comment;
+
+    setTrainingStatus("running", feature);
+
+    const payload = {
+      comment: `${formatBattleCommentPrefix(now, epoch)} ${comment}`,
+      rawComment: comment,
+      feature,
+      epoch,
+      timestamp: now,
+    };
+
+    if (contactCallback) {
+      contactCallback(payload);
+    }
+
+    return payload;
+  }
   function interrupt() {
     return language.interrupt();
   }
@@ -178,7 +244,7 @@ export function createMikiAgent({
           value: motionKey,
         }),
 
-      setTraining: (status = "running", semantic = "focused") =>
+      setTraining: (status = "running", semantic = "normal") =>
         character.dispatch({
           type: "TRAINING_STATUS",
           payload: { status, semantic },
@@ -326,5 +392,8 @@ export function createMikiAgent({
     getDebugAPI,
 
     externality,
+    perception,
+    onLossUpdate,
+    registerContactCallback,
   };
 }
