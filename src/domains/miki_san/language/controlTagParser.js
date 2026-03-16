@@ -76,7 +76,12 @@ export function createControlStreamParser() {
             events.push({ type: "motion", value: motionMatch[1] });
           } else {
             // 闭合了但不是合法控制符，原样回吐为普通文本
-            text += tag;
+            //检查控制符是不是<<initailization_ready>>，如果是的话就不输出，但也不进行表情控制
+            if (tag === "<<initialization_ready>>") {
+              // do nothing
+            } else {
+              text += tag;
+            }
           }
 
           // 一闭合就立刻清空 tagBuffer，回到 TEXT

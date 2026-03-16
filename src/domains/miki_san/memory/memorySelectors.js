@@ -46,8 +46,8 @@ export function selectMessagesForUI(limit = 50, wakeCycleCount = 3) {
  * 这里故意更保守，避免把整个历史一股脑塞进 LLM。
  */
 export function selectContextForPrompt({
-  maxMessages = 12,
-  maxCharsPerMessage = 1200,
+  maxMessages = 200,
+  maxCharsPerMessage = 10000,
 } = {}) {
   const wakeCycle = getLatestWakeCycle();
   if (!wakeCycle) return [];

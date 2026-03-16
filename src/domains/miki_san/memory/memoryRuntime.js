@@ -240,7 +240,7 @@ export function createMemoryRuntime(options = {}) {
    */
   function recall({ text, messageId } = {}) {
     const messages = listCurrentMessages();
-    const recentMessages = messages.slice(-12);
+    const recentMessages = messages.slice(-200);
 
     return {
       wakeCycleId: getCurrentWakeCycleId(),

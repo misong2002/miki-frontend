@@ -37,14 +37,12 @@ export function normalizeHearInput(input) {
   if (typeof input === "string") {
     return {
       text: input,
-      memoryContext: null,
       messageId: `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
   }
 
   return {
     text: input?.text ?? "",
-    memoryContext: input?.memoryContext ?? null,
     messageId:
       input?.messageId ??
       `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

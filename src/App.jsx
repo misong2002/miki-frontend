@@ -82,20 +82,23 @@ function normalizeContactMessages(messages) {
     .filter(Boolean);
 }
 
-function getInitialChatMessages() {
-  const restoredMessages = selectMessagesForUI(50);
+function buildFallbackChatMessages() {
+  return [
+    {
+      id: "welcome",
+      role: "assistant",
+      content:
+        "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
+      createdAt: Date.now(),
+    },
+  ];
+}
 
+function getBootChatMessages() {
+  const restoredMessages = selectMessagesForUI(50);
   return restoredMessages.length > 0
     ? restoredMessages
-    : [
-        {
-          id: "welcome",
-          role: "assistant",
-          content:
-            "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
-          createdAt: Date.now(),
-        },
-      ];
+    : buildFallbackChatMessages();
 }
 
 /**
@@ -162,7 +165,9 @@ export default function App() {
   });
   const [battleExiting, setBattleExiting] = useState(false);
   const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
-  const [initialChatMessages] = useState(() => getInitialChatMessages());
+
+  const [chatBootReady, setChatBootReady] = useState(false);
+  const [initialChatMessages, setInitialChatMessages] = useState([]);
 
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -179,6 +184,32 @@ export default function App() {
   }
 
   const mikiAgent = mikiAgentRef.current;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrapChatMemory() {
+      try {
+        if (mikiAgent?.bootRemindPromise) {
+          await mikiAgent.bootRemindPromise;
+        }
+      } catch (err) {
+        console.warn("[App] bootRemindPromise failed:", err);
+      } finally {
+        if (cancelled) return;
+
+        const restoredMessages = getBootChatMessages();
+        setInitialChatMessages(restoredMessages);
+        setChatBootReady(true);
+      }
+    }
+
+    bootstrapChatMemory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mikiAgent]);
 
   async function loadBattleLoss() {
     try {
@@ -531,11 +562,15 @@ export default function App() {
           </main>
 
           <aside className="chat-column">
-            <ChatPanel
-              disabled={false}
-              agent={mikiAgent}
-              initialMessages={initialChatMessages}
-            />
+            {chatBootReady ? (
+              <ChatPanel
+                disabled={false}
+                agent={mikiAgent}
+                initialMessages={initialChatMessages}
+              />
+            ) : (
+              <div className="chat-boot-loading">正在恢复对话记忆……</div>
+            )}
           </aside>
         </>
       )}

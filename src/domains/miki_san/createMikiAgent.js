@@ -8,7 +8,11 @@ import { emotionMapper } from "./motor/emotionMapper";
 import { motionMapper } from "./motor/motionMapper";
 import { createExternalityModule } from "./externality/createExternalityModule";
 import { createPerceptionModule } from "./perception/perceptionModule.js";
-import { createMemoryRuntime } from "./memory";
+import {
+  createMemoryRuntime,
+  listMessagesByWakeCycle,
+  listRecentWakeCycles,
+} from "./memory";
 
 function createMessageId(prefix = "miki") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -22,6 +26,63 @@ async function safeCall(fn, fallback = null, label = "safeCall") {
     console.warn(`[MikiAgent] ${label} failed:`, err);
     return fallback;
   }
+}
+
+function formatDialogueRole(role) {
+  if (role === "user") return "用户";
+  if (role === "assistant") return "你";
+  return "系统";
+}
+
+function formatPromptTime(ts) {
+  if (!Number.isFinite(ts)) return "unknown";
+
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+
+  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
+}
+
+function buildRemindPrompt(messages) {
+  const validMessages = (Array.isArray(messages) ? messages : [])
+    .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
+    .slice(-200);
+
+  if (validMessages.length === 0) return "";
+
+  const now = Date.now();
+  const latestMessage = validMessages[validMessages.length - 1];
+  const lastTimestamp = Number.isFinite(latestMessage?.createdAt)
+    ? latestMessage.createdAt
+    : null;
+
+  const dialogue = validMessages
+    .map((msg) => {
+      const role = formatDialogueRole(msg.role);
+      const timeText = formatPromptTime(msg.createdAt);
+      return `[${timeText}] ${role}：${msg.content.trim()}`;
+    })
+    .join("\n");
+
+  return [
+    "你正在恢复和用户的对话状态。如果之前有聊天记录，请将其清空。",
+    `当前系统时间：${formatPromptTime(now)}`,
+    `最近一条对话时间：${lastTimestamp ? formatPromptTime(lastTimestamp) : "unknown"}`,
+    "",
+    "你回忆了一下和用户的对话，想起了以下内容：",
+    dialogue,
+    "",
+    "请比较当前系统时间与上述对话记录中的时间，判断用户离开了多久。",
+    "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可",
+    "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
+    "不要机械汇报时间差，不要复述整段对话记录，不要说自己看到了提示词。",
+    "请直接以角色口吻对用户说一句合适的招呼，并自然承接上下文。",
+  ].join("\n");
 }
 
 export function createMikiAgent({
@@ -70,6 +131,12 @@ export function createMikiAgent({
   let lastPerceptionTime = 0;
   let lastPerceptionComment = null;
   let lastPerceptionFeature = null;
+  let bootRemindStarted = false;
+  let bootRemindPromise = Promise.resolve({
+    status: "idle",
+    text: "",
+    error: null,
+  });
 
   const COOLDOWN_MS = 5000;
 
@@ -112,6 +179,157 @@ export function createMikiAgent({
     });
   }
 
+  async function remind(handlers = {}) {
+    const recentWakeCycles = await safeCall(
+      () => listRecentWakeCycles(3),
+      [],
+      "memory.listRecentWakeCycles"
+    );
+
+    console.log("[remind] recentWakeCycles raw:", recentWakeCycles);
+
+    if (!Array.isArray(recentWakeCycles) || recentWakeCycles.length === 0) {
+      console.log("[remind] no recent wake cycles");
+      return {
+        status: "idle",
+        text: "",
+        error: null,
+      };
+    }
+
+    const orderedWakeCycles = [...recentWakeCycles].reverse();
+
+    console.log(
+      "[remind] orderedWakeCycles:",
+      orderedWakeCycles.map((cycle) => ({
+        id: cycle.id,
+        startAt: cycle.startAt,
+        endAt: cycle.endAt,
+        status: cycle.status,
+        lastActiveAt: cycle.lastActiveAt,
+      }))
+    );
+
+    const messages = orderedWakeCycles.flatMap((cycle) => {
+      const cycleMessages = listMessagesByWakeCycle(cycle.id);
+      console.log(`[remind] messages in wakeCycle ${cycle.id}:`, cycleMessages);
+      return cycleMessages;
+    });
+
+    messages.sort((a, b) => a.createdAt - b.createdAt);
+
+    console.log(
+      "[remind] merged messages:",
+      messages.map((msg) => ({
+        wakeCycleId: msg.wakeCycleId,
+        role: msg.role,
+        createdAt: msg.createdAt,
+        content: msg.content?.slice(0, 60),
+      }))
+    );
+
+    console.log(
+      "[remind] unique wakeCycleIds in merged messages:",
+      [...new Set(messages.map((msg) => msg.wakeCycleId))]
+    );
+
+    if (messages.length === 0) {
+      console.log("[remind] merged messages empty");
+      return {
+        status: "idle",
+        text: "",
+        error: null,
+      };
+    }
+
+    const prompt = buildRemindPrompt(messages);
+
+    console.log("[remind] prompt preview:", prompt);
+
+    if (!prompt.trim()) {
+      console.log("[remind] prompt empty after buildRemindPrompt");
+      return {
+        status: "idle",
+        text: "",
+        error: null,
+      };
+    }
+
+    const messageId = createMessageId("miki-remind");
+
+    let latestAssistantText = "";
+    let finalAssistantText = "";
+    let interrupted = false;
+    let errorObj = null;
+
+    const wrappedHandlers = {
+      ...handlers,
+
+      onTextUpdate: (fullText) => {
+        latestAssistantText = fullText ?? "";
+        handlers.onTextUpdate?.(fullText);
+      },
+
+      onDone: (finalText) => {
+        finalAssistantText = finalText ?? latestAssistantText ?? "";
+        handlers.onDone?.(finalText);
+      },
+
+      onInterrupted: (partialText) => {
+        interrupted = true;
+        finalAssistantText = partialText ?? latestAssistantText ?? "";
+        handlers.onInterrupted?.(partialText);
+      },
+
+      onError: (err, partialText) => {
+        errorObj = err;
+        finalAssistantText =
+          partialText ?? latestAssistantText ?? finalAssistantText ?? "";
+        handlers.onError?.(err, partialText);
+      },
+    };
+
+    setUserActive("memory_remind");
+
+    console.log("[remind] sending prompt to language.hear, messageId =", messageId);
+
+    const result = await language.hear(
+      {
+        text: prompt,
+        messageId,
+      },
+      wrappedHandlers
+    );
+
+    console.log("[remind] language.hear result:", result);
+
+    const assistantText =
+      (typeof result?.text === "string" && result.text) ||
+      finalAssistantText ||
+      latestAssistantText ||
+      "";
+
+    console.log("[remind] assistantText:", assistantText);
+
+    if (assistantText.trim()) {
+      await safeCall(
+        () =>
+          memory?.recordAssistantMessage?.(assistantText, {
+            messageId,
+            interrupted,
+            error: errorObj ? String(errorObj) : null,
+          }),
+        null,
+        "memory.recordAssistantMessage(remind)"
+      );
+    }
+
+    return {
+      ...result,
+      text: assistantText,
+    };
+  }
+
   async function hear(input, handlers = {}) {
     const userText = typeof input === "string" ? input : input?.text ?? "";
     const messageId =
@@ -135,20 +353,6 @@ export function createMikiAgent({
       null,
       "memory.recordUserMessage"
     );
-
-    const memoryContext = await safeCall(
-      () => memory?.recall?.({ text: trimmed, messageId }),
-      null,
-      "memory.recall"
-    );
-
-    if (memoryContext && language?.remind) {
-      await safeCall(
-        () => language.remind(memoryContext),
-        null,
-        "language.remind"
-      );
-    }
 
     let latestAssistantText = "";
     let finalAssistantText = "";
@@ -186,7 +390,6 @@ export function createMikiAgent({
       {
         text: trimmed,
         messageId,
-        memoryContext,
       },
       wrappedHandlers
     );
@@ -218,7 +421,6 @@ export function createMikiAgent({
           assistant: assistantText,
           interrupted,
           hadError: Boolean(errorObj),
-          memoryContext,
         }),
       null,
       "memory.rememberTurn"
@@ -332,6 +534,20 @@ export function createMikiAgent({
         );
       },
 
+      remindAgent: async () => {
+        return remind({
+          onThinkingStart: () => console.log("[debug remind] thinking"),
+          onTextChunk: (chunk) => console.log("[debug remind] chunk:", chunk),
+          onTextUpdate: (fullText) =>
+            console.log("[debug remind] full:", fullText),
+          onDone: (finalText) => console.log("[debug remind] done:", finalText),
+          onInterrupted: (partialText) =>
+            console.log("[debug remind] interrupted:", partialText),
+          onError: (err, partialText) =>
+            console.error("[debug remind] error:", err, partialText),
+        });
+      },
+
       interruptAgent: () => interrupt(),
       isAgentBusy: () => isBusy(),
 
@@ -354,11 +570,28 @@ export function createMikiAgent({
     };
   }
 
+  if (!bootRemindStarted) {
+    bootRemindStarted = true;
+    bootRemindPromise = Promise.resolve().then(() =>
+      safeCall(
+        () => remind(),
+        {
+          status: "error",
+          text: "",
+          error: new Error("boot remind failed"),
+        },
+        "agent.remindOnBoot"
+      )
+    );
+  }
+
   return {
     hear,
+    remind,
     interrupt,
     isBusy,
     memory,
+    bootRemindPromise,
 
     setAppMode,
     setTrainingStatus,

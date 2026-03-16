@@ -10,7 +10,6 @@ export function createLanguageModule({
   typewriterIntervalMs = 20,
   onCharacterEvent = null,
 } = {}) {
-  let rememberedContext = null;
   let currentRun = null;
 
   function emitCharacterEvent(event) {
@@ -22,9 +21,6 @@ export function createLanguageModule({
     return !!currentRun;
   }
 
-  function remind(memoryContext) {
-    rememberedContext = memoryContext;
-  }
 
   function stopTimers(run) {
     if (run.transferTimer) {
@@ -197,8 +193,7 @@ export function createLanguageModule({
       throw new Error("language module is busy");
     }
 
-    const { text, memoryContext, messageId } = normalizeHearInput(input);
-    const finalMemoryContext = memoryContext ?? rememberedContext;
+    const { text, messageId } = normalizeHearInput(input);
 
     const trimmed = text.trim();
     if (!trimmed) {
@@ -214,7 +209,6 @@ export function createLanguageModule({
     const run = {
       messageId,
       inputText: trimmed,
-      memoryContext: finalMemoryContext,
       handlers,
       parser: parserFactory(),
 
@@ -341,6 +335,7 @@ export function createLanguageModule({
     return deferred.promise;
   }
 
+
   function interrupt() {
     if (!currentRun) return false;
 
@@ -349,7 +344,6 @@ export function createLanguageModule({
   }
 
   return {
-    remind,
     hear,
     interrupt,
     isBusy,
