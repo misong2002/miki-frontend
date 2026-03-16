@@ -5,45 +5,113 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
+/**
+ * 统一构造消息对象。
+ * - 如果是从 memory 恢复的消息，尽量保留原有 id / createdAt / meta
+ * - 如果是新消息，就自动补默认字段
+ */
 function makeMessage({
-  role,
-  content,
+  id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  role = "assistant",
+  content = "",
+  createdAt = Date.now(),
   status = "done",
-  emotion = null,
   references = [],
+  meta = {},
+  ...rest
 }) {
   return {
-    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id,
     role,
     content,
+    createdAt,
     status,
-    emotion,
     references,
-    createdAt: Date.now(),
+    meta,
+    ...rest,
   };
+}
+
+/**
+ * 把外部传入的历史消息标准化。
+ * 目标：
+ * - memory 里恢复出来的消息通常没有 status
+ * - UI 层默认应把历史消息视为 done
+ * - interrupted / error 这些临时态要尽量从 meta 里还原
+ */
+function normalizeInitialMessage(msg) {
+  const interrupted = msg?.meta?.interrupted ?? false;
+  const hasError = Boolean(msg?.meta?.error);
+
+  let status = msg?.status ?? "done";
+  if (hasError) status = "error";
+  else if (!msg?.status) status = "done";
+
+  return makeMessage({
+    ...msg,
+    status,
+    meta: {
+      ...(msg?.meta ?? {}),
+      interrupted,
+    },
+  });
 }
 
 function formatTime(ts) {
   const d = new Date(ts);
+  const now = new Date();
+
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+
+  if (sameDay) {
+    return `${hh}:${mm}`;
+  }
+
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+
+  return `${month}-${day} ${hh}:${mm}`;
 }
 
-export default function ChatPanel({ disabled, agent }) {
+export default function ChatPanel({
+  disabled,
+  agent,
+  initialMessages = [],
+}) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [messages, setMessages] = useState([
-    makeMessage({
-      role: "assistant",
-      content:
-        "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
-    }),
-  ]);
+
+  /**
+   * 初始消息只在首次挂载时取一次。
+   * 这里优先使用 App 传进来的 memory 恢复消息。
+   */
+  const [messages, setMessages] = useState(() => {
+    if (Array.isArray(initialMessages) && initialMessages.length > 0) {
+      return initialMessages.map(normalizeInitialMessage);
+    }
+
+    return [
+      makeMessage({
+        role: "assistant",
+        content:
+          "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
+        status: "done",
+      }),
+    ];
+  });
 
   const historyRef = useRef(null);
   const textareaRef = useRef(null);
 
+  /**
+   * 消息变化后自动滚动到底部。
+   */
   useEffect(() => {
     const el = historyRef.current;
     if (!el) return;
@@ -54,6 +122,9 @@ export default function ChatPanel({ disabled, agent }) {
     });
   }, [messages]);
 
+  /**
+   * 输入框高度自动适配。
+   */
   function resetTextareaHeight() {
     const el = textareaRef.current;
     if (!el) return;
@@ -66,6 +137,9 @@ export default function ChatPanel({ disabled, agent }) {
     resetTextareaHeight();
   }, [input]);
 
+  /**
+   * 更新 assistant 占位消息。
+   */
   function updateAssistantMessage(messageId, content, status = "pending") {
     setMessages((prev) =>
       prev.map((msg) =>
@@ -87,8 +161,13 @@ export default function ChatPanel({ disabled, agent }) {
     const userMessage = makeMessage({
       role: "user",
       content: text,
+      status: "done",
     });
 
+    /**
+     * assistant 占位消息的 id 同时作为 messageId 传给 agent。
+     * 这样 streaming 更新和 memory 里的对应关系更清楚。
+     */
     const pendingAssistant = makeMessage({
       role: "assistant",
       content: "正在思考……",
@@ -142,7 +221,7 @@ export default function ChatPanel({ disabled, agent }) {
           onError: (err, partialText) => {
             updateAssistantMessage(
               pendingAssistant.id,
-              partialText || `请求失败：${err.message}`,
+              partialText || `请求失败：${err?.message ?? "unknown error"}`,
               "error"
             );
           },
@@ -151,12 +230,12 @@ export default function ChatPanel({ disabled, agent }) {
     } catch (err) {
       updateAssistantMessage(
         pendingAssistant.id,
-        `请求失败：${err.message}`,
+        `请求失败：${err?.message ?? "unknown error"}`,
         "error"
       );
     } finally {
       setSending(false);
-      textareaRef.current?.focus();
+      textareaRef.current?.focus?.();
     }
   }
 
@@ -188,10 +267,12 @@ export default function ChatPanel({ disabled, agent }) {
 
       <div className="chat-history" ref={historyRef}>
         {messages.map((msg, index) => {
+          const prev = messages[index - 1];
+
           const showMeta =
             index === 0 ||
-            messages[index - 1].role !== msg.role ||
-            Math.abs(msg.createdAt - messages[index - 1].createdAt) >
+            prev?.role !== msg.role ||
+            Math.abs((msg.createdAt ?? 0) - (prev?.createdAt ?? 0)) >
               5 * 60 * 1000;
 
           return (
@@ -206,7 +287,7 @@ export default function ChatPanel({ disabled, agent }) {
                   </div>
                 )}
 
-                <div className={`chat-bubble ${msg.role} ${msg.status}`}>
+                <div className={`chat-bubble ${msg.role} ${msg.status || "done"}`}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
@@ -215,7 +296,7 @@ export default function ChatPanel({ disabled, agent }) {
                   </ReactMarkdown>
                 </div>
 
-                {msg.references && msg.references.length > 0 && (
+                {Array.isArray(msg.references) && msg.references.length > 0 && (
                   <div className="chat-references">
                     {msg.references.map((ref, i) => (
                       <span className="chat-ref-chip" key={`${msg.id}-ref-${i}`}>

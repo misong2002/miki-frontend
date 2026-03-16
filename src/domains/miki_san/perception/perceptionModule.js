@@ -37,15 +37,15 @@ export function createPerceptionModule() {
     const recentWindow = getRecentLossWindow(lossData);
     const rawFeature = detectFeatures(recentWindow);
 
-    console.log(`[Perception Module #${instanceId}] State before decision:`, {
-      plateauCount: state.plateauCount,
-      plateauMissCount: state.plateauMissCount,
-      stuckCount: state.stuckCount,
-      stuckMissCount: state.stuckMissCount,
-      idleCount: state.idleCount,
-      rawFeature,
-      epoch: recentWindow[recentWindow.length - 1]?.epoch ?? null,
-    });
+    // console.log(`[Perception Module #${instanceId}] State before decision:`, {
+    //   plateauCount: state.plateauCount,
+    //   plateauMissCount: state.plateauMissCount,
+    //   stuckCount: state.stuckCount,
+    //   stuckMissCount: state.stuckMissCount,
+    //   idleCount: state.idleCount,
+    //   rawFeature,
+    //   epoch: recentWindow[recentWindow.length - 1]?.epoch ?? null,
+    // });
 
     let finalFeature = "none";
 
@@ -75,10 +75,10 @@ export function createPerceptionModule() {
         }
       }
 
-      console.log(
-        `[Perception Module #${instanceId}] Plateau Candidate Detected:`,
-        { plateauCount: state.plateauCount }
-      );
+      // console.log(
+      //   `[Perception Module #${instanceId}] Plateau Candidate Detected:`,
+      //   { plateauCount: state.plateauCount }
+      // );
 
       if (state.plateauCount >= PERCEPTION_CONFIG.PLATEAU_TRIGGER_COUNT) {
         finalFeature = "plateau";
@@ -99,10 +99,10 @@ export function createPerceptionModule() {
         }
       }
 
-      console.log(
-        `[Perception Module #${instanceId}] Stuck Candidate Detected:`,
-        { stuckCount: state.stuckCount }
-      );
+      // console.log(
+      //   `[Perception Module #${instanceId}] Stuck Candidate Detected:`,
+      //   { stuckCount: state.stuckCount }
+      // );
 
       if (state.stuckCount >= PERCEPTION_CONFIG.STUCK_TRIGGER_COUNT) {
         finalFeature = "stuck";
@@ -135,15 +135,15 @@ export function createPerceptionModule() {
       }
     }
 
-    console.log(`[Perception Module #${instanceId}] State after decision:`, {
-      plateauCount: state.plateauCount,
-      plateauMissCount: state.plateauMissCount,
-      stuckCount: state.stuckCount,
-      stuckMissCount: state.stuckMissCount,
-      idleCount: state.idleCount,
-      finalFeature,
-      epoch: recentWindow[recentWindow.length - 1]?.epoch ?? null,
-    });
+    // console.log(`[Perception Module #${instanceId}] State after decision:`, {
+    //   plateauCount: state.plateauCount,
+    //   plateauMissCount: state.plateauMissCount,
+    //   stuckCount: state.stuckCount,
+    //   stuckMissCount: state.stuckMissCount,
+    //   idleCount: state.idleCount,
+    //   finalFeature,
+    //   epoch: recentWindow[recentWindow.length - 1]?.epoch ?? null,
+    // });
 
     return getLatestComment(recentWindow, finalFeature);
   }

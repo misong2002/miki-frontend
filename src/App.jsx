@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+// src/App.jsx
 
+import { useEffect, useRef, useState } from "react";
+import { selectMessagesForUI } from "./domains/miki_san/memory";
 import ChatPanel from "./domains/Chat/components/ChatPanel";
 import HyperParamPanel from "./domains/Battle/components/HyperParamPanel";
 import TransitionOverlay from "./domains/Shared/TransitionOverlay";
@@ -80,6 +82,76 @@ function normalizeContactMessages(messages) {
     .filter(Boolean);
 }
 
+function getInitialChatMessages() {
+  const restoredMessages = selectMessagesForUI(50);
+
+  return restoredMessages.length > 0
+    ? restoredMessages
+    : [
+        {
+          id: "welcome",
+          role: "assistant",
+          content:
+            "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
+          createdAt: Date.now(),
+        },
+      ];
+}
+
+/**
+ * 把后端返回的 loss 数据标准化成 memory 里统一的点格式。
+ */
+function normalizeLossPoint(item, index) {
+  if (typeof item === "number") {
+    return { step: index, value: item, wallTime: null };
+  }
+
+  if (item && typeof item === "object") {
+    return {
+      step: item.epoch ?? item.step ?? index,
+      value: item.loss ?? item.value ?? 0,
+      wallTime: item.timestamp ?? null,
+    };
+  }
+
+  return { step: index, value: 0, wallTime: null };
+}
+
+/**
+ * 等间距下采样。
+ * 用于保留一条全局稀疏曲线，避免存太多点。
+ */
+function downsampleEvenly(points, maxPoints) {
+  if (!Array.isArray(points) || points.length <= maxPoints) {
+    return points ?? [];
+  }
+
+  const result = [];
+  const step = (points.length - 1) / (maxPoints - 1);
+
+  for (let i = 0; i < maxPoints; i += 1) {
+    const idx = Math.round(i * step);
+    result.push(points[idx]);
+  }
+
+  return result;
+}
+
+/**
+ * 为 memory 构造两种分辨率的 loss 快照。
+ */
+function buildLossMemorySnapshot(lossData) {
+  const normalized = (lossData ?? []).map(normalizeLossPoint);
+
+  const recentDense = normalized.slice(-200);
+  const globalSparse = downsampleEvenly(normalized, 800);
+
+  return {
+    recentDense,
+    globalSparse,
+  };
+}
+
 export default function App() {
   const [mode, setMode] = useState(AppMode.CHAT);
   const [params, setParams] = useState(initialHyperParams);
@@ -90,15 +162,16 @@ export default function App() {
   });
   const [battleExiting, setBattleExiting] = useState(false);
   const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
+  const [initialChatMessages] = useState(() => getInitialChatMessages());
 
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
   const pollingRef = useRef(false);
   const mikiAgentRef = useRef(null);
+  const trainingRunRef = useRef(null);
 
   if (!mikiAgentRef.current) {
     mikiAgentRef.current = createMikiAgent({
-      memory: null,
       onExternalityChange: (nextStageProps) => {
         setStageProps(nextStageProps);
       },
@@ -126,6 +199,16 @@ export default function App() {
   }
 
   async function handleBattleFinishedExit() {
+    if (trainingRunRef.current?.id && mikiAgent.memory?.endTrainingRun) {
+      try {
+        mikiAgent.memory.endTrainingRun(trainingRunRef.current.id, "finished");
+      } catch (err) {
+        console.warn("[battle] endTrainingRun(finished) failed:", err);
+      } finally {
+        trainingRunRef.current = null;
+      }
+    }
+
     stopLossPolling();
 
     setBattle((prev) => ({
@@ -157,7 +240,6 @@ export default function App() {
       const status = await fetchBattleStatus();
 
       if (!status.running) {
-        console.log("[battle] battle finished, auto return to chat");
         await handleBattleFinishedExit();
       }
     } catch (err) {
@@ -167,7 +249,6 @@ export default function App() {
 
   function startLossPolling() {
     stopLossPolling();
-    console.log("[poll] start");
 
     pollTimerRef.current = setInterval(async () => {
       if (pollingRef.current) return;
@@ -177,6 +258,15 @@ export default function App() {
         const { lossData } = await loadBattleLoss();
         await checkBattleStatus();
 
+        if (trainingRunRef.current?.id && mikiAgent.memory?.saveLossSeries) {
+          try {
+            const snapshot = buildLossMemorySnapshot(lossData);
+            mikiAgent.memory.saveLossSeries(trainingRunRef.current.id, snapshot);
+          } catch (err) {
+            console.warn("[battle] saveLossSeries failed:", err);
+          }
+        }
+
         await mikiAgent.onLossUpdate?.(lossData);
       } finally {
         pollingRef.current = false;
@@ -185,7 +275,6 @@ export default function App() {
   }
 
   function stopLossPolling() {
-    console.log("[poll] stop");
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -201,7 +290,19 @@ export default function App() {
 
     try {
       startResult = await startBattle(trainConfig);
-      console.log("[battle] startBattle ok:", startResult);
+
+      if (mikiAgent.memory?.startTrainingRun) {
+        try {
+          trainingRunRef.current = mikiAgent.memory.startTrainingRun({
+            config: trainConfig,
+            modelName: trainConfig?.modelName ?? null,
+            dataset: trainConfig?.dataset ?? null,
+          });
+        } catch (err) {
+          console.warn("[battle] startTrainingRun failed:", err);
+          trainingRunRef.current = null;
+        }
+      }
     } catch (err) {
       console.error("[battle] startBattle failed:", err);
       mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
@@ -260,6 +361,16 @@ export default function App() {
       console.error("[battle] stop failed:", err);
     }
 
+    if (trainingRunRef.current?.id && mikiAgent.memory?.endTrainingRun) {
+      try {
+        mikiAgent.memory.endTrainingRun(trainingRunRef.current.id, "stopped");
+      } catch (err) {
+        console.warn("[battle] endTrainingRun(stopped) failed:", err);
+      } finally {
+        trainingRunRef.current = null;
+      }
+    }
+
     mikiAgent.externality.patch(DEFAULT_STAGE_PROPS);
 
     setBattle({
@@ -270,11 +381,38 @@ export default function App() {
     setBattleExiting(false);
   }
 
+  /**
+   * 用户活动 -> touch memory。
+   * 这一步对 wake cycle 很关键。
+   */
+  useEffect(() => {
+    function handleUserActivity() {
+      mikiAgent.setUserActive("window_activity");
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        mikiAgent.setUserActive("tab_visible");
+      }
+    }
+
+    window.addEventListener("mousemove", handleUserActivity);
+    window.addEventListener("keydown", handleUserActivity);
+    window.addEventListener("pointerdown", handleUserActivity);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("mousemove", handleUserActivity);
+      window.removeEventListener("keydown", handleUserActivity);
+      window.removeEventListener("pointerdown", handleUserActivity);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [mikiAgent]);
+
   useEffect(() => {
     async function bootstrapBattleState() {
       try {
         const status = await fetchBattleStatus();
-        console.log("[bootstrap] battle status:", status);
 
         if (status.running) {
           mikiAgent.externality.patch(MAGICAL_STAGE_PROPS);
@@ -314,8 +452,8 @@ export default function App() {
 
     mikiAgent.registerContactCallback((payload) => {
       if (!payload?.comment) return;
-      if (payload.feature == 'none') return;
-      if (payload.feature == 'normal') return;
+      if (payload.feature === "none") return;
+      if (payload.feature === "normal") return;
 
       const msg = makeContactMessage(payload);
 
@@ -355,7 +493,6 @@ export default function App() {
     if (typeof window === "undefined") return;
 
     window.mikiCharacterDebug = mikiAgent.getDebugAPI();
-    console.log("[mikiCharacterDebug] ready");
 
     return () => {
       delete window.mikiCharacterDebug;
@@ -394,7 +531,11 @@ export default function App() {
           </main>
 
           <aside className="chat-column">
-            <ChatPanel disabled={false} agent={mikiAgent} />
+            <ChatPanel
+              disabled={false}
+              agent={mikiAgent}
+              initialMessages={initialChatMessages}
+            />
           </aside>
         </>
       )}

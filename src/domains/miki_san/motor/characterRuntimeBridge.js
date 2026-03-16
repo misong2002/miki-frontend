@@ -5,11 +5,11 @@ export function createCharacterRuntimeBridge({ emotionEngine }) {
 
   return {
     apply(command) {
-      console.log(
-  "[CharacterCommand]",
-  command.type,
-  command.value ?? ""
-);
+//       console.log(
+//   "[CharacterCommand]",
+//   command.type,
+//   command.value ?? ""
+// );
 
       switch (command.type) {
         case "SET_EMOTION": {

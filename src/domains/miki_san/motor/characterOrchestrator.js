@@ -359,16 +359,16 @@ function applyIntent(intent, prevIntent, { runtimeBridge, emotionMapper, motionM
     });
   }
 
-  console.log(
-    "[CharacterIntent]",
-    intent.source,
-    "emotion=",
-    intent.emotion,
-    "motion=",
-    intent.motion,
-    "speech=",
-    intent.speech
-  );
+  // console.log(
+  //   "[CharacterIntent]",
+  //   intent.source,
+  //   "emotion=",
+  //   intent.emotion,
+  //   "motion=",
+  //   intent.motion,
+  //   "speech=",
+  //   intent.speech
+  // );
 }
 export function createCharacterOrchestrator({
   runtimeBridge,
@@ -435,16 +435,16 @@ export function createCharacterOrchestrator({
       activeIntent: nextIntent,
     };
 
-    console.log(
-      "[CharacterEvent]",
-      { time: Date.now() },
-      event.type,
-      event.value ?? "",
-      event.messageId ?? "",
-      event.token ?? ""
-    );
-    console.log("[CharacterState:before]", prevState);
-    console.log("[CharacterState:after]", state);
+    // console.log(
+    //   "[CharacterEvent]",
+    //   { time: Date.now() },
+    //   event.type,
+    //   event.value ?? "",
+    //   event.messageId ?? "",
+    //   event.token ?? ""
+    // );
+    // console.log("[CharacterState:before]", prevState);
+    // console.log("[CharacterState:after]", state);
 
     emit();
     scheduleIdleIfNeeded();

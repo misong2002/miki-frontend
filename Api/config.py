@@ -7,7 +7,7 @@ TRAIN_LOG_PATH = MIKI_ROOT + "/data/train.log"
 TRAIN_SESSION_PATH = MIKI_ROOT + "/data/training_session.json"
 
 #配置文件
-TRAIN_CONFIG_PATH = MIKI_ROOT + "/data/train_config.json"
+TRAIN_CONFIG_PATH = MIKI_ROOT + "/config/train_config.json"
 
 #训练脚本
 BATTLE_SCRIPT_PATH = MIKI_ROOT + "/scripts/train.sh"

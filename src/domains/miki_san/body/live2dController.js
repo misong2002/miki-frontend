@@ -11,7 +11,7 @@ class Live2DController {
 
   bindManager(manager) {
     this.manager = manager;
-    console.log("[Live2DController] manager bound:", manager);
+    //console.log("[Live2DController] manager bound:", manager);
 
     // 新 manager 绑定后立刻同步一次当前口型状态
     this.applyMouthOverride();
@@ -23,7 +23,7 @@ class Live2DController {
 
   setExpressionById(expressionId) {
     const fileName = SAYAKA_EXPRESSIONS[String(expressionId)];
-    console.log("[Live2DController] setExpressionById:", expressionId, fileName);
+    //console.log("[Live2DController] setExpressionById:", expressionId, fileName);
 
     if (!fileName) {
       console.warn("[Live2DController] unknown expression id:", expressionId);
@@ -41,7 +41,7 @@ class Live2DController {
 
   playMotionById(motionId) {
     const fileName = SAYAKA_MOTIONS[String(motionId)];
-    console.log("[Live2DController] playMotionById:", motionId, fileName);
+    //console.log("[Live2DController] playMotionById:", motionId, fileName);
 
     if (!fileName) {
       console.warn("[Live2DController] unknown motion id:", motionId);
@@ -63,7 +63,7 @@ class Live2DController {
    */
   setSpeaking(active) {
     this.speaking = !!active;
-    console.log("[Live2DController] setSpeaking:", this.speaking);
+    //console.log("[Live2DController] setSpeaking:", this.speaking);
 
     if (!this.speaking) {
       this.mouthOverrideValue = 0;
@@ -149,7 +149,7 @@ class Live2DController {
   }
 
   interrupt() {
-    console.log("[Live2DController] interrupt");
+    //console.log("[Live2DController] interrupt");
 
     if (!this.hasManager()) return false;
 

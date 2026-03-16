@@ -210,19 +210,19 @@ export class Live2DManager {
     const settings = this.model.internalModel?.settings;
     const expressions = settings?.expressions || settings?.Expressions || [];
 
-    console.log("[Live2DManager] setExpressionByFileName called:", fileName);
-    console.log("[Live2DManager] available expressions:", expressions);
-    console.log("[Live2DManager] model.expression:", typeof this.model.expression);
-    console.log(
-      "[Live2DManager] expressionManager:",
-      this.model.internalModel?.expressionManager
-    );
+    // console.log("[Live2DManager] setExpressionByFileName called:", fileName);
+    // console.log("[Live2DManager] available expressions:", expressions);
+    // console.log("[Live2DManager] model.expression:", typeof this.model.expression);
+    // console.log(
+    //   "[Live2DManager] expressionManager:",
+    //   this.model.internalModel?.expressionManager
+    // );
 
     const targetIndex = expressions.findIndex(
       (exp) => exp.File === fileName || exp.Name === fileName
     );
 
-    console.log("[Live2DManager] matched expression index:", targetIndex);
+    // console.log("[Live2DManager] matched expression index:", targetIndex);
 
     if (targetIndex < 0) {
       console.warn("[Live2DManager] expression not found:", fileName);
@@ -232,7 +232,7 @@ export class Live2DManager {
     try {
       if (typeof this.model.expression === "function") {
         this.model.expression(targetIndex);
-        console.log("[Live2DManager] expression applied by model.expression");
+        //console.log("[Live2DManager] expression applied by model.expression");
         return;
       }
 
@@ -242,7 +242,7 @@ export class Live2DManager {
         typeof expressionManager.setExpression === "function"
       ) {
         expressionManager.setExpression(targetIndex);
-        console.log("[Live2DManager] expression applied by expressionManager");
+        //console.log("[Live2DManager] expression applied by expressionManager");
         return;
       }
 
@@ -261,15 +261,15 @@ export class Live2DManager {
     const settings = this.model.internalModel?.settings;
     const motions = settings?.motions || settings?.Motions || {};
 
-    console.log("[Live2DManager] playMotionByName called:", motionName);
-    console.log("[Live2DManager] available motion groups:", motions);
-    console.log("[Live2DManager] model.motion:", typeof this.model.motion);
+    // console.log("[Live2DManager] playMotionByName called:", motionName);
+    // console.log("[Live2DManager] available motion groups:", motions);
+    // console.log("[Live2DManager] model.motion:", typeof this.model.motion);
 
     for (const groupName of Object.keys(motions)) {
       const group = motions[groupName];
       if (!Array.isArray(group)) continue;
 
-      console.log(`[Live2DManager] checking group ${groupName}:`, group);
+      // console.log(`[Live2DManager] checking group ${groupName}:`, group);
 
       const index = group.findIndex((m) => {
         return (
@@ -280,14 +280,14 @@ export class Live2DManager {
       });
 
       if (index >= 0) {
-        console.log(
-          `[Live2DManager] matched motion in group=${groupName}, index=${index}`
-        );
+        // console.log(
+        //   `[Live2DManager] matched motion in group=${groupName}, index=${index}`
+        // );
 
         try {
           if (typeof this.model.motion === "function") {
             this.model.motion(groupName, index);
-            console.log("[Live2DManager] motion applied by model.motion");
+            //console.log("[Live2DManager] motion applied by model.motion");
             return;
           }
 

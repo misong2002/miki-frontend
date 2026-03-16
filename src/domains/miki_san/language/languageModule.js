@@ -6,8 +6,8 @@ import { createDeferred, takeNaturalChunk, normalizeHearInput } from "./language
 export function createLanguageModule({
   streamChat = sendChatStream,
   parserFactory = createControlStreamParser,
-  transferIntervalMs = 180,
-  typewriterIntervalMs = 120,
+  transferIntervalMs = 60,
+  typewriterIntervalMs = 20,
   onCharacterEvent = null,
 } = {}) {
   let rememberedContext = null;

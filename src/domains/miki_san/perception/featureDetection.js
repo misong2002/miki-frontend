@@ -45,7 +45,7 @@ export function detectFeatures(lossData) {
     return "rapid_drop";
   }
 
-  if (Math.abs(slope) < 0.01 && meanLoss > 3 * globalRange) {
+  if (Math.abs(slope) < 0.01 && meanLoss > 3 * globalRange && maxLoss >1.05*firstLoss) {
     // console.log("[Feature Detection]: Plateau Candidate Detected", {
     //   slope,
     //   meanLoss,
@@ -54,7 +54,7 @@ export function detectFeatures(lossData) {
     return "plateau_candidate";
   }
 
-  if (Math.abs(slope) < 1 && meanLoss < 3 * globalRange) {
+  if (Math.abs(slope) < 1 && meanLoss < 3 * globalRange && maxLoss > 1.1 * firstLoss) {
     // console.log("[Feature Detection]: Stuck Candidate Detected", {
     //   slope,
     //   meanLoss,

@@ -1,3 +1,5 @@
+// src/domains/miki_san/createMikiAgent.js
+
 import { createCharacterRuntimeBridge } from "./motor/characterRuntimeBridge";
 import { createCharacterOrchestrator } from "./motor/characterOrchestrator";
 import { createLanguageModule } from "./language/languageModule";
@@ -6,23 +8,43 @@ import { emotionMapper } from "./motor/emotionMapper";
 import { motionMapper } from "./motor/motionMapper";
 import { createExternalityModule } from "./externality/createExternalityModule";
 import { createPerceptionModule } from "./perception/perceptionModule.js";
+import { createMemoryRuntime } from "./memory";
+
 function createMessageId(prefix = "miki") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+async function safeCall(fn, fallback = null, label = "safeCall") {
+  try {
+    if (typeof fn !== "function") return fallback;
+    return await fn();
+  } catch (err) {
+    console.warn(`[MikiAgent] ${label} failed:`, err);
+    return fallback;
+  }
+}
+
 export function createMikiAgent({
-  memory = null,
+  memory: injectedMemory = null,
   onExternalityChange = null,
 } = {}) {
   const runtimeBridge = createCharacterRuntimeBridge({
     emotionEngine,
   });
+
   const character = createCharacterOrchestrator({
     runtimeBridge,
     emotionMapper,
     motionMapper,
   });
-  
+
+  if (!character?.dispatch) {
+    throw new Error("createMikiAgent: character.dispatch is required");
+  }
+
+  const memory = injectedMemory ?? createMemoryRuntime();
+  memory.boot();
+
   const perception = createPerceptionModule();
 
   const language = createLanguageModule({
@@ -30,6 +52,12 @@ export function createMikiAgent({
       character.dispatch(event);
     },
   });
+
+  if (!language?.hear || !language?.interrupt) {
+    throw new Error(
+      "createMikiAgent: language.hear and language.interrupt are required"
+    );
+  }
 
   const externality = createExternalityModule({
     initialModelKey: "normal",
@@ -43,16 +71,12 @@ export function createMikiAgent({
   let lastPerceptionComment = null;
   let lastPerceptionFeature = null;
 
-
   const COOLDOWN_MS = 5000;
 
-
-  if (!character?.dispatch) {
-    throw new Error("createMikiAgent: character.dispatch is required");
-  }
-
-  if (!language?.hear || !language?.interrupt) {
-    throw new Error("createMikiAgent: language.hear and language.interrupt are required");
+  function touchMemory() {
+    if (typeof memory?.touch === "function") {
+      memory.touch();
+    }
   }
 
   function getStageProps() {
@@ -60,6 +84,8 @@ export function createMikiAgent({
   }
 
   function setAppMode(mode) {
+    touchMemory();
+
     character.dispatch({
       type: "APP_MODE_CHANGED",
       mode,
@@ -67,18 +93,19 @@ export function createMikiAgent({
   }
 
   function setTrainingStatus(status = "idle", semantic = "idle") {
-    if (semantic === "none") {
-      return;
-    }
-    console.log("[MikiAgent] setTrainingStatus:", { status, semantic });
+    if (semantic === "none") return;
+
+    touchMemory();
+
     character.dispatch({
       type: "TRAINING_STATUS",
       payload: { status, semantic },
     });
   }
 
-
   function setUserActive(source = "app") {
+    touchMemory();
+
     character.dispatch({
       type: "USER_ACTIVE",
       source,
@@ -101,25 +128,59 @@ export function createMikiAgent({
       };
     }
 
-    character.dispatch({
-      type: "USER_ACTIVE",
-      source: "chat_input",
-    });
+    setUserActive("chat_input");
 
-    let memoryContext = null;
-    if (memory?.recall) {
-      try {
-        memoryContext = await memory.recall({
-          text: trimmed,
-        });
-      } catch (err) {
-        console.warn("[MikiAgent] memory.recall failed:", err);
-      }
-    }
+    await safeCall(
+      () => memory?.recordUserMessage?.(trimmed, { messageId }),
+      null,
+      "memory.recordUserMessage"
+    );
+
+    const memoryContext = await safeCall(
+      () => memory?.recall?.({ text: trimmed, messageId }),
+      null,
+      "memory.recall"
+    );
 
     if (memoryContext && language?.remind) {
-      language.remind(memoryContext);
+      await safeCall(
+        () => language.remind(memoryContext),
+        null,
+        "language.remind"
+      );
     }
+
+    let latestAssistantText = "";
+    let finalAssistantText = "";
+    let interrupted = false;
+    let errorObj = null;
+
+    const wrappedHandlers = {
+      ...handlers,
+
+      onTextUpdate: (fullText) => {
+        latestAssistantText = fullText ?? "";
+        handlers.onTextUpdate?.(fullText);
+      },
+
+      onDone: (finalText) => {
+        finalAssistantText = finalText ?? latestAssistantText ?? "";
+        handlers.onDone?.(finalText);
+      },
+
+      onInterrupted: (partialText) => {
+        interrupted = true;
+        finalAssistantText = partialText ?? latestAssistantText ?? "";
+        handlers.onInterrupted?.(partialText);
+      },
+
+      onError: (err, partialText) => {
+        errorObj = err;
+        finalAssistantText =
+          partialText ?? latestAssistantText ?? finalAssistantText ?? "";
+        handlers.onError?.(err, partialText);
+      },
+    };
 
     const result = await language.hear(
       {
@@ -127,24 +188,47 @@ export function createMikiAgent({
         messageId,
         memoryContext,
       },
-      handlers
+      wrappedHandlers
     );
 
-    if (memory?.rememberTurn) {
-      try {
-        await memory.rememberTurn({
-          user: trimmed,
-          assistant: result?.text ?? "",
-        });
-      } catch (err) {
-        console.warn("[MikiAgent] memory.rememberTurn failed:", err);
-      }
+    const assistantText =
+      (typeof result?.text === "string" && result.text) ||
+      finalAssistantText ||
+      latestAssistantText ||
+      "";
+
+    if (assistantText.trim()) {
+      await safeCall(
+        () =>
+          memory?.recordAssistantMessage?.(assistantText, {
+            messageId,
+            interrupted,
+            error: errorObj ? String(errorObj) : null,
+          }),
+        null,
+        "memory.recordAssistantMessage"
+      );
     }
 
-    return result;
+    await safeCall(
+      () =>
+        memory?.rememberTurn?.({
+          messageId,
+          user: trimmed,
+          assistant: assistantText,
+          interrupted,
+          hadError: Boolean(errorObj),
+          memoryContext,
+        }),
+      null,
+      "memory.rememberTurn"
+    );
+
+    return {
+      ...result,
+      text: assistantText,
+    };
   }
-
-
 
   function registerContactCallback(cb) {
     contactCallback = cb;
@@ -161,16 +245,15 @@ export function createMikiAgent({
 
   async function onLossUpdate(lossData) {
     const now = Date.now();
-    
+
     if (!lossData || lossData.length === 0) return null;
     if (now - lastPerceptionTime < COOLDOWN_MS) return null;
 
     const result = perception.comment(lossData);
     const { comment, feature, epoch } = result;
-    console.log("[onLossUpdate] perception result:", result);
+
     if (!comment || feature === "none") return null;
 
-    // 去重
     if (feature === lastPerceptionFeature || comment === lastPerceptionComment) {
       return null;
     }
@@ -189,12 +272,26 @@ export function createMikiAgent({
       timestamp: now,
     };
 
+    await safeCall(
+      () =>
+        memory?.recordTrainingObservation?.({
+          type: "perception_comment",
+          feature,
+          epoch,
+          comment,
+          timestamp: now,
+        }),
+      null,
+      "memory.recordTrainingObservation"
+    );
+
     if (contactCallback) {
       contactCallback(payload);
     }
 
     return payload;
   }
+
   function interrupt() {
     return language.interrupt();
   }
@@ -208,138 +305,13 @@ export function createMikiAgent({
       getCharacterState: () => character.getState?.(),
       dispatchCharacter: (event) => character.dispatch(event),
 
-      beginChat: (messageId = "debug-chat") =>
-        character.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        }),
+      getMemory: () => memory,
+      dumpMemoryDB: () => memory?.dump?.(),
 
-      startSpeaking: (messageId = "debug-chat") =>
-        character.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        }),
-
-      token: (token = "debug token") =>
-        character.dispatch({
-          type: "CHAT_TOKEN",
-          token,
-        }),
-
-      endChat: (messageId = "debug-chat") =>
-        character.dispatch({
-          type: "CHAT_END",
-          messageId,
-        }),
-
-      setChatEmotion: (emotionKey) =>
-        character.dispatch({
-          type: "CHAT_CONTROL_EMOTION",
-          value: emotionKey,
-        }),
-
-      setChatMotion: (motionKey) =>
-        character.dispatch({
-          type: "CHAT_CONTROL_MOTION",
-          value: motionKey,
-        }),
-
-      setTraining: (status = "running", semantic = "normal") =>
-        character.dispatch({
-          type: "TRAINING_STATUS",
-          payload: { status, semantic },
-        }),
-
-      userActive: (source = "debug") =>
-        character.dispatch({
-          type: "USER_ACTIVE",
-          source,
-        }),
-
-      setCharacterMode: (nextMode) =>
-        character.dispatch({
-          type: "APP_MODE_CHANGED",
-          mode: nextMode,
-        }),
-
-      demoThink: (messageId = "debug-chat") => {
-        character.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        });
+      resetMemoryDB: async () => {
+        const mod = await import("./memory");
+        mod.resetMemoryDB?.();
       },
-
-      demoSpeak: (messageId = "debug-chat") => {
-        character.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        });
-      },
-
-      demoLine: (
-        {
-          messageId = "debug-chat",
-          emotion = null,
-          motion = null,
-        } = {}
-      ) => {
-        character.dispatch({
-          type: "CHAT_BEGIN",
-          messageId,
-        });
-
-        if (emotion) {
-          character.dispatch({
-            type: "CHAT_CONTROL_EMOTION",
-            value: emotion,
-          });
-        }
-
-        if (motion) {
-          character.dispatch({
-            type: "CHAT_CONTROL_MOTION",
-            value: motion,
-          });
-        }
-
-        character.dispatch({
-          type: "CHAT_SPEAK_START",
-          messageId,
-        });
-      },
-
-      getLanguage: () => language,
-
-      remindLanguage: (memoryContext) =>
-        language.remind?.(memoryContext),
-
-      hearLanguage: async (text, extra = {}) => {
-        return language.hear(
-          {
-            text,
-            messageId: extra.messageId ?? "debug-language",
-            memoryContext: extra.memoryContext ?? null,
-          },
-          {
-            onThinkingStart: () => console.log("[debug language] thinking"),
-            onTextChunk: (chunk) => console.log("[debug language] chunk:", chunk),
-            onTextUpdate: (fullText) =>
-              console.log("[debug language] full:", fullText),
-            onControl: (event) =>
-              console.log("[debug language] control:", event),
-            onDone: (finalText) =>
-              console.log("[debug language] done:", finalText),
-            onInterrupted: (partialText) =>
-              console.log("[debug language] interrupted:", partialText),
-            onError: (err, partialText) =>
-              console.error("[debug language] error:", err, partialText),
-            ...extra.handlers,
-          }
-        );
-      },
-
-      interruptLanguage: () => language.interrupt?.(),
-      isLanguageBusy: () => language.isBusy?.(),
 
       hear: async (text) => {
         return hear(
@@ -363,6 +335,9 @@ export function createMikiAgent({
       interruptAgent: () => interrupt(),
       isAgentBusy: () => isBusy(),
 
+      userActive: (source = "debug") => setUserActive(source),
+      setCharacterMode: (nextMode) => setAppMode(nextMode),
+
       externality: {
         getState: () => externality.getState(),
         setModelKey: (modelKey) => externality.setModelKey(modelKey),
@@ -383,6 +358,7 @@ export function createMikiAgent({
     hear,
     interrupt,
     isBusy,
+    memory,
 
     setAppMode,
     setTrainingStatus,
