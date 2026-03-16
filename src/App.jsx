@@ -186,6 +186,13 @@ export default function App() {
   const mikiAgent = mikiAgentRef.current;
 
   useEffect(() => {
+    if (mode === AppMode.CHAT && chatBootReady) {
+      const restoredMessages = selectMessagesForUI(50);
+      setInitialChatMessages(restoredMessages);
+    }
+  }, [mode, chatBootReady]);
+  
+  useEffect(() => {
     let cancelled = false;
 
     async function bootstrapChatMemory() {

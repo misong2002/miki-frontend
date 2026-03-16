@@ -3,7 +3,7 @@ MIKI_ROOT = "/home/mingzhuo/miki"#请不要用相对路径
 
 #日志文件路径
 LOSS_FILE_PATH = MIKI_ROOT + "/data/loss.txt"
-TRAIN_LOG_PATH = MIKI_ROOT + "/data/train.log"
+TRAIN_LOG_PATH = MIKI_ROOT + "/log/train.log"
 TRAIN_SESSION_PATH = MIKI_ROOT + "/data/training_session.json"
 
 #配置文件

@@ -15,31 +15,23 @@ export function selectLatestWakeCycle() {
 }
 
 /**
- * 给 UI 显示的最近消息。
+ * 获取 UI 显示的最近消息，跨 wakeCycle
+ * @param {number} limit - 消息条数
+ * @param {number} wakeCycleCount - 最近几个 wakeCycle
  */
 export function selectMessagesForUI(limit = 50, wakeCycleCount = 3) {
   const wakeCycles = listRecentWakeCycles(wakeCycleCount);
   if (!wakeCycles.length) return [];
 
-  /**
-   * 先取最近 3 个 wake cycle，
-   * 但为了按时间正序显示，需要再反转回来：
-   * 最旧 → 最新
-   */
-  const orderedWakeCycles = [...wakeCycles].reverse();
+  const mergedMessages = wakeCycles
+    .slice() // copy
+    .reverse() // 从最旧到最新
+    .flatMap((wc) => listMessagesByWakeCycle(wc.id));
 
-  const mergedMessages = orderedWakeCycles.flatMap((cycle) =>
-    listMessagesByWakeCycle(cycle.id)
-  );
-
-  /**
-   * 再按 createdAt 做一次全局排序，防止边界时序乱掉
-   */
   mergedMessages.sort((a, b) => a.createdAt - b.createdAt);
 
   return mergedMessages.slice(-limit);
 }
-
 
 /**
  * 给 prompt 注入的上下文。
