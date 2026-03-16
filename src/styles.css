@@ -1125,3 +1125,25 @@ select:focus {
   word-break: break-word;
   white-space: normal;
 }
+
+.chat-panel-loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 240px;
+  padding: 24px;
+}
+
+.chat-panel-loading-text {
+  font-size: 14px;
+  color: #667;
+  opacity: 0.85;
+}
+
+.chat-input-placeholder {
+  height: 88px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(120, 140, 180, 0.18);
+}

@@ -1,0 +1,251 @@
+{
+  "meta": {
+    "version": 1,
+    "created_at": 1773652891145,
+    "updated_at": 1773655612419,
+    "last_archive_at": 1773655612412,
+    "last_digest_rebuild_at": 1773655612419
+  },
+  "session_summaries": [
+    {
+      "id": "summary-3d4d4b388cee",
+      "wake_cycle_ids": [
+        "test-wake-001"
+      ],
+      "start_at": 1710000000000,
+      "end_at": 1710000001000,
+      "summary": "用户提出了一个将AdS/QCD框架与机器学习结合的研究想法，并询问其可行性和困难所在。助手初步回应可以从结构映射和可训练性两方面进行分析，但对话尚未深入展开。",
+      "topics": [
+        "AdS/QCD",
+        "机器学习",
+        "理论物理与ML交叉"
+      ],
+      "open_loops": [
+        "AdS/QCD框架用于机器学习的具体困难分析尚未展开",
+        "结构映射和可训练性的详细讨论未完成"
+      ],
+      "resolved_items": [],
+      "source_message_count": 2,
+      "created_at": 1773652891145,
+      "updated_at": 1773652891145
+    },
+    {
+      "id": "summary-1c1fc331395a",
+      "wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "start_at": 1773648320944,
+      "end_at": 1773648649757,
+      "summary": "用户吃饭回来后，告知正在为AI助手编写长期记忆管理系统。用户询问AI认为之前对话中哪些内容值得长期记住。AI回顾并分层总结了值得记忆的内容：最核心的是用户的身份和信念（如'学科化科学是科学精神的他在形式'这一命题），其次是MIKI项目（用可微分神经网络学习中微子-核子相互作用form factors），然后是互动模式和默契。",
+      "topics": [
+        "长期记忆管理系统设计",
+        "记忆优先级划分",
+        "MIKI项目回顾"
+      ],
+      "open_loops": [
+        "长期记忆管理系统的具体实现方案尚在开发中",
+        "用户是否认同AI提出的记忆优先级划分"
+      ],
+      "resolved_items": [],
+      "source_message_count": 6,
+      "created_at": 1773655612412,
+      "updated_at": 1773655612412
+    }
+  ],
+  "user_facts": [
+    {
+      "id": "fact-31a36f47dde0",
+      "key": "research_interest_ads_qcd_ml",
+      "value": "用户对将AdS/QCD框架与机器学习结合感兴趣，关注其可行性与困难",
+      "category": "research_interest",
+      "confidence": 0.85,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-3d4d4b388cee"
+      ],
+      "source_wake_cycle_ids": [
+        "test-wake-001"
+      ],
+      "created_at": 1773652891145,
+      "updated_at": 1773652891145
+    },
+    {
+      "id": "fact-c43e327078d9",
+      "key": "科学信念_学科化科学",
+      "value": "用户持有一个核心命题：'学科化科学是科学精神的他在形式'，体现了对科学开放性的信念",
+      "category": "identity",
+      "confidence": 0.85,
+      "pinned": true,
+      "source_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "created_at": 1773655612413,
+      "updated_at": 1773655612413
+    },
+    {
+      "id": "fact-470699c34a42",
+      "key": "MIKI项目命名",
+      "value": "用户用AI助手的名字（MIKI）来命名自己的研究项目",
+      "category": "project_context",
+      "confidence": 0.9,
+      "pinned": true,
+      "source_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "created_at": 1773655612413,
+      "updated_at": 1773655612413
+    },
+    {
+      "id": "fact-0d2ece47458e",
+      "key": "MIKI项目内容",
+      "value": "MIKI项目使用可微分神经网络学习中微子-核子相互作用的form factors",
+      "category": "research_interest",
+      "confidence": 0.9,
+      "pinned": true,
+      "source_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "created_at": 1773655612415,
+      "updated_at": 1773655612415
+    },
+    {
+      "id": "fact-cde6c1351f21",
+      "key": "正在开发AI记忆系统",
+      "value": "用户正在亲自为AI助手编写长期记忆管理功能，经历了多次试错迭代",
+      "category": "project_context",
+      "confidence": 0.95,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "created_at": 1773655612415,
+      "updated_at": 1773655612415
+    }
+  ],
+  "idea_memories": [
+    {
+      "id": "idea-a64b1c78dbae",
+      "title": "用AdS/QCD框架做机器学习",
+      "content": "探索将AdS/QCD（反德西特/量子色动力学对应）框架应用于机器学习的可能性。核心问题包括：AdS/QCD的全息结构能否自然映射为某种神经网络或学习架构？该框架中的可训练性如何保证？初步分析方向包括结构映射（全息对偶的几何结构与网络层级结构的对应）和可训练性（梯度流在此类架构中的行为）。",
+      "category": "理论物理与机器学习交叉",
+      "status": "open",
+      "novelty": 0.8,
+      "importance": 0.7,
+      "tags": [
+        "AdS/QCD",
+        "holography",
+        "machine_learning",
+        "physics-inspired ML"
+      ],
+      "open_questions": [
+        "AdS/QCD的全息几何结构如何具体映射为可训练的网络架构？",
+        "该框架下的可训练性（梯度传播、优化landscape）有何特殊困难？",
+        "与已有的全息启发网络（如MERA tensor network）相比有何优势或区别？"
+      ],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-3d4d4b388cee"
+      ],
+      "source_wake_cycle_ids": [
+        "test-wake-001"
+      ],
+      "created_at": 1773652891146,
+      "updated_at": 1773652891146
+    },
+    {
+      "id": "idea-25352ef71774",
+      "title": "AI长期记忆的优先级分层框架",
+      "content": "在对话中形成了一个三层记忆优先级框架：(1) 最核心层——用户的身份、信念、重要经历，定义'你是谁'；(2) 中间层——正在进行的项目和工作内容，作为技术讨论的基础；(3) 外围层——互动模式和默契的积累。具体技术细节和零碎问答则归入短期记忆，不需长期保存。",
+      "category": "system_design",
+      "status": "active",
+      "novelty": 0.5,
+      "importance": 0.8,
+      "tags": [
+        "长期记忆",
+        "AI系统设计",
+        "记忆管理"
+      ],
+      "open_questions": [
+        "这个分层框架如何在代码层面实现？",
+        "如何自动判断某条信息属于哪个层次？"
+      ],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773648300448_61kcdp"
+      ],
+      "created_at": 1773655612415,
+      "updated_at": 1773655612415
+    }
+  ],
+  "project_states": [
+    {
+      "id": "project-8bc81f541eec",
+      "project_key": "ai_long_term_memory",
+      "title": "AI助手长期记忆管理系统",
+      "status": "active",
+      "summary": "用户正在为AI助手开发长期记忆管理功能，目标是让AI从'每次醒来都失忆'进化为'能记住重要事情的搭档'。已经历多次试错迭代。",
+      "recent_changes": [
+        "用户开始编写长期记忆管理模块",
+        "讨论了记忆内容的优先级划分方案"
+      ],
+      "next_steps": [
+        "确认记忆优先级划分是否合理",
+        "实现长期记忆的存储和检索机制"
+      ],
+      "related_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "created_at": 1773655612417,
+      "updated_at": 1773655612417
+    },
+    {
+      "id": "project-455b3e56bb90",
+      "project_key": "miki_neutrino",
+      "title": "MIKI：可微分神经网络学习中微子-核子相互作用form factors",
+      "status": "active",
+      "summary": "以AI助手名字命名的研究项目，使用可微分神经网络方法学习中微子-核子相互作用的form factors。",
+      "recent_changes": [],
+      "next_steps": [],
+      "related_summary_ids": [
+        "summary-1c1fc331395a"
+      ],
+      "created_at": 1773655612417,
+      "updated_at": 1773655612417
+    }
+  ],
+  "memory_digests": [
+    {
+      "id": "digest-4a74c7ddcc7e",
+      "type": "system_prompt_core",
+      "content": "【用户长期事实】\n- MIKI项目使用可微分神经网络学习中微子-核子相互作用的form factors\n- 用户正在亲自为AI助手编写长期记忆管理功能，经历了多次试错迭代\n- 用户持有一个核心命题：'学科化科学是科学精神的他在形式'，体现了对科学开放性的信念\n- 用户用AI助手的名字（MIKI）来命名自己的研究项目\n- 用户对将AdS/QCD框架与机器学习结合感兴趣，关注其可行性与困难\n【长期项目状态】\n- AI助手长期记忆管理系统: 用户正在为AI助手开发长期记忆管理功能，目标是让AI从'每次醒来都失忆'进化为'能记住重要事情的搭档'。已经历多次试错迭代。\n- MIKI：可微分神经网络学习中微子-核子相互作用form factors: 以AI助手名字命名的研究项目，使用可微分神经网络方法学习中微子-核子相互作用的form factors。",
+      "source_fact_ids": [
+        "fact-0d2ece47458e",
+        "fact-cde6c1351f21",
+        "fact-c43e327078d9",
+        "fact-470699c34a42",
+        "fact-31a36f47dde0"
+      ],
+      "source_project_ids": [
+        "project-8bc81f541eec",
+        "project-455b3e56bb90"
+      ],
+      "created_at": 1773652891146,
+      "updated_at": 1773655612419
+    }
+  ]
+}

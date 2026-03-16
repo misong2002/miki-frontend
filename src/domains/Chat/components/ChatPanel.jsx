@@ -83,14 +83,11 @@ export default function ChatPanel({
   disabled,
   agent,
   initialMessages = [],
+  bootLoading = false,
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  /**
-   * 初始消息只在首次挂载时取一次。
-   * 这里优先使用 App 传进来的 memory 恢复消息。
-   */
   const [messages, setMessages] = useState(() => {
     if (Array.isArray(initialMessages) && initialMessages.length > 0) {
       return initialMessages.map(normalizeInitialMessage);
@@ -110,9 +107,23 @@ export default function ChatPanel({
   const textareaRef = useRef(null);
 
   /**
+   * boot 完成后，把 App 传进来的 initialMessages 正确同步到本地 state。
+   * 这样启动时异步写进 memory 的 greeting 才能显示出来。
+   */
+  useEffect(() => {
+    if (bootLoading) return;
+
+    if (Array.isArray(initialMessages) && initialMessages.length > 0) {
+      setMessages(initialMessages.map(normalizeInitialMessage));
+    }
+  }, [initialMessages, bootLoading]);
+
+  /**
    * 消息变化后自动滚动到底部。
    */
   useEffect(() => {
+    if (bootLoading) return;
+
     const el = historyRef.current;
     if (!el) return;
 
@@ -120,7 +131,7 @@ export default function ChatPanel({
       top: el.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages]);
+  }, [messages, bootLoading]);
 
   /**
    * 输入框高度自动适配。
@@ -134,8 +145,9 @@ export default function ChatPanel({
   }
 
   useEffect(() => {
+    if (bootLoading) return;
     resetTextareaHeight();
-  }, [input]);
+  }, [input, bootLoading]);
 
   /**
    * 更新 assistant 占位消息。
@@ -156,7 +168,7 @@ export default function ChatPanel({
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || disabled || !agent?.hear) return;
+    if (!text || sending || disabled || bootLoading || !agent?.hear) return;
 
     const userMessage = makeMessage({
       role: "user",
@@ -240,10 +252,13 @@ export default function ChatPanel({
   }
 
   function handleInterrupt() {
+    if (bootLoading) return;
     agent?.interrupt?.();
   }
 
   function handleKeyDown(event) {
+    if (bootLoading) return;
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSend();
@@ -266,80 +281,109 @@ export default function ChatPanel({
       </div>
 
       <div className="chat-history" ref={historyRef}>
-        {messages.map((msg, index) => {
-          const prev = messages[index - 1];
-
-          const showMeta =
-            index === 0 ||
-            prev?.role !== msg.role ||
-            Math.abs((msg.createdAt ?? 0) - (prev?.createdAt ?? 0)) >
-              5 * 60 * 1000;
-
-          return (
-            <div key={msg.id} className={`chat-row ${msg.role}`}>
-              <div className="chat-message-group">
-                {showMeta && (
-                  <div className={`chat-meta ${msg.role}`}>
-                    <span className="chat-name">
-                      {msg.role === "user" ? "你" : "美树沙耶香"}
-                    </span>
-                    <span className="chat-time">{formatTime(msg.createdAt)}</span>
-                  </div>
-                )}
-
-                <div className={`chat-bubble ${msg.role} ${msg.status || "done"}`}>
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
-                  >
-                    {msg.content || (msg.status === "pending" ? "正在思考……" : "")}
-                  </ReactMarkdown>
-                </div>
-
-                {Array.isArray(msg.references) && msg.references.length > 0 && (
-                  <div className="chat-references">
-                    {msg.references.map((ref, i) => (
-                      <span className="chat-ref-chip" key={`${msg.id}-ref-${i}`}>
-                        {ref.title || ref.source || "reference"}
-                      </span>
-                    ))}
-                  </div>
-                )}
+        {bootLoading ? (
+          <div className="chat-boot-state">
+            <div className="chat-boot-state-inner">
+              <div className="chat-boot-title">正在恢复对话记忆……</div>
+              <div className="chat-boot-subtitle">
+                美樹さん正在整理刚才的对话内容
               </div>
             </div>
-          );
-        })}
+          </div>
+        ) : (
+          messages.map((msg, index) => {
+            const prev = messages[index - 1];
+
+            const showMeta =
+              index === 0 ||
+              prev?.role !== msg.role ||
+              Math.abs((msg.createdAt ?? 0) - (prev?.createdAt ?? 0)) >
+                5 * 60 * 1000;
+
+            return (
+              <div key={msg.id} className={`chat-row ${msg.role}`}>
+                <div className="chat-message-group">
+                  {showMeta && (
+                    <div className={`chat-meta ${msg.role}`}>
+                      <span className="chat-name">
+                        {msg.role === "user" ? "你" : "美树沙耶香"}
+                      </span>
+                      <span className="chat-time">
+                        {formatTime(msg.createdAt)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className={`chat-bubble ${msg.role} ${msg.status || "done"}`}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkMath]}
+                      rehypePlugins={[rehypeKatex]}
+                    >
+                      {msg.content || (msg.status === "pending" ? "正在思考……" : "")}
+                    </ReactMarkdown>
+                  </div>
+
+                  {Array.isArray(msg.references) && msg.references.length > 0 && (
+                    <div className="chat-references">
+                      {msg.references.map((ref, i) => (
+                        <span className="chat-ref-chip" key={`${msg.id}-ref-${i}`}>
+                          {ref.title || ref.source || "reference"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       <div className="chat-input-bar">
-        <textarea
-          ref={textareaRef}
-          className="chat-textarea"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          disabled={disabled || sending}
-          rows={1}
-        />
+        {bootLoading ? (
+          <div className="chat-input-loading">
+            <div className="chat-textarea loading" />
+            <div className="chat-actions">
+              <button className="chat-send-btn" disabled>
+                发送
+              </button>
+              <button className="chat-interrupt-btn" disabled>
+                打断
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <textarea
+              ref={textareaRef}
+              className="chat-textarea"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              disabled={disabled || sending}
+              rows={1}
+            />
 
-        <div className="chat-actions">
-          <button
-            className="chat-send-btn"
-            onClick={handleSend}
-            disabled={disabled || sending || !input.trim()}
-          >
-            {sending ? "发送中..." : "发送"}
-          </button>
+            <div className="chat-actions">
+              <button
+                className="chat-send-btn"
+                onClick={handleSend}
+                disabled={disabled || sending || !input.trim()}
+              >
+                {sending ? "发送中..." : "发送"}
+              </button>
 
-          <button
-            className="chat-interrupt-btn"
-            onClick={handleInterrupt}
-            disabled={!sending}
-          >
-            打断
-          </button>
-        </div>
+              <button
+                className="chat-interrupt-btn"
+                onClick={handleInterrupt}
+                disabled={!sending}
+              >
+                打断
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

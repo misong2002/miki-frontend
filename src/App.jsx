@@ -190,11 +190,18 @@ export default function App() {
 
     async function bootstrapChatMemory() {
       try {
+        await mikiAgent.memory.archiveStaleWakeCyclesIfNeeded();
+
+        const longTermMemory =
+          await mikiAgent.memory.fetchLongTermSystemPromptMemory();
+
+        console.log("[boot] long term memory:", longTermMemory);
+
         if (mikiAgent?.bootRemindPromise) {
           await mikiAgent.bootRemindPromise;
         }
       } catch (err) {
-        console.warn("[App] bootRemindPromise failed:", err);
+        console.warn("[App] bootstrapChatMemory failed:", err);
       } finally {
         if (cancelled) return;
 
@@ -562,15 +569,12 @@ export default function App() {
           </main>
 
           <aside className="chat-column">
-            {chatBootReady ? (
-              <ChatPanel
-                disabled={false}
-                agent={mikiAgent}
-                initialMessages={initialChatMessages}
-              />
-            ) : (
-              <div className="chat-boot-loading">正在恢复对话记忆……</div>
-            )}
+            <ChatPanel
+              disabled={!chatBootReady}
+              bootLoading={!chatBootReady}
+              agent={mikiAgent}
+              initialMessages={initialChatMessages}
+            />
           </aside>
         </>
       )}

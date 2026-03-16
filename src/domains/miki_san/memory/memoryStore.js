@@ -211,6 +211,13 @@ export function listMessagesByWakeCycle(wakeCycleId) {
     .filter((item) => item.wakeCycleId === wakeCycleId)
     .sort((a, b) => a.createdAt - b.createdAt);
 }
+
+export function listWakeCycles() {
+  const db = loadDB();
+
+  return [...db.wakeCycles].sort((a, b) => a.startAt - b.startAt);
+}
+
 export function listRecentWakeCycles(limit = 3) {
   const db = loadDB();
 
@@ -385,4 +392,25 @@ export function listTrainingObservationsByWakeCycle(wakeCycleId) {
   return db.trainingObservations
     .filter((item) => item.wakeCycleId === wakeCycleId)
     .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+/**
+ * 用新的 db 整体覆盖当前 memory DB。
+ * 主要给 compact / migration 之类的场景使用。
+ */
+export function replaceMemoryDB(nextDB) {
+  const safeDB = {
+    wakeCycles: Array.isArray(nextDB?.wakeCycles) ? nextDB.wakeCycles : [],
+    chatMessages: Array.isArray(nextDB?.chatMessages) ? nextDB.chatMessages : [],
+    trainingRuns: Array.isArray(nextDB?.trainingRuns) ? nextDB.trainingRuns : [],
+    trainingMetricSeries: Array.isArray(nextDB?.trainingMetricSeries)
+      ? nextDB.trainingMetricSeries
+      : [],
+    trainingObservations: Array.isArray(nextDB?.trainingObservations)
+      ? nextDB.trainingObservations
+      : [],
+  };
+
+  saveDB(safeDB);
+  return safeDB;
 }

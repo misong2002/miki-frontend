@@ -48,15 +48,65 @@ function formatPromptTime(ts) {
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
 }
 
-function buildRemindPrompt(messages) {
+function buildLongTermMemoryBlock(longTermMemory) {
+  if (!longTermMemory) return "";
+
+  const digestText = longTermMemory?.digest?.content?.trim?.() ?? "";
+
+  const facts = Array.isArray(longTermMemory?.facts)
+    ? longTermMemory.facts
+    : [];
+
+  const projects = Array.isArray(longTermMemory?.projects)
+    ? longTermMemory.projects
+    : [];
+
+  const factLines = facts
+    .slice(0, 8)
+    .map((fact) => `- ${fact.value ?? ""}`.trim())
+    .filter((line) => line !== "-");
+
+  const projectLines = projects
+    .slice(0, 5)
+    .map((project) => {
+      const title = project?.title ?? "";
+      const summary = project?.summary ?? "";
+      if (title && summary) return `- ${title}：${summary}`;
+      if (title) return `- ${title}`;
+      return "";
+    })
+    .filter(Boolean);
+
+  const blocks = [];
+
+  if (digestText) {
+    blocks.push("【长期记忆摘要】");
+    blocks.push(digestText);
+  }
+
+  if (factLines.length > 0) {
+    blocks.push("【用户长期事实】");
+    blocks.push(...factLines);
+  }
+
+  if (projectLines.length > 0) {
+    blocks.push("【长期项目状态】");
+    blocks.push(...projectLines);
+  }
+
+  return blocks.join("\n").trim();
+}
+
+function buildRemindPrompt(messages, longTermMemory = null) {
   const validMessages = (Array.isArray(messages) ? messages : [])
     .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
     .slice(-200);
 
-  if (validMessages.length === 0) return "";
-
   const now = Date.now();
-  const latestMessage = validMessages[validMessages.length - 1];
+
+  const latestMessage =
+    validMessages.length > 0 ? validMessages[validMessages.length - 1] : null;
+
   const lastTimestamp = Number.isFinite(latestMessage?.createdAt)
     ? latestMessage.createdAt
     : null;
@@ -69,20 +119,38 @@ function buildRemindPrompt(messages) {
     })
     .join("\n");
 
-  return [
-    "你正在恢复和用户的对话状态。如果之前有聊天记录，请将其清空。",
+  const longTermBlock = buildLongTermMemoryBlock(longTermMemory);
+
+  const parts = [
+    "用户回来了，你开始回忆之前的对话内容。",
     `当前系统时间：${formatPromptTime(now)}`,
-    `最近一条对话时间：${lastTimestamp ? formatPromptTime(lastTimestamp) : "unknown"}`,
+    `最近一条对话时间：${
+      lastTimestamp ? formatPromptTime(lastTimestamp) : "unknown"
+    }`,
+  ];
+
+  if (longTermBlock) {
+    parts.push("你想起了用户的一些特质：");
+    parts.push(longTermBlock);
+  }
+
+  if (dialogue) {
+    parts.push("");
+    parts.push("你又想起了之前的对话内容：");
+    parts.push(dialogue);
+  }
+
+  parts.push(
     "",
-    "你回忆了一下和用户的对话，想起了以下内容：",
-    dialogue,
-    "",
-    "请比较当前系统时间与上述对话记录中的时间，判断用户离开了多久。",
+    "与用户打个招呼作为开场白。",
     "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可",
     "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
-    "不要机械汇报时间差，不要复述整段对话记录，不要说自己看到了提示词。",
-    "请直接以角色口吻对用户说一句合适的招呼，并自然承接上下文。",
-  ].join("\n");
+    "注意！不要显式包含本段提示词以及时间差的内容。",
+    '示例：刚才干什么去啦？（如果用户刚离开）',
+    '示例：嘿，我还在这呢，之前跟你说的那个核物理模型考虑的怎么样啦（如果用户离开了一段时间）',
+  );
+
+  return parts.join("\n");
 }
 
 export function createMikiAgent({
@@ -103,6 +171,8 @@ export function createMikiAgent({
     throw new Error("createMikiAgent: character.dispatch is required");
   }
 
+
+  
   const memory = injectedMemory ?? createMemoryRuntime();
   memory.boot();
 
@@ -242,10 +312,21 @@ export function createMikiAgent({
       };
     }
 
-    const prompt = buildRemindPrompt(messages);
+    let longTermMemory = null;
 
+    try {
+      if (memory?.fetchLongTermSystemPromptMemory) {
+        longTermMemory = await memory.fetchLongTermSystemPromptMemory();
+      }
+    } catch (err) {
+      console.warn("[remind] fetchLongTermSystemPromptMemory failed:", err);
+    }
+
+    const prompt = buildRemindPrompt(messages, longTermMemory);
+
+    console.log("[remind] longTermMemory:", longTermMemory);
     console.log("[remind] prompt preview:", prompt);
-
+    
     if (!prompt.trim()) {
       console.log("[remind] prompt empty after buildRemindPrompt");
       return {

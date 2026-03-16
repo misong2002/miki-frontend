@@ -3,7 +3,10 @@
 import {
   createWakeCycle,
   getLatestWakeCycle,
+  getWakeCycleById,
+  updateWakeCycle,
   touchWakeCycle,
+  closeWakeCycle,
   appendMessage,
   createTrainingRun,
   finishTrainingRun,
@@ -13,11 +16,16 @@ import {
   listTrainingMetricSeriesByRunId,
   appendTrainingObservation,
   getMemoryDB,
+  replaceMemoryDB,
 } from "./memoryStore";
+
+import {
+  archiveWakeCycleToBackend,
+  fetchSystemPromptMemory,
+} from "./memoryApiService";
 
 /**
  * 判断一个 wake cycle 是否还能复用。
- * 这里的策略是：
  * - 只有 status === "awake" 的 cycle 才能复用
  * - 距离上次活跃时间不超过 reuseWindowMs
  */
@@ -29,24 +37,59 @@ function isWakeCycleReusable(wakeCycle, reuseWindowMs) {
   return inactiveMs <= reuseWindowMs;
 }
 
+function listAllWakeCyclesSorted() {
+  const db = getMemoryDB();
+  return [...(db.wakeCycles ?? [])].sort((a, b) => a.startAt - b.startAt);
+}
+
+function getTrainingObservationsByWakeCycle(wakeCycleId) {
+  const db = getMemoryDB();
+  return (db.trainingObservations ?? [])
+    .filter((item) => item.wakeCycleId === wakeCycleId)
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+}
+
+function getTrainingMetricSeriesByWakeCycle(wakeCycleId) {
+  const db = getMemoryDB();
+  const runIds = new Set(
+    (db.trainingRuns ?? [])
+      .filter((run) => run.wakeCycleId === wakeCycleId)
+      .map((run) => run.id)
+  );
+
+  return (db.trainingMetricSeries ?? []).filter((series) => runIds.has(series.runId));
+}
+
+function extractWakeCycleArchivePayload(wakeCycleId) {
+  const wakeCycle = getWakeCycleById(wakeCycleId);
+  if (!wakeCycle) return null;
+
+  return {
+    wake_cycle_id: wakeCycleId,
+    messages: listMessagesByWakeCycle(wakeCycleId),
+    observations: getTrainingObservationsByWakeCycle(wakeCycleId),
+    training_runs: listTrainingRunsByWakeCycle(wakeCycleId),
+    force_rebuild_digest: true,
+  };
+}
+
 /**
  * 创建 memory runtime。
- *
- * 说明：
- * - 这里先做本地版，不做长期记忆和摘要
- * - recall / rememberTurn 先给空实现，保证接口兼容
  */
 export function createMemoryRuntime(options = {}) {
   const {
-    wakeCycleReuseWindowMs = 1000 * 60 * 30, // 30 分钟内复用旧 wake cycle
+    wakeCycleReuseWindowMs = 1000 * 60 * 30, // 30 分钟
+    keepRecentWakeCycles = 3,
   } = options;
 
   let currentWakeCycle = null;
   let currentTrainingRunId = null;
+  let cachedSystemPromptMemory = null;
 
   /**
    * 启动 memory runtime。
-   * 优先复用旧 cycle，否则新建。
+   * 这里只负责短期 wake cycle 的同步 boot。
+   * 长期记忆归档和清理放到 archiveStaleWakeCyclesIfNeeded() 里异步做。
    */
   function boot() {
     const latest = getLatestWakeCycle();
@@ -61,9 +104,6 @@ export function createMemoryRuntime(options = {}) {
     return currentWakeCycle;
   }
 
-  /**
-   * 获取当前 wake cycle，没有就自动 boot。
-   */
   function getCurrentWakeCycle() {
     if (!currentWakeCycle) {
       currentWakeCycle = boot();
@@ -71,25 +111,16 @@ export function createMemoryRuntime(options = {}) {
     return currentWakeCycle;
   }
 
-  /**
-   * 获取当前 wake cycle id。
-   */
   function getCurrentWakeCycleId() {
     return getCurrentWakeCycle().id;
   }
 
-  /**
-   * 标记当前用户仍活跃。
-   */
   function touch() {
     const wakeCycle = getCurrentWakeCycle();
     currentWakeCycle = touchWakeCycle(wakeCycle.id) ?? wakeCycle;
     return currentWakeCycle;
   }
 
-  /**
-   * 写入 user message。
-   */
   function recordUserMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
 
@@ -101,9 +132,6 @@ export function createMemoryRuntime(options = {}) {
     });
   }
 
-  /**
-   * 写入 assistant message。
-   */
   function recordAssistantMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
 
@@ -115,9 +143,6 @@ export function createMemoryRuntime(options = {}) {
     });
   }
 
-  /**
-   * 写入 system message。
-   */
   function recordSystemMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
 
@@ -129,16 +154,10 @@ export function createMemoryRuntime(options = {}) {
     });
   }
 
-  /**
-   * 获取当前 cycle 的消息。
-   */
   function listCurrentMessages() {
     return listMessagesByWakeCycle(getCurrentWakeCycleId());
   }
 
-  /**
-   * 启动一次训练 run。
-   */
   function startTrainingRun({
     config = {},
     modelName = null,
@@ -157,9 +176,6 @@ export function createMemoryRuntime(options = {}) {
     return run;
   }
 
-  /**
-   * 结束训练 run。
-   */
   function endTrainingRun(runId, status = "finished") {
     if (currentTrainingRunId === runId) {
       currentTrainingRunId = null;
@@ -167,11 +183,6 @@ export function createMemoryRuntime(options = {}) {
     return finishTrainingRun(runId, status);
   }
 
-  /**
-   * 保存两份 loss 曲线：
-   * - recentDense：最近一段高分辨率
-   * - globalSparse：全程稀疏采样
-   */
   function saveLossSeries(runId, { recentDense = [], globalSparse = [] } = {}) {
     const result = {};
 
@@ -196,9 +207,6 @@ export function createMemoryRuntime(options = {}) {
     return result;
   }
 
-  /**
-   * 记录 perception/comment 等训练观察。
-   */
   function recordTrainingObservation({
     type = "observation",
     feature = null,
@@ -220,27 +228,17 @@ export function createMemoryRuntime(options = {}) {
     });
   }
 
-  /**
-   * 获取当前 wake cycle 下的训练 runs。
-   */
   function listCurrentTrainingRuns() {
     return listTrainingRunsByWakeCycle(getCurrentWakeCycleId());
   }
 
-  /**
-   * 获取指定 run 的曲线。
-   */
   function getTrainingMetrics(runId) {
     return listTrainingMetricSeriesByRunId(runId);
   }
 
-  /**
-   * 召回短期上下文。
-   * 当前版本先简单返回最近几条消息，供语言模块使用。
-   */
   function recall({ text, messageId } = {}) {
     const messages = listCurrentMessages();
-    const recentMessages = messages.slice(-200);
+    const recentMessages = messages.slice(-12);
 
     return {
       wakeCycleId: getCurrentWakeCycleId(),
@@ -250,11 +248,6 @@ export function createMemoryRuntime(options = {}) {
     };
   }
 
-  /**
-   * rememberTurn：
-   * 当前本地版本先不做复杂摘要，只保留接口。
-   * 后续你做长期记忆和 summary 时，可以在这里扩展。
-   */
   function rememberTurn(payload = {}) {
     return {
       ok: true,
@@ -263,9 +256,126 @@ export function createMemoryRuntime(options = {}) {
     };
   }
 
-  /**
-   * debug：直接 dump 整个 DB。
-   */
+  async function fetchLongTermSystemPromptMemory({ force = false } = {}) {
+    if (cachedSystemPromptMemory && !force) {
+      return cachedSystemPromptMemory;
+    }
+
+    const result = await fetchSystemPromptMemory();
+    cachedSystemPromptMemory = result;
+    return result;
+  }
+
+  async function archiveWakeCycle(wakeCycleId) {
+    const payload = extractWakeCycleArchivePayload(wakeCycleId);
+    if (!payload) {
+      return {
+        ok: false,
+        error: `wake cycle not found: ${wakeCycleId}`,
+      };
+    }
+
+    if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+      return {
+        ok: false,
+        error: `wake cycle has no messages: ${wakeCycleId}`,
+      };
+    }
+
+    return archiveWakeCycleToBackend(payload);
+  }
+
+  async function closeAndArchiveWakeCycle(wakeCycleId) {
+    const result = await archiveWakeCycle(wakeCycleId);
+
+    if (!result?.ok) {
+      return result;
+    }
+
+    closeWakeCycle(wakeCycleId, "closed");
+
+    if (result.summary_id) {
+      updateWakeCycle(wakeCycleId, {
+        summaryId: result.summary_id,
+      });
+    }
+
+    return result;
+  }
+
+  function compactLocalMemory({ keepRecent = keepRecentWakeCycles } = {}) {
+    const db = getMemoryDB();
+    const wakeCycles = [...(db.wakeCycles ?? [])].sort((a, b) => a.startAt - b.startAt);
+
+    if (wakeCycles.length <= keepRecent) {
+      return db;
+    }
+
+    const keepWakeCycles = wakeCycles.slice(-keepRecent);
+    const keepWakeCycleIds = new Set(keepWakeCycles.map((cycle) => cycle.id));
+
+    const compactedDB = {
+      wakeCycles: db.wakeCycles ?? [],
+      chatMessages: (db.chatMessages ?? []).filter((msg) =>
+        keepWakeCycleIds.has(msg.wakeCycleId)
+      ),
+      trainingRuns: (db.trainingRuns ?? []).filter((run) =>
+        keepWakeCycleIds.has(run.wakeCycleId)
+      ),
+      trainingMetricSeries: [],
+      trainingObservations: (db.trainingObservations ?? []).filter((obs) =>
+        keepWakeCycleIds.has(obs.wakeCycleId)
+      ),
+    };
+
+    const keepRunIds = new Set(compactedDB.trainingRuns.map((run) => run.id));
+
+    compactedDB.trainingMetricSeries = (db.trainingMetricSeries ?? []).filter(
+      (series) => keepRunIds.has(series.runId)
+    );
+
+    replaceMemoryDB(compactedDB);
+    return compactedDB;
+  }
+
+  async function archiveStaleWakeCyclesIfNeeded() {
+    const wakeCycles = listAllWakeCyclesSorted();
+    const now = Date.now();
+
+    const staleAwakeCycles = wakeCycles.filter((cycle) => {
+      if (!cycle || cycle.status !== "awake") return false;
+
+      const inactiveMs = now - (cycle.lastActiveAt ?? cycle.startAt ?? 0);
+      return inactiveMs > wakeCycleReuseWindowMs;
+    });
+
+    const results = [];
+
+    for (const cycle of staleAwakeCycles) {
+      try {
+        const result = await closeAndArchiveWakeCycle(cycle.id);
+        results.push({
+          wakeCycleId: cycle.id,
+          ...result,
+        });
+      } catch (err) {
+        console.warn("[memoryRuntime] archive stale wake cycle failed:", cycle.id, err);
+        results.push({
+          ok: false,
+          wakeCycleId: cycle.id,
+          error: String(err),
+        });
+      }
+    }
+
+    const hasSuccessfulArchive = results.some((item) => item?.ok);
+    if (hasSuccessfulArchive) {
+      compactLocalMemory();
+    }
+
+    return results;
+  }
+
   function dump() {
     return getMemoryDB();
   }
@@ -290,6 +400,12 @@ export function createMemoryRuntime(options = {}) {
 
     recall,
     rememberTurn,
+
+    fetchLongTermSystemPromptMemory,
+    archiveWakeCycle,
+    closeAndArchiveWakeCycle,
+    archiveStaleWakeCyclesIfNeeded,
+    compactLocalMemory,
 
     dump,
   };
