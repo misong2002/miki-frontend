@@ -1,3 +1,4 @@
+// src/domains/Chat/components/ChatPanel.jsx
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -5,11 +6,6 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
-/**
- * 统一构造消息对象。
- * - 如果是从 memory 恢复的消息，尽量保留原有 id / createdAt / meta
- * - 如果是新消息，就自动补默认字段
- */
 function makeMessage({
   id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   role = "assistant",
@@ -32,13 +28,6 @@ function makeMessage({
   };
 }
 
-/**
- * 把外部传入的历史消息标准化。
- * 目标：
- * - memory 里恢复出来的消息通常没有 status
- * - UI 层默认应把历史消息视为 done
- * - interrupted / error 这些临时态要尽量从 meta 里还原
- */
 function normalizeInitialMessage(msg) {
   const interrupted = msg?.meta?.interrupted ?? false;
   const hasError = Boolean(msg?.meta?.error);
@@ -80,8 +69,8 @@ function formatTime(ts) {
 }
 
 export default function ChatPanel({
-  disabled,
-  agent,
+  disabled = false,
+  chatAgent,
   initialMessages = [],
   bootLoading = false,
 }) {
@@ -106,21 +95,24 @@ export default function ChatPanel({
   const historyRef = useRef(null);
   const textareaRef = useRef(null);
 
-  /**
-   * boot 完成后，把 App 传进来的 initialMessages 正确同步到本地 state。
-   * 这样启动时异步写进 memory 的 greeting 才能显示出来。
-   */
   useEffect(() => {
     if (bootLoading) return;
 
     if (Array.isArray(initialMessages) && initialMessages.length > 0) {
       setMessages(initialMessages.map(normalizeInitialMessage));
+      return;
     }
+
+    setMessages([
+      makeMessage({
+        role: "assistant",
+        content:
+          "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
+        status: "done",
+      }),
+    ]);
   }, [initialMessages, bootLoading]);
 
-  /**
-   * 消息变化后自动滚动到底部。
-   */
   useEffect(() => {
     if (bootLoading) return;
 
@@ -133,9 +125,6 @@ export default function ChatPanel({
     });
   }, [messages, bootLoading]);
 
-  /**
-   * 输入框高度自动适配。
-   */
   function resetTextareaHeight() {
     const el = textareaRef.current;
     if (!el) return;
@@ -149,9 +138,6 @@ export default function ChatPanel({
     resetTextareaHeight();
   }, [input, bootLoading]);
 
-  /**
-   * 更新 assistant 占位消息。
-   */
   function updateAssistantMessage(messageId, content, status = "pending") {
     setMessages((prev) =>
       prev.map((msg) =>
@@ -168,7 +154,15 @@ export default function ChatPanel({
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || disabled || bootLoading || !agent?.hear) return;
+    if (
+      !text ||
+      sending ||
+      disabled ||
+      bootLoading ||
+      !chatAgent?.sendUserMessage
+    ) {
+      return;
+    }
 
     const userMessage = makeMessage({
       role: "user",
@@ -176,10 +170,6 @@ export default function ChatPanel({
       status: "done",
     });
 
-    /**
-     * assistant 占位消息的 id 同时作为 messageId 传给 agent。
-     * 这样 streaming 更新和 memory 里的对应关系更清楚。
-     */
     const pendingAssistant = makeMessage({
       role: "assistant",
       content: "正在思考……",
@@ -191,7 +181,7 @@ export default function ChatPanel({
     setSending(true);
 
     try {
-      await agent.hear(
+      await chatAgent.sendUserMessage(
         {
           text,
           messageId: pendingAssistant.id,
@@ -253,7 +243,7 @@ export default function ChatPanel({
 
   function handleInterrupt() {
     if (bootLoading) return;
-    agent?.interrupt?.();
+    chatAgent?.interrupt?.();
   }
 
   function handleKeyDown(event) {
@@ -267,9 +257,9 @@ export default function ChatPanel({
 
   useEffect(() => {
     return () => {
-      agent?.interrupt?.();
+      chatAgent?.interrupt?.();
     };
-  }, [agent]);
+  }, [chatAgent]);
 
   return (
     <div className="chat-shell">
@@ -284,10 +274,7 @@ export default function ChatPanel({
         {bootLoading ? (
           <div className="chat-boot-state">
             <div className="chat-boot-state-inner">
-              <div className="chat-boot-title">正在恢复对话记忆……</div>
-              <div className="chat-boot-subtitle">
-                美樹さん正在整理刚才的对话内容
-              </div>
+              <div className="chat-boot-title">美樹さん正在回想……</div>
             </div>
           </div>
         ) : (
@@ -314,19 +301,25 @@ export default function ChatPanel({
                     </div>
                   )}
 
-                  <div className={`chat-bubble ${msg.role} ${msg.status || "done"}`}>
+                  <div
+                    className={`chat-bubble ${msg.role} ${msg.status || "done"}`}
+                  >
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
                       rehypePlugins={[rehypeKatex]}
                     >
-                      {msg.content || (msg.status === "pending" ? "正在思考……" : "")}
+                      {msg.content ||
+                        (msg.status === "pending" ? "正在思考……" : "")}
                     </ReactMarkdown>
                   </div>
 
                   {Array.isArray(msg.references) && msg.references.length > 0 && (
                     <div className="chat-references">
                       {msg.references.map((ref, i) => (
-                        <span className="chat-ref-chip" key={`${msg.id}-ref-${i}`}>
+                        <span
+                          className="chat-ref-chip"
+                          key={`${msg.id}-ref-${i}`}
+                        >
                           {ref.title || ref.source || "reference"}
                         </span>
                       ))}

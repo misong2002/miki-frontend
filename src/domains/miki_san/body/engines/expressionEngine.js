@@ -1,6 +1,6 @@
-import { live2dController } from "./live2dController";
+import { live2dController } from "../live2dController";
 
-const DEBUG_MOTION_ENGINE = true;
+const DEBUG_EXPRESSION_ENGINE = true;
 
 const SOURCE_PRIORITY = {
   idle: 1,
@@ -20,11 +20,11 @@ const DEFAULT_LOCK_MS = {
   interrupt: 2200,
 };
 
-class MotionEngine {
+class ExpressionEngine {
   constructor() {
     this.mode = "chat";
     this.current = {
-      motionId: "000",
+      expressionId: "50",
       source: "idle",
       priority: SOURCE_PRIORITY.idle,
       lockUntil: 0,
@@ -42,7 +42,7 @@ class MotionEngine {
       try {
         fn(event);
       } catch (err) {
-        console.error("[MotionEngine] listener error:", err);
+        console.error("[ExpressionEngine] listener error:", err);
       }
     }
   }
@@ -77,13 +77,13 @@ class MotionEngine {
     return nextPriority > this.current.priority;
   }
 
-  playMotionById(motionId, options = {}) {
+  setExpressionById(expressionId, options = {}) {
     const source = options.source ?? "idle";
     const force = options.force ?? false;
-    const nextId = String(motionId);
+    const nextId = String(expressionId);
 
-    this.log("PLAY_MOTION_ID", {
-      motionId: nextId,
+    this.log("SET_EXPRESSION_ID", {
+      expressionId: nextId,
       source,
       current: this.current,
     });
@@ -92,18 +92,21 @@ class MotionEngine {
       return false;
     }
 
-    live2dController.playMotionById(nextId);
+    const applied = live2dController.setExpressionById(nextId) === true;
+    if (!applied) {
+      return false;
+    }
 
     this.current = {
-      motionId: nextId,
+      expressionId: nextId,
       source,
       priority: this.getPriority(source),
       lockUntil: this.now() + this.getLockMs(source, options.lockMs),
     };
 
     this.emit({
-      type: "motion",
-      motionId: nextId,
+      type: "expression",
+      expressionId: nextId,
       source,
       state: { ...this.current },
     });
@@ -112,34 +115,45 @@ class MotionEngine {
   }
 
   reset() {
-    this.current = {
-      motionId: "000",
-      source: "idle",
-      priority: SOURCE_PRIORITY.idle,
-      lockUntil: 0,
-    };
+    const applied = live2dController.setExpressionById("50") === true;
 
-    live2dController.playMotionById("000");
+    if (applied) {
+      this.current = {
+        expressionId: "50",
+        source: "idle",
+        priority: SOURCE_PRIORITY.idle,
+        lockUntil: 0,
+      };
+    } else {
+      this.current = {
+        ...this.current,
+        source: "idle",
+        priority: SOURCE_PRIORITY.idle,
+        lockUntil: 0,
+      };
+    }
 
     this.emit({
-      type: "motion_reset",
+      type: "expression_reset",
       state: { ...this.current },
     });
 
-    this.log("RESET", { state: this.current });
+    this.log("RESET", { state: this.current, applied });
+
+    return applied;
   }
 
   log(type, payload) {
-    if (!DEBUG_MOTION_ENGINE) return;
+    if (!DEBUG_EXPRESSION_ENGINE) return;
 
     const time = new Date().toLocaleTimeString();
     console.log(
-      `%c[MotionEngine ${type}]`,
-      "color:#4d7cff;font-weight:bold",
+      `%c[ExpressionEngine ${type}]`,
+      "color:#ff4d6d;font-weight:bold",
       time,
       payload
     );
   }
 }
 
-export const motionEngine = new MotionEngine();
+export const expressionEngine = new ExpressionEngine();

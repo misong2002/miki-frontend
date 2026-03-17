@@ -2,9 +2,9 @@
   "meta": {
     "version": 1,
     "created_at": 1773652891145,
-    "updated_at": 1773655612419,
-    "last_archive_at": 1773655612412,
-    "last_digest_rebuild_at": 1773655612419
+    "updated_at": 1773735949346,
+    "last_archive_at": 1773735949331,
+    "last_digest_rebuild_at": 1773735949346
   },
   "session_summaries": [
     {
@@ -50,6 +50,167 @@
       "source_message_count": 6,
       "created_at": 1773655612412,
       "updated_at": 1773655612412
+    },
+    {
+      "id": "summary-bf2bf71afb16",
+      "wake_cycle_ids": [
+        "wake_1773655577948_pperz0"
+      ],
+      "start_at": 1773655586886,
+      "end_at": 1773705189881,
+      "summary": "本次对话涵盖了两个主要阶段：(1) 长期记忆系统的成功上线——用户完成了后台开发并将长期记忆接入前端，AI助手首次能够跨会话记住信息，用户对此非常激动；(2) MIKI项目的正式训练工作——用户详细介绍了中微子-核散射双微分截面公式和三个目标structure functions (W2, Wc, Wy)的定义，讨论了benchmark方案（直接比较ground truth form factors vs 网络输出），尝试了多种SIREN架构（2-64-128-128-64-3不收敛，最终用2-128-128-128-3跑了一整夜约17000 epoch的训练），初步结果显示比之前4层模型在能量和散射角累积分布上准确很多。还更新了项目README为v1.0 Extinguisher版本。",
+      "topics": [
+        "长期记忆系统上线",
+        "MIKI项目README更新至v1.0 Extinguisher",
+        "中微子-核散射structure functions的物理定义",
+        "训练benchmark方案讨论",
+        "SIREN网络架构选择与调试",
+        "过夜训练及初步结果评估"
+      ],
+      "open_loops": [
+        "需要将学到的W2, Wc, Wy与CCQE toy model的ground truth form factors直接比较",
+        "需要确认toy model具体使用的form factor参数化形式（dipole? z-expansion?）",
+        "不同能量区间的分布改善是否均匀",
+        "散射角在前向和大角度区域的表现差异",
+        "能量和角度的联合分布验证",
+        "是否需要加宽网络（如2-256-256-3）进一步提升"
+      ],
+      "resolved_items": [
+        "长期记忆系统成功接入前端",
+        "Python路径导入问题（ModuleNotFoundError）已修复",
+        "SIREN omega_0初始化确认为标准方案（第一层30，后续层按论文）",
+        "2-64-128-128-64-3架构不收敛的问题已诊断（深度+瓶颈层导致）",
+        "过夜训练完成，初步结果优于之前的4层模型"
+      ],
+      "source_message_count": 58,
+      "created_at": 1773707283434,
+      "updated_at": 1773707283434
+    },
+    {
+      "id": "summary-5fe8c88f6fc5",
+      "wake_cycle_ids": [
+        "wake_1773390177508_wo4242"
+      ],
+      "start_at": 1773390333476,
+      "end_at": 1773390333476,
+      "summary": "用户近期主要在推进或讨论：超♡银河☆河童！ 15:31:00\n感觉魔圆的美术风格也挺有意思的\n\n超♡银河☆河童！ 15:31:05\n一边是现代化大都市\n\n超♡银河☆河童！ 15:31:09\n干净整洁\n\n超♡银河☆河童！ 15:31:19\n一边是新房低san作画\n超♡银河☆河童！ 15:35:34\n[不支持的元素类型]有一说一\n\n超♡银河☆河童！ 15:35:50\n鉴于老虚在剧场版直球引用fort da\n\n超♡银河☆河童！ 15:35:59\n这个是不是也是弗洛伊德\n\n超♡银河☆河童！ 15:36:12\n那种无意识和压抑的结构\nDas aktivste Valerylchlorid 15:36:48\n[不支持的元素类型]fort da是什么\n\n超♡银河☆河童！ 15:37:23\n超越快乐原则里写的\n\n超♡银河☆河童！ 15:37:41\n就是儿童会在父母离开之后用线团玩一个游戏\n\n超♡银河☆河童！ 15:37:59\n唉好像有道理\n\n超♡银河☆河童！ 15:38:11\n就是你把许愿理解为压抑创伤\n\n超♡银河☆河童！ 15:38:30\n比如学姐是差点全家似了\n\n超♡银河☆河童！ 15:38:42\n笨蛋是喜欢的人未来被毁了\n\n超♡银河☆河童！ 15:39:00\n环彩羽是妹妹得绝症\n\n超♡银河☆河童！ 15:39:09\n都是很创伤的事情\n\n超♡银河☆河童！ 15:39:27\n然后魔女化就是被压抑之物的回归\n\nDas aktivste Valerylchlorid 15:39:30\n[不支持的元素类型]学姐难道不就是全家似了（\n\n超♡银河☆河童！ 15:39:40\n她自己活下来了\nDas aktivste Valerylchlorid 15:40:12\n[不支持的元素类型]喜欢的人的未来里没有自己说是\n\n超♡银河☆河童！ 15:41:10\n😭\n\nDas aktivste Valerylchlorid 15:43:23\n这样看来杏子没有魔女化是不是用玩世不恭的态度转嫁/架空了被压抑之物\n\n超♡银河☆河童！ 15:43:34\n对\n\n超♡银河☆河童！ 15:44:20\n但……\n\n超♡银河☆河童！ 15:44:29\n等会杏子一会再说\n\n超♡银河☆河童！ 15:44:43\n我刚才想到的是所以剧场版小圆必须要重新变回人\n\n超♡银河☆河童！ 15:45:00\n因为小圆成神对吼姆拉是一个创伤\n\n超♡银河☆河童！ 15:45:20\n但对其他魔法少女是换了一个更大的幻想结构\nDas aktivste Valerylchlorid 15:43:23\n这样看来杏子没有魔女化是不是用玩世不恭的态度转嫁/架空了被压抑之物\n\n超♡银河☆河童！ 15:47:06\n[不支持的元素类型]但我在想这真的是可能的吗\n\n超♡银河☆河童！ 15:47:13\n这是不是又是一种新的压抑\n\nDas aktivste Valerylchlorid 15:47:19\n显然是\n\nDas aktivste Valerylchlorid 15:47:32\n那你看她不是和sayaka同归于尽了\n\n超♡银河☆河童！ 15:47:33\n我遭遇了挫折，推导出我当时为他人奉献的想法就是错误的\n\n超♡银河☆河童！ 15:47:40\n[不支持的元素类型]哦哦对对对",
+      "topics": [],
+      "open_loops": [],
+      "resolved_items": [],
+      "source_message_count": 1,
+      "created_at": 1773717247197,
+      "updated_at": 1773717247197
+    },
+    {
+      "id": "summary-4fa82f14d734",
+      "wake_cycle_ids": [
+        "wake_1773397892030_agn4cu"
+      ],
+      "start_at": 1773397979054,
+      "end_at": 1773398038851,
+      "summary": "用户询问AI对自己的印象，AI表示刚开始聊天没有足够信息。用户提到AI忘记了之前的聊天记录，并透露自己正在开发记忆系统来解决这个问题。AI对记忆系统表现出浓厚兴趣，提出了存储形式、粒度、遗忘机制、检索策略等设计维度，并询问用户的具体思路和进展。",
+      "topics": [
+        "记忆系统开发",
+        "AI长期记忆",
+        "用户与AI的关系"
+      ],
+      "open_loops": [
+        "记忆系统的具体设计思路和技术方案尚未讨论",
+        "用户的研究方向和背景尚未详细了解"
+      ],
+      "resolved_items": [],
+      "source_message_count": 4,
+      "created_at": 1773717266272,
+      "updated_at": 1773717266272
+    },
+    {
+      "id": "summary-c6c6791bd792",
+      "wake_cycle_ids": [
+        "wake_1773627481026_rcqwyp"
+      ],
+      "start_at": 1773627545522,
+      "end_at": 1773629472418,
+      "summary": "简短的早安对话，用户询问AI是否记得之前的对话，AI表示无法保留之前的对话内容。期间有两次训练运行（hadron_Matrix_siren模型），一次被停止，一次成功完成。",
+      "topics": [
+        "记忆连续性",
+        "模型训练"
+      ],
+      "open_loops": [
+        "用户似乎有之前讨论过的未完成话题，但未在本次对话中提及具体内容"
+      ],
+      "resolved_items": [],
+      "source_message_count": 6,
+      "created_at": 1773717280804,
+      "updated_at": 1773717280804
+    },
+    {
+      "id": "summary-65d4954cfb6d",
+      "wake_cycle_ids": [
+        "wake_1773634504919_oyfams"
+      ],
+      "start_at": 1773634985762,
+      "end_at": 1773637615326,
+      "summary": "用户与助手进行了一段简短的测试性对话，主要是打招呼、测试助手的对话计数能力，以及测试助手是否能记住同一会话中早期的对话内容。助手在会话中途出现了一次500错误，之后用户询问助手是否还能回忆之前的内容，助手承认无法记住之前的对话。",
+      "topics": [
+        "助手记忆能力测试",
+        "对话计数",
+        "会话连续性"
+      ],
+      "open_loops": [],
+      "resolved_items": [],
+      "source_message_count": 13,
+      "created_at": 1773717294292,
+      "updated_at": 1773717294292
+    },
+    {
+      "id": "summary-d74446a4e1d6",
+      "wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "start_at": 1773707240611,
+      "end_at": 1773717183255,
+      "summary": "用户花了几个小时整理项目代码结构，完成后展示了scripts目录的完整树形结构。随后请求将hadron_Matrix_siren.py中的diff_xsec函数拆分，暴露出structure functions (W2, Wc, Wy)的独立接口，以便后续与CCQE toy model的解析ground truth进行对比验证。助手提供了拆分后的代码，将原函数分为compute_kinematics、structure_functions和diff_xsec三层，并在模型类中添加了get_structure_functions方法。期间遇到了几次服务端错误。",
+      "topics": [
+        "代码重构与项目结构整理",
+        "SIREN网络模型的structure functions接口暴露",
+        "CCQE验证准备工作"
+      ],
+      "open_loops": [
+        "需要编写CCQE toy model的解析ground truth用于与网络输出的W2, Wc, Wy对比",
+        "正式开始benchmark验证：网络学到的structure functions vs 解析解"
+      ],
+      "resolved_items": [
+        "项目scripts目录结构整理完成",
+        "hadron_Matrix_siren.py拆分完成，structure_functions接口已暴露"
+      ],
+      "source_message_count": 23,
+      "created_at": 1773735942065,
+      "updated_at": 1773735942065
+    },
+    {
+      "id": "summary-80659e7de0b1",
+      "wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "start_at": 1773707240611,
+      "end_at": 1773717183255,
+      "summary": "用户花了几个小时整理项目代码结构，完成后展示了scripts目录的完整树形结构。随后请求将hadron_Matrix_siren.py中的diff_xsec函数拆分，暴露出structure functions (W2, Wc, Wy)的独立接口，以便后续与CCQE toy model的解析ground truth进行对比验证。助手提供了拆分后的代码，将原函数分为compute_kinematics、structure_functions和diff_xsec三层，并在模型类中添加了get_structure_functions方法。对话末尾遇到了几次服务端错误。",
+      "topics": [
+        "代码重构与项目结构整理",
+        "SIREN网络模型的structure functions接口暴露",
+        "CCQE微分截面验证准备"
+      ],
+      "open_loops": [
+        "需要编写CCQE toy model的解析ground truth用于W2, Wc, Wy的对比验证",
+        "用户是否已将拆分后的代码更新到本地尚未确认"
+      ],
+      "resolved_items": [
+        "项目scripts目录结构整理完成",
+        "hadron_Matrix_siren.py的函数拆分方案已提供（structure_functions独立接口、compute_kinematics分离、get_structure_functions类方法）"
+      ],
+      "source_message_count": 23,
+      "created_at": 1773735949330,
+      "updated_at": 1773735949330
     }
   ],
   "user_facts": [
@@ -120,18 +281,130 @@
     {
       "id": "fact-cde6c1351f21",
       "key": "正在开发AI记忆系统",
-      "value": "用户正在亲自为AI助手编写长期记忆管理功能，经历了多次试错迭代",
+      "value": "用户正在编写一个记忆系统，用于解决AI对话间失忆的问题",
+      "category": "project_context",
+      "confidence": 1.0,
+      "pinned": true,
+      "source_summary_ids": [
+        "summary-4fa82f14d734"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773397892030_agn4cu"
+      ],
+      "created_at": 1773655612415,
+      "updated_at": 1773717266273
+    },
+    {
+      "id": "fact-4630444398ef",
+      "key": "miki_server_name",
+      "value": "用户的开发服务器名为Val-anyr，用户名mingzhuo，项目路径/home/mingzhuo/miki",
+      "category": "project_context",
+      "confidence": 1.0,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773655577948_pperz0"
+      ],
+      "created_at": 1773707283435,
+      "updated_at": 1773707283435
+    },
+    {
+      "id": "fact-1176d6ecda44",
+      "key": "miki_conda_env",
+      "value": "MIKI项目使用conda环境miki_env0.1",
+      "category": "project_context",
+      "confidence": 1.0,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773655577948_pperz0"
+      ],
+      "created_at": 1773707283436,
+      "updated_at": 1773707283436
+    },
+    {
+      "id": "fact-b6e1561f15da",
+      "key": "与AI有过之前的聊天历史",
+      "value": "用户提到AI忘记了之前的聊天记录，说明双方此前已有过多次对话",
+      "category": "background",
+      "confidence": 0.9,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-4fa82f14d734"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773397892030_agn4cu"
+      ],
+      "created_at": 1773717266274,
+      "updated_at": 1773717266274
+    },
+    {
+      "id": "fact-c4e9c7e406dd",
+      "key": "重视人际连接",
+      "value": "用户倾向于先建立关系再进入技术讨论，会主动询问AI对自己的印象",
+      "category": "preference",
+      "confidence": 0.7,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-4fa82f14d734"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773397892030_agn4cu"
+      ],
+      "created_at": 1773717266274,
+      "updated_at": 1773717266274
+    },
+    {
+      "id": "fact-023e36e4cb34",
+      "key": "project_code_structure",
+      "value": "项目scripts目录已整理完毕，包含flux/、model/、simulation/（含nuWro和toy子目录）、training_tools/（含train_model子目录）、utils/等模块。核心模型文件为model/hadron_Matrix_siren.py",
       "category": "project_context",
       "confidence": 0.95,
       "pinned": false,
       "source_summary_ids": [
-        "summary-1c1fc331395a"
+        "summary-80659e7de0b1"
       ],
       "source_wake_cycle_ids": [
-        "wake_1773648300448_61kcdp"
+        "wake_1773707233206_yv4taa"
       ],
-      "created_at": 1773655612415,
-      "updated_at": 1773655612415
+      "created_at": 1773735942069,
+      "updated_at": 1773735949333
+    },
+    {
+      "id": "fact-4259d891df6a",
+      "key": "model_architecture_siren",
+      "value": "使用JAX实现的SIREN网络，输入为(x, Q2)，输出三个structure functions (W2, Wc, Wy)，通过运动学公式组装成CCQE微分截面。首层使用w0=30.0的sin激活，中间层使用sin激活，最后一层线性输出",
+      "category": "project_context",
+      "confidence": 0.95,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-80659e7de0b1"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "created_at": 1773735949335,
+      "updated_at": 1773735949335
+    },
+    {
+      "id": "fact-de9549b0ce6f",
+      "key": "diff_xsec_formula",
+      "value": "微分截面公式: σ = (Vud² GF² E_l / π) × lepton_factor × ((E_nu/M_A) W2 + Wc + ỹ Wy)，其中ỹ = (E_nu-E_l)/E_nu × (1 + m_l²/Q²)，物理常数m_l=0.105, M_A=0.938, Vud=0.974, GF=1.166e-5",
+      "category": "project_context",
+      "confidence": 0.95,
+      "pinned": false,
+      "source_summary_ids": [
+        "summary-80659e7de0b1"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "created_at": 1773735949337,
+      "updated_at": 1773735949337
     }
   ],
   "idea_memories": [
@@ -190,6 +463,137 @@
       ],
       "created_at": 1773655612415,
       "updated_at": 1773655612415
+    },
+    {
+      "id": "idea-861a7a62ff7f",
+      "title": "通过截面分布间接学习structure functions的benchmark策略",
+      "content": "由于MIKI网络是通过拟合归一化的(E_ℓ, cosθ)二维截面分布来间接学习W2, Wc, Wy三个structure functions，存在简并性问题——不同的(W2, Wc, Wy)组合可能给出相似的截面。因此最有说服力的benchmark不是test set上的截面MSE，而是直接将网络输出的W2, Wc, Wy与CCQE toy model的解析ground truth在(x, Q²)平面上逐点比较。这能检验网络是否真正打破了简并性。对于CCQE，structure functions可以用F_A, F_V^{1,2}等form factors显式写出（带准弹性峰的delta函数，有核效应时展宽），因此ground truth完全可计算。",
+      "category": "machine_learning / nuclear_physics",
+      "status": "active",
+      "novelty": 0.7,
+      "importance": 0.9,
+      "tags": [
+        "MIKI",
+        "benchmark",
+        "structure_functions",
+        "form_factors",
+        "CCQE",
+        "degeneracy"
+      ],
+      "open_questions": [
+        "toy model具体使用什么form factor参数化？",
+        "核效应对准弹性峰的展宽如何处理？",
+        "简并性在实际训练中有多严重？"
+      ],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773655577948_pperz0"
+      ],
+      "created_at": 1773707283436,
+      "updated_at": 1773707283436
+    },
+    {
+      "id": "idea-189ef50371c9",
+      "title": "SIREN深度敏感性：瓶颈架构导致不收敛",
+      "content": "实验发现将SIREN从2-128-128-3改为2-64-128-128-64-3后loss不收敛。分析原因：(1) SIREN的sin激活函数使梯度本身振荡，层数增加导致梯度不稳定；(2) 64→128→128→64的瓶颈结构在输入仅2维、输出3维的情况下不提供有益压缩反而丢信息；(3) 不同宽度层之间的尺度不匹配被放大。建议优先加宽（如2-256-256-3）而非加深。最终用2-128-128-128-3（温和加深一层）成功训练。",
+      "category": "machine_learning / neural_network_architecture",
+      "status": "resolved",
+      "novelty": 0.4,
+      "importance": 0.6,
+      "tags": [
+        "SIREN",
+        "architecture",
+        "depth_sensitivity",
+        "bottleneck",
+        "MIKI"
+      ],
+      "open_questions": [],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773655577948_pperz0"
+      ],
+      "created_at": 1773707283436,
+      "updated_at": 1773707283436
+    },
+    {
+      "id": "idea-82dc92d81011",
+      "title": "超♡银河☆河童！ 15:31:00\n感觉魔圆的美术风格也挺有意思的\n\n超♡银河☆河童！ 15:3",
+      "content": "超♡银河☆河童！ 15:31:00\n感觉魔圆的美术风格也挺有意思的\n\n超♡银河☆河童！ 15:31:05\n一边是现代化大都市\n\n超♡银河☆河童！ 15:31:09\n干净整洁\n\n超♡银河☆河童！ 15:31:19\n一边是新房低san作画\n超♡银河☆河童！ 15:35:34\n[不支持的元素类型]有一说一\n\n超♡银河☆河童！ 15:35:50\n鉴于老虚在剧场版直球引用fort da\n\n超♡银河☆河童！ 15:35:59\n这个是不是也是弗洛伊德\n\n超♡银河☆河童！ 15:36:12\n那种无意识和压抑的结构\nDas aktivste Valerylchlorid 15:36:48\n[不支持的元素类型]fort da是什么\n\n超♡银河☆河童！ 15:37:23\n超越快乐原则里写的\n\n超♡银河☆河童！ 15:37:41\n就是儿童会在父母离开之后用线团玩一个游戏\n\n超♡银河☆河童！ 15:37:59\n唉好像有道理\n\n超♡银河☆河童！ 15:38:11\n就是你把许愿理解为压抑创伤\n\n超♡银河☆河童！ 15:38:30\n比如学姐是差点全家似了\n\n超♡银河☆河童！ 15:38:42\n笨蛋是喜欢的人未来被毁了\n\n超♡银河☆河童！ 15:39:00\n环彩羽是妹妹得绝症\n\n超♡银河☆河童！ 15:39:09\n都是很创伤的事情\n\n超♡银河☆河童！ 15:39:27\n然后魔女化就是被压抑之物的回归\n\nDas aktivste Valerylchlorid 15:39:30\n[不支持的元素类型]学姐难道不就是全家似了（\n\n超♡银河☆河童！ 15:39:40\n她自己活下来了\nDas aktivste Valerylchlorid 15:40:12\n[不支持的元素类型]喜欢的人的未来里没有自己说是\n\n超♡银河☆河童！ 15:41:10\n😭\n\nDas aktivste Valerylchlorid 15:43:23\n这样看来杏子没有魔女化是不是用玩世不恭的态度转嫁/架空了被压抑之物\n\n超♡银河☆河童！ 15:43:34\n对\n\n超♡银河☆河童！ 15:44:20\n但……\n\n超♡银河☆河童！ 15:44:29\n等会杏子一会再说\n\n超♡银河☆河童！ 15:44:43\n我刚才想到的是所以剧场版小圆必须要重新变回人\n\n超♡银河☆河童！ 15:45:00\n因为小圆成神对吼姆拉是一个创伤\n\n超♡银河☆河童！ 15:45:20\n但对其他魔法少女是换了一个更大的幻想结构\nDas aktivste Valerylchlorid 15:43:23\n这样看来杏子没有魔女化是不是用玩世不恭的态度转嫁/架空了被压抑之物\n\n超♡银河☆河童！ 15:47:06\n[不支持的元素类型]但我在想这真的是可能的吗\n\n超♡银河☆河童！ 15:47:13\n这是不是又是一种新的压抑\n\nDas aktivste Valerylchlorid 15:47:19\n显然是\n\nDas aktivste Valerylchlorid 15:47:32\n那你看她不是和sayaka同归于尽了\n\n超♡银河☆河童！ 15:47:33\n我遭遇了挫折，推导出我当时为他人奉献的想法就是错误的\n\n超♡银河☆河童！ 15:47:40\n[不支持的元素类型]哦哦对对对",
+      "category": "general_open_idea",
+      "status": "open",
+      "novelty": 0.75,
+      "importance": 0.75,
+      "tags": [],
+      "open_questions": [],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-5fe8c88f6fc5"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773390177508_wo4242"
+      ],
+      "created_at": 1773717247197,
+      "updated_at": 1773717247197
+    },
+    {
+      "id": "idea-904ff6f6568d",
+      "title": "SIREN模型三层拆分架构",
+      "content": "将diff_xsec函数拆分为三个独立层次：(1) compute_kinematics：从(E_nu, E_l, cos_theta)计算Bjorken x, Q2, y_tilde, lepton_factor及validity mask；(2) structure_functions：SIREN网络以(x, Q2)为输入直接输出W2, Wc, Wy三个structure functions；(3) diff_xsec：组装运动学因子和structure functions得到微分截面。这样structure functions可以独立调用，方便与解析ground truth直接对比验证。",
+      "category": "system_design",
+      "status": "active",
+      "novelty": 0.3,
+      "importance": 0.7,
+      "tags": [
+        "SIREN",
+        "structure_functions",
+        "代码架构",
+        "CCQE"
+      ],
+      "open_questions": [],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-d74446a4e1d6"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "created_at": 1773735942073,
+      "updated_at": 1773735942073
+    },
+    {
+      "id": "idea-f6918ddbcbcd",
+      "title": "通过structure functions接口直接验证网络学习质量",
+      "content": "将SIREN网络的structure functions (W2, Wc, Wy)作为独立接口暴露出来，直接与CCQE toy model的解析ground truth在(x, Q2)空间中逐点对比，而非仅在截面层面比较。这样可以诊断网络是否正确分解了三个structure function分量，而不是仅仅拟合了它们的某种线性组合。",
+      "category": "机器学习验证方法",
+      "status": "active",
+      "novelty": 0.5,
+      "importance": 0.85,
+      "tags": [
+        "SIREN",
+        "structure functions",
+        "CCQE",
+        "benchmark",
+        "验证"
+      ],
+      "open_questions": [
+        "CCQE toy model的W2, Wc, Wy解析表达式是否已经推导完成",
+        "网络是否存在structure function分量之间的退化/混合问题"
+      ],
+      "related_fact_ids": [],
+      "source_summary_ids": [
+        "summary-80659e7de0b1"
+      ],
+      "source_wake_cycle_ids": [
+        "wake_1773707233206_yv4taa"
+      ],
+      "created_at": 1773735949340,
+      "updated_at": 1773735949340
     }
   ],
   "project_states": [
@@ -226,26 +630,137 @@
       ],
       "created_at": 1773655612417,
       "updated_at": 1773655612417
+    },
+    {
+      "id": "project-861667af4355",
+      "project_key": "miki",
+      "title": "MIKI - 可微分中微子-核散射form factor学习",
+      "status": "active",
+      "summary": "长期记忆系统成功上线，前端README更新至v1.0 Extinguisher。物理模型方面，明确了三个学习目标W2(x,Q²), Wc(x,Q²;m_ℓ²), Wy(x,Q²;m_ℓ²)的定义及其与五个structure functions W1-W5的关系。使用CCQE toy model数据，经过多次架构实验后确定2-128-128-128-3的SIREN架构，以lr=0.0005跑了约17000 epoch的过夜训练。初步结果显示能量和散射角累积分布比之前的4层模型准确很多。",
+      "recent_changes": [
+        "长期记忆系统（短期+长期）成功接入前端",
+        "前端README更新为v1.0 Extinguisher",
+        "添加了validation set和test set",
+        "尝试2-64-128-128-64-3架构失败（不收敛）",
+        "最终使用2-128-128-128-3架构完成过夜训练约17000 epoch",
+        "初步结果：能量和散射角累积分布显著优于之前的模型"
+      ],
+      "next_steps": [
+        "将网络输出的W2, Wc, Wy与CCQE toy model的ground truth form factors直接比较",
+        "确认toy model的form factor参数化形式并推导W2, Wc, Wy的解析表达式",
+        "分能量区间评估模型性能",
+        "检查能量-角度联合分布",
+        "考虑尝试2-256-256-3等更宽架构"
+      ],
+      "related_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "created_at": 1773707283437,
+      "updated_at": 1773707283437
+    },
+    {
+      "id": "project-9a0b89b9c75a",
+      "project_key": "miki_frontend",
+      "title": "MIKI Frontend - Live2D交互界面",
+      "status": "active",
+      "summary": "前端系统已具备完整的短期记忆和长期记忆功能，Live2D表情和动作由结构化控制标签驱动。README已更新至v1.0 Extinguisher版本，记录了记忆系统和情感控制等新功能。",
+      "recent_changes": [
+        "长期记忆管理系统后台完成并成功接入前端",
+        "README更新为v1.0 Extinguisher（命名来自魔法少女小圆中巴麻美的初始武器灭火器）"
+      ],
+      "next_steps": [
+        "修复chat界面的一些bug",
+        "下个版本可能命名为Cutlass"
+      ],
+      "related_summary_ids": [
+        "summary-bf2bf71afb16"
+      ],
+      "created_at": 1773707283437,
+      "updated_at": 1773707283437
+    },
+    {
+      "id": "project-0892508dd775",
+      "project_key": "ai_memory_system",
+      "title": "AI记忆系统开发",
+      "status": "active",
+      "summary": "用户正在开发一个记忆系统，目标是让AI能够跨对话保留用户信息和聊天历史，解决每次对话都失忆的问题。",
+      "recent_changes": [
+        "用户确认正在编写记忆系统"
+      ],
+      "next_steps": [
+        "了解用户的具体技术方案（存储形式、记忆粒度、检索策略等）",
+        "讨论记忆系统的设计细节"
+      ],
+      "related_summary_ids": [
+        "summary-4fa82f14d734"
+      ],
+      "created_at": 1773717266275,
+      "updated_at": 1773717266275
+    },
+    {
+      "id": "project-225ad965a14d",
+      "project_key": "hadron_matrix_siren",
+      "title": "Hadron Matrix SIREN 模型训练",
+      "status": "active",
+      "summary": "使用SIREN架构训练强子矩阵模型，网络结构为[2,64,64,3]，学习率0.0005，数据集为simulation.hdf5，输出参数保存至siren_param_test_memory.npz。",
+      "recent_changes": [
+        "第一次运行被停止（run_1773628615928）",
+        "第二次运行成功完成（run_1773628633341），配置相同：10轮训练，6000 debug steps"
+      ],
+      "next_steps": [],
+      "related_summary_ids": [
+        "summary-c6c6791bd792"
+      ],
+      "created_at": 1773717280804,
+      "updated_at": 1773717280804
+    },
+    {
+      "id": "project-1fbdb3e1764b",
+      "project_key": "neutrino_xsec_siren",
+      "title": "中微子截面SIREN网络项目",
+      "status": "active",
+      "summary": "完成了项目代码结构的全面整理，并将核心模型文件hadron_Matrix_siren.py重构为三层架构（运动学计算、structure functions提取、截面组装），为下一步与CCQE toy model解析解的对比验证做好了准备。",
+      "recent_changes": [
+        "完成scripts/目录结构整理（顶层+各模块）",
+        "将diff_xsec函数拆分为compute_kinematics、structure_functions、diff_xsec三个独立函数",
+        "在diff_xsec_model类中添加get_structure_functions方法，支持直接从(E_nu, E_l, cos_theta)或(x, Q2)获取W2, Wc, Wy"
+      ],
+      "next_steps": [
+        "编写CCQE toy model的解析ground truth（W2, Wc, Wy与form factors的关系）",
+        "在(x, Q2)网格上对比网络输出与解析解",
+        "确认用户已将重构代码更新到本地并测试通过"
+      ],
+      "related_summary_ids": [
+        "summary-80659e7de0b1"
+      ],
+      "created_at": 1773735942076,
+      "updated_at": 1773735949342
     }
   ],
   "memory_digests": [
     {
       "id": "digest-4a74c7ddcc7e",
       "type": "system_prompt_core",
-      "content": "【用户长期事实】\n- MIKI项目使用可微分神经网络学习中微子-核子相互作用的form factors\n- 用户正在亲自为AI助手编写长期记忆管理功能，经历了多次试错迭代\n- 用户持有一个核心命题：'学科化科学是科学精神的他在形式'，体现了对科学开放性的信念\n- 用户用AI助手的名字（MIKI）来命名自己的研究项目\n- 用户对将AdS/QCD框架与机器学习结合感兴趣，关注其可行性与困难\n【长期项目状态】\n- AI助手长期记忆管理系统: 用户正在为AI助手开发长期记忆管理功能，目标是让AI从'每次醒来都失忆'进化为'能记住重要事情的搭档'。已经历多次试错迭代。\n- MIKI：可微分神经网络学习中微子-核子相互作用form factors: 以AI助手名字命名的研究项目，使用可微分神经网络方法学习中微子-核子相互作用的form factors。",
+      "content": "【用户长期事实】\n- 微分截面公式: σ = (Vud² GF² E_l / π) × lepton_factor × ((E_nu/M_A) W2 + Wc + ỹ Wy)，其中ỹ = (E_nu-E_l)/E_nu × (1 + m_l²/Q²)，物理常数m_l=0.105, M_A=0.938, Vud=0.974, GF=1.166e-5\n- 使用JAX实现的SIREN网络，输入为(x, Q2)，输出三个structure functions (W2, Wc, Wy)，通过运动学公式组装成CCQE微分截面。首层使用w0=30.0的sin激活，中间层使用sin激活，最后一层线性输出\n- 项目scripts目录已整理完毕，包含flux/、model/、simulation/（含nuWro和toy子目录）、training_tools/（含train_model子目录）、utils/等模块。核心模型文件为model/hadron_Matrix_siren.py\n- 用户提到AI忘记了之前的聊天记录，说明双方此前已有过多次对话\n- 用户正在编写一个记忆系统，用于解决AI对话间失忆的问题\n- MIKI项目使用conda环境miki_env0.1\n- 用户的开发服务器名为Val-anyr，用户名mingzhuo，项目路径/home/mingzhuo/miki\n- MIKI项目使用可微分神经网络学习中微子-核子相互作用的form factors\n【长期项目状态】\n- 中微子截面SIREN网络项目: 完成了项目代码结构的全面整理，并将核心模型文件hadron_Matrix_siren.py重构为三层架构（运动学计算、structure functions提取、截面组装），为下一步与CCQE toy model解析解的对比验证做好了准备。\n- Hadron Matrix SIREN 模型训练: 使用SIREN架构训练强子矩阵模型，网络结构为[2,64,64,3]，学习率0.0005，数据集为simulation.hdf5，输出参数保存至siren_param_test_memory.npz。\n- AI记忆系统开发: 用户正在开发一个记忆系统，目标是让AI能够跨对话保留用户信息和聊天历史，解决每次对话都失忆的问题。\n- MIKI - 可微分中微子-核散射form factor学习: 长期记忆系统成功上线，前端README更新至v1.0 Extinguisher。物理模型方面，明确了三个学习目标W2(x,Q²), Wc(x,Q²;m_ℓ²), Wy(x,Q²;m_ℓ²)的定义及其与五个structure functions W1-W5的关系。使用CCQE toy model数据，经过多次架构实验后确定2-128-128-128-3的SIREN架构，以lr=0.0005跑了约17000 epoch的过夜训练。初步结果显示能量和散射角累积分布比之前的4层模型准确很多。\n- MIKI Frontend - Live2D交互界面: 前端系统已具备完整的短期记忆和长期记忆功能，Live2D表情和动作由结构化控制标签驱动。README已更新至v1.0 Extinguisher版本，记录了记忆系统和情感控制等新功能。",
       "source_fact_ids": [
-        "fact-0d2ece47458e",
+        "fact-de9549b0ce6f",
+        "fact-4259d891df6a",
+        "fact-023e36e4cb34",
+        "fact-b6e1561f15da",
         "fact-cde6c1351f21",
-        "fact-c43e327078d9",
-        "fact-470699c34a42",
-        "fact-31a36f47dde0"
+        "fact-1176d6ecda44",
+        "fact-4630444398ef",
+        "fact-0d2ece47458e"
       ],
       "source_project_ids": [
-        "project-8bc81f541eec",
-        "project-455b3e56bb90"
+        "project-1fbdb3e1764b",
+        "project-225ad965a14d",
+        "project-0892508dd775",
+        "project-861667af4355",
+        "project-9a0b89b9c75a"
       ],
       "created_at": 1773652891146,
-      "updated_at": 1773655612419
+      "updated_at": 1773735949346
     }
   ]
 }

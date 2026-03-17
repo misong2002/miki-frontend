@@ -24,11 +24,7 @@ import {
   fetchSystemPromptMemory,
 } from "./memoryApiService";
 
-/**
- * 判断一个 wake cycle 是否还能复用。
- * - 只有 status === "awake" 的 cycle 才能复用
- * - 距离上次活跃时间不超过 reuseWindowMs
- */
+
 function isWakeCycleReusable(wakeCycle, reuseWindowMs) {
   if (!wakeCycle) return false;
   if (wakeCycle.status !== "awake") return false;
@@ -40,6 +36,28 @@ function isWakeCycleReusable(wakeCycle, reuseWindowMs) {
 function listAllWakeCyclesSorted() {
   const db = getMemoryDB();
   return [...(db.wakeCycles ?? [])].sort((a, b) => a.startAt - b.startAt);
+}
+
+function listRecentWakeCyclesLocal(limit = 3) {
+  const wakeCycles = listAllWakeCyclesSorted();
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  return wakeCycles.slice(-limit);
+}
+
+function listMessagesAcrossWakeCycles(wakeCycleIds = [], maxMessagesPerCycle = null) {
+  const ids = Array.isArray(wakeCycleIds) ? wakeCycleIds : [];
+
+  const allMessages = ids.flatMap((wakeCycleId) => {
+    const messages = listMessagesByWakeCycle(wakeCycleId);
+
+    if (!Number.isFinite(maxMessagesPerCycle) || maxMessagesPerCycle <= 0) {
+      return messages;
+    }
+
+    return messages.slice(-maxMessagesPerCycle);
+  });
+
+  return allMessages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 }
 
 function getTrainingObservationsByWakeCycle(wakeCycleId) {
@@ -73,24 +91,204 @@ function extractWakeCycleArchivePayload(wakeCycleId) {
   };
 }
 
+function isTrainingRunActive(run) {
+  if (!run) return false;
+
+  const isClosedStatus = new Set([
+    "finished",
+    "stopped",
+    "failed",
+    "closed",
+    "archived",
+    "cancelled",
+    "superseded",
+    "abandoned",
+  ]);
+
+  if (run.endAt != null) return false;
+  if (run.endedAt != null) return false;
+  if (run.status && isClosedStatus.has(run.status)) return false;
+
+  return true;
+}
+
+function findLatestActiveRun(runs) {
+  if (!Array.isArray(runs) || runs.length === 0) return null;
+
+  const activeRuns = runs.filter(isTrainingRunActive);
+  if (activeRuns.length === 0) return null;
+
+  return [...activeRuns].sort((a, b) => {
+    const ta = a.startAt ?? a.createdAt ?? 0;
+    const tb = b.startAt ?? b.createdAt ?? 0;
+    return tb - ta;
+  })[0];
+}
+
+function normalizeBackendSessionKeyPart(value) {
+  if (value == null) return null;
+  return String(value);
+}
+
+
+
 /**
- * 创建 memory runtime。
+ * backend session 精确匹配逻辑：
+ *
+ * 1. cluster 模式优先用 jobId 匹配
+ * 2. local 模式优先用 pid 匹配
+ * 3. mode 相同且关键信息相同才算命中
  */
+function matchBackendSession(run, sessionInfo = {}) {
+  if (!run) return false;
+
+  const runSession = run.meta?.backendSession;
+  if (!runSession) return false;
+
+  const runMode = runSession.mode ?? null;
+  const queryMode = sessionInfo.mode ?? null;
+
+  if (queryMode && runMode && queryMode !== runMode) {
+    return false;
+  }
+
+  const runJobId = normalizeBackendSessionKeyPart(runSession.jobId);
+  const queryJobId = normalizeBackendSessionKeyPart(sessionInfo.jobId);
+
+  const runPid = normalizeBackendSessionKeyPart(runSession.pid);
+  const queryPid = normalizeBackendSessionKeyPart(sessionInfo.pid);
+
+  if (queryMode === "cluster") {
+    return queryJobId != null && runJobId === queryJobId;
+  }
+
+  if (queryMode === "local") {
+    return queryPid != null && runPid === queryPid;
+  }
+
+  if (queryJobId != null && runJobId === queryJobId) return true;
+  if (queryPid != null && runPid === queryPid) return true;
+
+  return false;
+}
+
+function listActiveTrainingRunsByBackendMode(mode = null) {
+  const db = getMemoryDB();
+  const runs = db.trainingRuns ?? [];
+
+  return runs
+    .filter((run) => {
+      if (!isTrainingRunActive(run)) return false;
+
+      const runMode = run.meta?.backendSession?.mode ?? null;
+      if (mode == null) return true;
+      return runMode === mode;
+    })
+    .sort((a, b) => {
+      const ta = a.startAt ?? a.createdAt ?? 0;
+      const tb = b.startAt ?? b.createdAt ?? 0;
+      return tb - ta;
+    });
+}
+
 export function createMemoryRuntime(options = {}) {
+
   const {
-    wakeCycleReuseWindowMs = 1000 * 60 * 30, // 30 分钟
+    wakeCycleReuseWindowMs = 1000 * 60 * 30,
     keepRecentWakeCycles = 3,
   } = options;
 
   let currentWakeCycle = null;
   let currentTrainingRunId = null;
   let cachedSystemPromptMemory = null;
+  let lastRememberTurnAt = 0;
+  let rememberQueue = Promise.resolve();
 
-  /**
-   * 启动 memory runtime。
-   * 这里只负责短期 wake cycle 的同步 boot。
-   * 长期记忆归档和清理放到 archiveStaleWakeCyclesIfNeeded() 里异步做。
-   */
+  function closeConflictingActiveTrainingRuns({
+    mode = null,
+    keepRunId = null,
+    nextStatus = "superseded",
+  } = {}) {
+    const candidates = listActiveTrainingRunsByBackendMode(mode);
+
+    const closed = [];
+    const skipped = [];
+
+    for (const run of candidates) {
+      if (!run?.id) continue;
+
+      if (keepRunId && run.id === keepRunId) {
+        skipped.push(run.id);
+        continue;
+      }
+
+      const result = finishTrainingRun(run.id, nextStatus);
+      closed.push({
+        runId: run.id,
+        result,
+      });
+
+      if (currentTrainingRunId === run.id) {
+        currentTrainingRunId = null;
+      }
+    }
+
+    return {
+      ok: true,
+      mode,
+      nextStatus,
+      closed,
+      skipped,
+    };
+  }
+
+  function reconcileTrainingRunsWithBackend({
+    isRunning,
+    session = null,
+    nextStatusWhenMissing = "abandoned",
+  } = {}) {
+    if (isRunning) {
+      return {
+        ok: true,
+        action: "noop_running",
+        closed: [],
+      };
+    }
+
+    const backendMode =
+      session?.mode === "cluster"
+        ? "cluster"
+        : session?.mode === "local"
+        ? "local"
+        : null;
+
+    const candidates =
+      backendMode != null
+        ? listActiveTrainingRunsByBackendMode(backendMode)
+        : listActiveTrainingRunsByBackendMode(null);
+
+    const closed = [];
+
+    for (const run of candidates) {
+      const result = finishTrainingRun(run.id, nextStatusWhenMissing);
+      closed.push({
+        runId: run.id,
+        result,
+      });
+
+      if (currentTrainingRunId === run.id) {
+        currentTrainingRunId = null;
+      }
+    }
+
+    return {
+      ok: true,
+      action: "closed_missing_backend_runs",
+      nextStatus: nextStatusWhenMissing,
+      closed,
+    };
+  }
+
   function boot() {
     const latest = getLatestWakeCycle();
 
@@ -123,7 +321,6 @@ export function createMemoryRuntime(options = {}) {
 
   function recordUserMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
-
     return appendMessage({
       wakeCycleId,
       role: "user",
@@ -134,7 +331,6 @@ export function createMemoryRuntime(options = {}) {
 
   function recordAssistantMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
-
     return appendMessage({
       wakeCycleId,
       role: "assistant",
@@ -145,7 +341,6 @@ export function createMemoryRuntime(options = {}) {
 
   function recordSystemMessage(content, meta = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
-
     return appendMessage({
       wakeCycleId,
       role: "system",
@@ -158,10 +353,73 @@ export function createMemoryRuntime(options = {}) {
     return listMessagesByWakeCycle(getCurrentWakeCycleId());
   }
 
+  function listRecentMessagesAcrossWakeCycles(
+    limitWakeCycles = 3,
+    maxMessagesPerCycle = null
+  ) {
+    const recentWakeCycles = listRecentWakeCyclesLocal(limitWakeCycles);
+    const wakeCycleIds = recentWakeCycles.map((cycle) => cycle.id);
+
+    return listMessagesAcrossWakeCycles(wakeCycleIds, maxMessagesPerCycle);
+  }
+
+  function getLatestActiveTrainingRunInCurrentWakeCycle() {
+    const wakeCycleId = getCurrentWakeCycleId();
+    const runs = listTrainingRunsByWakeCycle(wakeCycleId);
+    return findLatestActiveRun(runs);
+  }
+
+  function getLatestActiveTrainingRunGlobally() {
+    const db = getMemoryDB();
+    const runs = db.trainingRuns ?? [];
+    return findLatestActiveRun(runs);
+  }
+
+  function getActiveTrainingRun() {
+    const db = getMemoryDB();
+
+    if (currentTrainingRunId) {
+      const current = (db.trainingRuns ?? []).find(
+        (run) => run.id === currentTrainingRunId
+      );
+      if (current) {
+        return current;
+      }
+      currentTrainingRunId = null;
+    }
+
+    const currentWakeCycleActiveRun = getLatestActiveTrainingRunInCurrentWakeCycle();
+    if (currentWakeCycleActiveRun) {
+      currentTrainingRunId = currentWakeCycleActiveRun.id;
+      return currentWakeCycleActiveRun;
+    }
+
+    const globalActiveRun = getLatestActiveTrainingRunGlobally();
+    if (globalActiveRun) {
+      currentTrainingRunId = globalActiveRun.id;
+      return globalActiveRun;
+    }
+
+    return null;
+  }
+
+  function getActiveTrainingRunId() {
+    return getActiveTrainingRun()?.id ?? null;
+  }
+
+  function ensureActiveTrainingRunId(runId = null) {
+    if (runId) {
+      currentTrainingRunId = runId;
+      return runId;
+    }
+    return getActiveTrainingRunId();
+  }
+
   function startTrainingRun({
     config = {},
     modelName = null,
     dataset = null,
+    meta = {},
   } = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
 
@@ -170,25 +428,50 @@ export function createMemoryRuntime(options = {}) {
       config,
       modelName,
       dataset,
+      meta,
     });
 
     currentTrainingRunId = run.id;
     return run;
   }
 
-  function endTrainingRun(runId, status = "finished") {
-    if (currentTrainingRunId === runId) {
+  function endTrainingRun(runId = null, status = "finished") {
+    const resolvedRunId = ensureActiveTrainingRunId(runId);
+
+    if (!resolvedRunId) {
+      return {
+        ok: false,
+        error: "no active training run to finish",
+      };
+    }
+
+    const result = finishTrainingRun(resolvedRunId, status);
+
+    if (currentTrainingRunId === resolvedRunId) {
       currentTrainingRunId = null;
     }
-    return finishTrainingRun(runId, status);
+
+    return result;
   }
 
-  function saveLossSeries(runId, { recentDense = [], globalSparse = [] } = {}) {
-    const result = {};
+  function saveLossSeries(
+    runId = null,
+    { recentDense = [], globalSparse = [] } = {}
+  ) {
+    const resolvedRunId = ensureActiveTrainingRunId(runId);
+
+    if (!resolvedRunId) {
+      return {
+        ok: false,
+        error: "no active training run to save loss series",
+      };
+    }
+
+    const result = { runId: resolvedRunId };
 
     if (recentDense.length > 0) {
       result.recentDense = saveTrainingMetricSeries({
-        runId,
+        runId: resolvedRunId,
         metricName: "loss",
         resolution: "recent_dense",
         points: recentDense,
@@ -197,7 +480,7 @@ export function createMemoryRuntime(options = {}) {
 
     if (globalSparse.length > 0) {
       result.globalSparse = saveTrainingMetricSeries({
-        runId,
+        runId: resolvedRunId,
         metricName: "loss",
         resolution: "global_sparse",
         points: globalSparse,
@@ -213,12 +496,13 @@ export function createMemoryRuntime(options = {}) {
     epoch = null,
     comment = "",
     timestamp = Date.now(),
-    runId = currentTrainingRunId,
+    runId = null,
   } = {}) {
     const wakeCycleId = getCurrentWakeCycleId();
+    const resolvedRunId = ensureActiveTrainingRunId(runId);
 
     return appendTrainingObservation({
-      runId,
+      runId: resolvedRunId,
       wakeCycleId,
       type,
       feature,
@@ -232,8 +516,93 @@ export function createMemoryRuntime(options = {}) {
     return listTrainingRunsByWakeCycle(getCurrentWakeCycleId());
   }
 
-  function getTrainingMetrics(runId) {
-    return listTrainingMetricSeriesByRunId(runId);
+  function getTrainingMetrics(runId = null) {
+    const resolvedRunId = ensureActiveTrainingRunId(runId);
+    if (!resolvedRunId) return [];
+    return listTrainingMetricSeriesByRunId(resolvedRunId);
+  }
+
+  /**
+   * 按后端 session 精确查找 training run。
+   * 命中后会同步 currentTrainingRunId。
+   */
+  function getTrainingRunByBackendSession({
+    jobId = null,
+    pid = null,
+    mode = null,
+  } = {}) {
+    const db = getMemoryDB();
+    const runs = db.trainingRuns ?? [];
+
+    const matched = [...runs]
+      .filter((run) => matchBackendSession(run, { jobId, pid, mode }))
+      .sort((a, b) => {
+        const ta = a.startAt ?? a.createdAt ?? 0;
+        const tb = b.startAt ?? b.createdAt ?? 0;
+        return tb - ta;
+      })[0] ?? null;
+
+    if (matched?.id) {
+      currentTrainingRunId = matched.id;
+    }
+
+    return matched;
+  }
+
+  /**
+   * 给某个 run 写回 backend session 元信息。
+   * 这里直接在 DB 中更新 trainingRuns 对象。
+   */
+  function setTrainingRunBackendSession(
+    runId,
+    { mode = null, jobId = null, pid = null } = {}
+  ) {
+    if (!runId) {
+      return {
+        ok: false,
+        error: "runId is required",
+      };
+    }
+
+    const db = getMemoryDB();
+    const runs = db.trainingRuns ?? [];
+    const index = runs.findIndex((run) => run.id === runId);
+
+    if (index < 0) {
+      return {
+        ok: false,
+        error: `training run not found: ${runId}`,
+      };
+    }
+
+    const nextRuns = [...runs];
+    const prevRun = nextRuns[index];
+
+    nextRuns[index] = {
+      ...prevRun,
+      meta: {
+        ...(prevRun.meta ?? {}),
+        backendSession: {
+          mode,
+          jobId,
+          pid,
+        },
+      },
+    };
+
+    replaceMemoryDB({
+      ...db,
+      trainingRuns: nextRuns,
+    });
+
+    if (currentTrainingRunId === runId) {
+      currentTrainingRunId = runId;
+    }
+
+    return {
+      ok: true,
+      run: nextRuns[index],
+    };
   }
 
   function recall({ text, messageId } = {}) {
@@ -252,6 +621,7 @@ export function createMemoryRuntime(options = {}) {
     return {
       ok: true,
       stored: false,
+      mode: "wake_cycle_only",
       payload,
     };
   }
@@ -300,6 +670,11 @@ export function createMemoryRuntime(options = {}) {
       });
     }
 
+    const activeRun = getActiveTrainingRun();
+    if (activeRun?.wakeCycleId === wakeCycleId) {
+      currentTrainingRunId = null;
+    }
+
     return result;
   }
 
@@ -315,7 +690,9 @@ export function createMemoryRuntime(options = {}) {
     const keepWakeCycleIds = new Set(keepWakeCycles.map((cycle) => cycle.id));
 
     const compactedDB = {
-      wakeCycles: db.wakeCycles ?? [],
+      wakeCycles: (db.wakeCycles ?? []).filter((cycle) =>
+        keepWakeCycleIds.has(cycle.id)
+      ),
       chatMessages: (db.chatMessages ?? []).filter((msg) =>
         keepWakeCycleIds.has(msg.wakeCycleId)
       ),
@@ -335,6 +712,15 @@ export function createMemoryRuntime(options = {}) {
     );
 
     replaceMemoryDB(compactedDB);
+
+    if (currentWakeCycle && !keepWakeCycleIds.has(currentWakeCycle.id)) {
+      currentWakeCycle = null;
+    }
+
+    if (currentTrainingRunId && !keepRunIds.has(currentTrainingRunId)) {
+      currentTrainingRunId = null;
+    }
+
     return compactedDB;
   }
 
@@ -393,6 +779,10 @@ export function createMemoryRuntime(options = {}) {
 
     startTrainingRun,
     endTrainingRun,
+    getActiveTrainingRun,
+    getActiveTrainingRunId,
+    getTrainingRunByBackendSession,
+    setTrainingRunBackendSession,
     saveLossSeries,
     recordTrainingObservation,
     listCurrentTrainingRuns,
@@ -406,7 +796,12 @@ export function createMemoryRuntime(options = {}) {
     closeAndArchiveWakeCycle,
     archiveStaleWakeCyclesIfNeeded,
     compactLocalMemory,
+    listRecentMessagesAcrossWakeCycles,
 
     dump,
+
+    closeConflictingActiveTrainingRuns,
+    reconcileTrainingRunsWithBackend,
   };
 }
+

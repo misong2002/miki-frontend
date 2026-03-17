@@ -10,6 +10,10 @@ export function createDeferred() {
   return { promise, resolve, reject };
 }
 
+function createLanguageMessageId() {
+  return `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function getCharsPerTick(queue) {
   if (!queue) return 0;
   if (queue.length > 120) return 8;
@@ -37,14 +41,21 @@ export function normalizeHearInput(input) {
   if (typeof input === "string") {
     return {
       text: input,
-      messageId: `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      messageId: createLanguageMessageId(),
     };
   }
 
   return {
     text: input?.text ?? "",
-    messageId:
-      input?.messageId ??
-      `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    messageId: input?.messageId ?? createLanguageMessageId(),
   };
+}
+
+export function appendIfPresent(base, extra) {
+  if (!extra) return base;
+  return `${base}${extra}`;
+}
+
+export function isAbortError(err) {
+  return err?.name === "AbortError";
 }

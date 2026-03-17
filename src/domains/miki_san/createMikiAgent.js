@@ -1,23 +1,40 @@
 // src/domains/miki_san/createMikiAgent.js
-
 import { createCharacterRuntimeBridge } from "./motor/characterRuntimeBridge";
 import { createCharacterOrchestrator } from "./motor/characterOrchestrator";
 import { createLanguageModule } from "./language/languageModule";
-import { emotionEngine } from "./body/emotionEngine";
+import { emotionEngine } from "./body/bodyModule.js";
 import { emotionMapper } from "./motor/emotionMapper";
 import { motionMapper } from "./motor/motionMapper";
 import { createExternalityModule } from "./externality/createExternalityModule";
 import { createPerceptionModule } from "./perception/perceptionModule.js";
-import {
-  createMemoryRuntime,
-  listMessagesByWakeCycle,
-  listRecentWakeCycles,
-} from "./memory";
+import { createMemoryRuntime } from "./memory/memoryModule.js";
+import { createTrainingCommentaryPipeline } from "./agent/createTrainingCommentaryPipeline";
+import { buildRemindPrompt } from "./agent/remindPromptBuilder";
+import { runLanguageTurn } from "./agent/runLanguageTurn";
+import { createPerceptionGate } from "./agent/perceptionGate";
+
+/**
+ * Agent 内部默认舞台状态。
+ * 注意：
+ * - 这里故意和 App.jsx 的 DEFAULT_STAGE_PROPS 分离
+ * - Agent 管的是角色内部默认外显；UI 层可以有自己的布局默认值
+ */
+const DEFAULT_STAGE_PROPS = {
+  modelKey: "normal",
+  position: { x: 0.5, y: 0.85 },
+  scale: 1.0,
+};
 
 function createMessageId(prefix = "miki") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * 统一容错调用。
+ * 用法：
+ * - 旁路写入失败时不中断主流程
+ * - 启动期某些辅助步骤失败时给出 fallback
+ */
 async function safeCall(fn, fallback = null, label = "safeCall") {
   try {
     if (typeof fn !== "function") return fallback;
@@ -28,134 +45,95 @@ async function safeCall(fn, fallback = null, label = "safeCall") {
   }
 }
 
-function formatDialogueRole(role) {
-  if (role === "user") return "用户";
-  if (role === "assistant") return "你";
-  return "系统";
-}
-
-function formatPromptTime(ts) {
-  if (!Number.isFinite(ts)) return "unknown";
-
-  const d = new Date(ts);
-  const yyyy = d.getFullYear();
-  const MM = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+function formatBattleCommentPrefix(timestamp, epoch) {
+  const d = new Date(timestamp);
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   const ss = String(d.getSeconds()).padStart(2, "0");
-
-  return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
+  const epochText = epoch != null ? `epoch ${epoch}` : "epoch ?";
+  return `(${hh}:${mm}:${ss} || ${epochText})`;
 }
 
-function buildLongTermMemoryBlock(longTermMemory) {
-  if (!longTermMemory) return "";
-
-  const digestText = longTermMemory?.digest?.content?.trim?.() ?? "";
-
-  const facts = Array.isArray(longTermMemory?.facts)
-    ? longTermMemory.facts
-    : [];
-
-  const projects = Array.isArray(longTermMemory?.projects)
-    ? longTermMemory.projects
-    : [];
-
-  const factLines = facts
-    .slice(0, 8)
-    .map((fact) => `- ${fact.value ?? ""}`.trim())
-    .filter((line) => line !== "-");
-
-  const projectLines = projects
-    .slice(0, 5)
-    .map((project) => {
-      const title = project?.title ?? "";
-      const summary = project?.summary ?? "";
-      if (title && summary) return `- ${title}：${summary}`;
-      if (title) return `- ${title}`;
-      return "";
-    })
-    .filter(Boolean);
-
-  const blocks = [];
-
-  if (digestText) {
-    blocks.push("【长期记忆摘要】");
-    blocks.push(digestText);
-  }
-
-  if (factLines.length > 0) {
-    blocks.push("【用户长期事实】");
-    blocks.push(...factLines);
-  }
-
-  if (projectLines.length > 0) {
-    blocks.push("【长期项目状态】");
-    blocks.push(...projectLines);
-  }
-
-  return blocks.join("\n").trim();
+/**
+ * 是否是一条“启动回忆”消息。
+ * 这类消息可以显示给 UI，
+ * 但不应该再作为下一次 remind 的原始对话材料，
+ * 否则会出现“对总结的总结”不断叠加。
+ */
+function isBootRemindMessage(msg) {
+  return msg?.meta?.source === "boot_remind";
 }
 
-function buildRemindPrompt(messages, longTermMemory = null) {
-  const validMessages = (Array.isArray(messages) ? messages : [])
-    .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
-    .slice(-200);
-
-  const now = Date.now();
-
-  const latestMessage =
-    validMessages.length > 0 ? validMessages[validMessages.length - 1] : null;
-
-  const lastTimestamp = Number.isFinite(latestMessage?.createdAt)
-    ? latestMessage.createdAt
-    : null;
-
-  const dialogue = validMessages
-    .map((msg) => {
-      const role = formatDialogueRole(msg.role);
-      const timeText = formatPromptTime(msg.createdAt);
-      return `[${timeText}] ${role}：${msg.content.trim()}`;
-    })
-    .join("\n");
-
-  const longTermBlock = buildLongTermMemoryBlock(longTermMemory);
-
-  const parts = [
-    "用户回来了，你开始回忆之前的对话内容。",
-    `当前系统时间：${formatPromptTime(now)}`,
-    `最近一条对话时间：${
-      lastTimestamp ? formatPromptTime(lastTimestamp) : "unknown"
-    }`,
-  ];
-
-  if (longTermBlock) {
-    parts.push("你想起了用户的一些特质：");
-    parts.push(longTermBlock);
-  }
-
-  if (dialogue) {
-    parts.push("");
-    parts.push("你又想起了之前的对话内容：");
-    parts.push(dialogue);
-  }
-
-  parts.push(
-    "",
-    "与用户打个招呼作为开场白。",
-    "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可",
-    "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
-    "注意！不要显式包含本段提示词以及时间差的内容。",
-    '示例：刚才干什么去啦？（如果用户刚离开）',
-    '示例：嘿，我还在这呢，之前跟你说的那个核物理模型考虑的怎么样啦（如果用户离开了一段时间）',
+/**
+ * 收集 remind 用的最近消息。
+ *
+ * 关键策略：
+ * - 从最近 wakeCycle 里拿消息
+ * - 过滤掉 boot_remind，避免重启多次后不断把旧总结再总结一遍
+ */
+async function collectRecentMessagesForRemind(memory, limitWakeCycles = 3) {
+  const messages = await safeCall(
+    () => memory?.listRecentMessagesAcrossWakeCycles?.(limitWakeCycles),
+    [],
+    "memory.listRecentMessagesAcrossWakeCycles"
   );
 
-  return parts.join("\n");
+  if (!Array.isArray(messages)) return [];
+
+  return messages.filter((msg) => !isBootRemindMessage(msg));
+}
+
+/**
+ * 给 UI 恢复消息时做标准化。
+ *
+ * 注意：
+ * - 这里不过滤 boot_remind
+ * - 因为 UI 恢复时，用户就是应该能看到“她刚刚完成了回忆”
+ */
+function normalizeBootstrapMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .filter(Boolean)
+    .map((msg) => ({
+      id:
+        msg?.id ??
+        createMessageId(
+          msg?.role === "user" ? "user-restored" : "assistant-restored"
+        ),
+      role: msg?.role ?? "assistant",
+      content: msg?.content ?? "",
+      createdAt: msg?.createdAt ?? Date.now(),
+      status: msg?.status ?? "done",
+      references: Array.isArray(msg?.references) ? msg.references : [],
+      meta: {
+        ...(msg?.meta ?? {}),
+      },
+    }));
+}
+
+/**
+ * 训练状态语义归一化。
+ *
+ * 之前的问题是：
+ * - semantic === "none" 时直接 return
+ * - 这会导致角色保留上一轮 training semantic，状态残留
+ *
+ * 现在改成：
+ * - running + none/null -> normal
+ * - idle / 其它非 running -> idle
+ */
+function normalizeTrainingSemantic(status = "idle", semantic = "idle") {
+  if (semantic && semantic !== "none") {
+    return semantic;
+  }
+
+  return status === "running" ? "normal" : "idle";
 }
 
 export function createMikiAgent({
   memory: injectedMemory = null,
-  onExternalityChange = null,
+  onStageChange = null,
 } = {}) {
   const runtimeBridge = createCharacterRuntimeBridge({
     emotionEngine,
@@ -171,12 +149,13 @@ export function createMikiAgent({
     throw new Error("createMikiAgent: character.dispatch is required");
   }
 
-
-  
   const memory = injectedMemory ?? createMemoryRuntime();
-  memory.boot();
 
   const perception = createPerceptionModule();
+  const perceptionGate = createPerceptionGate({
+    cooldownMs: 5000,
+    sameFeatureSuppressMs: 30000,
+  });
 
   const language = createLanguageModule({
     onCharacterEvent: (event) => {
@@ -190,29 +169,70 @@ export function createMikiAgent({
     );
   }
 
+  const stageListeners = new Set();
+
+  function emitStageChange(nextStageProps) {
+    for (const listener of stageListeners) {
+      try {
+        listener?.(nextStageProps);
+      } catch (err) {
+        console.warn("[MikiAgent] stage listener failed:", err);
+      }
+    }
+  }
+
   const externality = createExternalityModule({
-    initialModelKey: "normal",
-    initialPosition: { x: 0.5, y: 0.85 },
-    initialScale: 1.0,
-    onChange: onExternalityChange,
+    initialModelKey: DEFAULT_STAGE_PROPS.modelKey,
+    initialPosition: DEFAULT_STAGE_PROPS.position,
+    initialScale: DEFAULT_STAGE_PROPS.scale,
+    onChange: (nextStageProps) => {
+      emitStageChange(nextStageProps);
+      onStageChange?.(nextStageProps);
+    },
   });
 
-  let contactCallback = null;
-  let lastPerceptionTime = 0;
-  let lastPerceptionComment = null;
-  let lastPerceptionFeature = null;
-  let bootRemindStarted = false;
-  let bootRemindPromise = Promise.resolve({
-    status: "idle",
-    text: "",
-    error: null,
-  });
+  const contactListeners = new Set();
 
-  const COOLDOWN_MS = 5000;
+  /**
+   * 启动生命周期控制：
+   * - hasStarted：仅在“启动关键步骤完成”后置 true
+   * - startPromise：并发 start 时复用同一个 promise
+   * - memoryBootPromise / hasMemoryBooted：把 memory.boot 纳入启动生命周期，并保证只 boot 一次
+   */
+  let hasStarted = false;
+  let startPromise = null;
+  let hasMemoryBooted = false;
+  let memoryBootPromise = null;
+
+  async function ensureMemoryBooted() {
+    if (hasMemoryBooted) return;
+    if (memoryBootPromise) return memoryBootPromise;
+
+    memoryBootPromise = (async () => {
+      await safeCall(() => memory?.boot?.(), null, "memory.boot");
+      hasMemoryBooted = true;
+    })();
+
+    try {
+      await memoryBootPromise;
+    } finally {
+      memoryBootPromise = null;
+    }
+  }
 
   function touchMemory() {
     if (typeof memory?.touch === "function") {
       memory.touch();
+    }
+  }
+
+  function emitContactFeed(payload) {
+    for (const listener of contactListeners) {
+      try {
+        listener?.(payload);
+      } catch (err) {
+        console.warn("[MikiAgent] contact listener failed:", err);
+      }
     }
   }
 
@@ -221,8 +241,6 @@ export function createMikiAgent({
   }
 
   function setAppMode(mode) {
-    touchMemory();
-
     character.dispatch({
       type: "APP_MODE_CHANGED",
       mode,
@@ -230,17 +248,22 @@ export function createMikiAgent({
   }
 
   function setTrainingStatus(status = "idle", semantic = "idle") {
-    if (semantic === "none") return;
-
-    touchMemory();
+    const normalizedSemantic = normalizeTrainingSemantic(status, semantic);
 
     character.dispatch({
       type: "TRAINING_STATUS",
-      payload: { status, semantic },
+      payload: {
+        status,
+        semantic: normalizedSemantic,
+      },
     });
   }
 
   function setUserActive(source = "app") {
+    /**
+     * 用户活跃是一个明确的“外部唤醒”事件。
+     * 这里保留 touchMemory。
+     */
     touchMemory();
 
     character.dispatch({
@@ -249,62 +272,93 @@ export function createMikiAgent({
     });
   }
 
-  async function remind(handlers = {}) {
-    const recentWakeCycles = await safeCall(
-      () => listRecentWakeCycles(3),
+  async function getBootstrapMessages() {
+    await ensureMemoryBooted();
+
+    const messages = await safeCall(
+      () => memory?.listRecentMessagesAcrossWakeCycles?.(3),
       [],
-      "memory.listRecentWakeCycles"
+      "memory.listRecentMessagesAcrossWakeCycles(bootstrap)"
     );
 
-    console.log("[remind] recentWakeCycles raw:", recentWakeCycles);
+    return normalizeBootstrapMessages(messages);
+  }
 
-    if (!Array.isArray(recentWakeCycles) || recentWakeCycles.length === 0) {
-      console.log("[remind] no recent wake cycles");
-      return {
-        status: "idle",
-        text: "",
-        error: null,
-      };
+  async function rememberAssistantMessage(
+    text,
+    meta = {},
+    label = "memory.recordAssistantMessage"
+  ) {
+    if (!text?.trim()) return null;
+
+    return safeCall(
+      () => memory?.recordAssistantMessage?.(text, meta),
+      null,
+      label
+    );
+  }
+
+  /**
+   * 统一执行一个 agent 语言回合。
+   *
+   * 负责：
+   * -（可选）touchMemory
+   * - 调 runLanguageTurn
+   * - 记录 assistant message
+   * - 返回统一 turn 结果
+   *
+   * 不负责：
+   * - 写 user message
+   * - 构造 remind prompt
+   * - rememberTurn
+   */
+  async function runAgentTurn({
+    inputText,
+    messageId,
+    handlers = {},
+    assistantMeta = {},
+    assistantRecordLabel = "memory.recordAssistantMessage",
+    shouldTouchMemory = true,
+    languageOptions = {},
+  }) {
+    if (shouldTouchMemory) {
+      await touchMemory("runAgentTurn");
     }
 
-    const orderedWakeCycles = [...recentWakeCycles].reverse();
-
-    console.log(
-      "[remind] orderedWakeCycles:",
-      orderedWakeCycles.map((cycle) => ({
-        id: cycle.id,
-        startAt: cycle.startAt,
-        endAt: cycle.endAt,
-        status: cycle.status,
-        lastActiveAt: cycle.lastActiveAt,
-      }))
+    const turn = await runLanguageTurn(
+      language,
+      {
+        text: inputText,
+        messageId,
+      },
+      handlers,
+      languageOptions
     );
 
-    const messages = orderedWakeCycles.flatMap((cycle) => {
-      const cycleMessages = listMessagesByWakeCycle(cycle.id);
-      console.log(`[remind] messages in wakeCycle ${cycle.id}:`, cycleMessages);
-      return cycleMessages;
-    });
+    const assistantText = turn?.assistantText ?? "";
 
-    messages.sort((a, b) => a.createdAt - b.createdAt);
+    if (assistantText.trim()) {
+      await safeCall(
+        () =>
+          memory?.recordAssistantMessage?.({
+            wakeCycleId: getCurrentWakeCycleIdSafe(),
+            content: assistantText,
+            meta: assistantMeta,
+          }),
+        null,
+        assistantRecordLabel
+      );
+    }
 
-    console.log(
-      "[remind] merged messages:",
-      messages.map((msg) => ({
-        wakeCycleId: msg.wakeCycleId,
-        role: msg.role,
-        createdAt: msg.createdAt,
-        content: msg.content?.slice(0, 60),
-      }))
-    );
+    return turn;
+  }
 
-    console.log(
-      "[remind] unique wakeCycleIds in merged messages:",
-      [...new Set(messages.map((msg) => msg.wakeCycleId))]
-    );
+  async function remind(handlers = {}) {
+    await ensureMemoryBooted();
+
+    const messages = await collectRecentMessagesForRemind(memory, 3);
 
     if (messages.length === 0) {
-      console.log("[remind] merged messages empty");
       return {
         status: "idle",
         text: "",
@@ -324,11 +378,7 @@ export function createMikiAgent({
 
     const prompt = buildRemindPrompt(messages, longTermMemory);
 
-    console.log("[remind] longTermMemory:", longTermMemory);
-    console.log("[remind] prompt preview:", prompt);
-    
     if (!prompt.trim()) {
-      console.log("[remind] prompt empty after buildRemindPrompt");
       return {
         status: "idle",
         text: "",
@@ -338,76 +388,24 @@ export function createMikiAgent({
 
     const messageId = createMessageId("miki-remind");
 
-    let latestAssistantText = "";
-    let finalAssistantText = "";
-    let interrupted = false;
-    let errorObj = null;
-
-    const wrappedHandlers = {
-      ...handlers,
-
-      onTextUpdate: (fullText) => {
-        latestAssistantText = fullText ?? "";
-        handlers.onTextUpdate?.(fullText);
+    const turnResult = await runAgentTurn({
+      inputText: prompt,
+      messageId,
+      handlers,
+      assistantMeta: {
+        source: "boot_remind",
       },
-
-      onDone: (finalText) => {
-        finalAssistantText = finalText ?? latestAssistantText ?? "";
-        handlers.onDone?.(finalText);
+      assistantRecordLabel: "memory.recordAssistantMessage(remind)",
+      shouldTouchMemory: true,
+      languageOptions: {
+        awaitDisplayDrain: false,
       },
-
-      onInterrupted: (partialText) => {
-        interrupted = true;
-        finalAssistantText = partialText ?? latestAssistantText ?? "";
-        handlers.onInterrupted?.(partialText);
-      },
-
-      onError: (err, partialText) => {
-        errorObj = err;
-        finalAssistantText =
-          partialText ?? latestAssistantText ?? finalAssistantText ?? "";
-        handlers.onError?.(err, partialText);
-      },
-    };
-
-    setUserActive("memory_remind");
-
-    console.log("[remind] sending prompt to language.hear, messageId =", messageId);
-
-    const result = await language.hear(
-      {
-        text: prompt,
-        messageId,
-      },
-      wrappedHandlers
-    );
-
-    console.log("[remind] language.hear result:", result);
-
-    const assistantText =
-      (typeof result?.text === "string" && result.text) ||
-      finalAssistantText ||
-      latestAssistantText ||
-      "";
-
-    console.log("[remind] assistantText:", assistantText);
-
-    if (assistantText.trim()) {
-      await safeCall(
-        () =>
-          memory?.recordAssistantMessage?.(assistantText, {
-            messageId,
-            interrupted,
-            error: errorObj ? String(errorObj) : null,
-          }),
-        null,
-        "memory.recordAssistantMessage(remind)"
-      );
-    }
+    });
 
     return {
-      ...result,
-      text: assistantText,
+      status: turnResult.status,
+      text: turnResult.text,
+      error: turnResult.error,
     };
   }
 
@@ -419,6 +417,7 @@ export function createMikiAgent({
         : input?.messageId ?? createMessageId("miki");
 
     const trimmed = userText.trim();
+
     if (!trimmed) {
       return {
         status: "idle",
@@ -427,7 +426,13 @@ export function createMikiAgent({
       };
     }
 
+    /**
+     * chat_input 本身就是一次 user active 事件。
+     * 这里会 touchMemory，所以后续 runAgentTurn 不再重复 touch。
+     */
     setUserActive("chat_input");
+
+    await ensureMemoryBooted();
 
     await safeCall(
       () => memory?.recordUserMessage?.(trimmed, { messageId }),
@@ -435,145 +440,45 @@ export function createMikiAgent({
       "memory.recordUserMessage"
     );
 
-    let latestAssistantText = "";
-    let finalAssistantText = "";
-    let interrupted = false;
-    let errorObj = null;
-
-    const wrappedHandlers = {
-      ...handlers,
-
-      onTextUpdate: (fullText) => {
-        latestAssistantText = fullText ?? "";
-        handlers.onTextUpdate?.(fullText);
-      },
-
-      onDone: (finalText) => {
-        finalAssistantText = finalText ?? latestAssistantText ?? "";
-        handlers.onDone?.(finalText);
-      },
-
-      onInterrupted: (partialText) => {
-        interrupted = true;
-        finalAssistantText = partialText ?? latestAssistantText ?? "";
-        handlers.onInterrupted?.(partialText);
-      },
-
-      onError: (err, partialText) => {
-        errorObj = err;
-        finalAssistantText =
-          partialText ?? latestAssistantText ?? finalAssistantText ?? "";
-        handlers.onError?.(err, partialText);
-      },
-    };
-
-    const result = await language.hear(
-      {
-        text: trimmed,
-        messageId,
-      },
-      wrappedHandlers
-    );
-
-    const assistantText =
-      (typeof result?.text === "string" && result.text) ||
-      finalAssistantText ||
-      latestAssistantText ||
-      "";
-
-    if (assistantText.trim()) {
-      await safeCall(
-        () =>
-          memory?.recordAssistantMessage?.(assistantText, {
-            messageId,
-            interrupted,
-            error: errorObj ? String(errorObj) : null,
-          }),
-        null,
-        "memory.recordAssistantMessage"
-      );
-    }
+    const turnResult = await runAgentTurn({
+      inputText: trimmed,
+      messageId,
+      handlers,
+      assistantMeta: {},
+      assistantRecordLabel: "memory.recordAssistantMessage",
+      shouldTouchMemory: false,
+    });
 
     await safeCall(
       () =>
         memory?.rememberTurn?.({
           messageId,
           user: trimmed,
-          assistant: assistantText,
-          interrupted,
-          hadError: Boolean(errorObj),
+          assistant: turnResult.text,
+          interrupted: Boolean(turnResult.interrupted),
+          hadError: Boolean(turnResult.error),
         }),
       null,
       "memory.rememberTurn"
     );
 
     return {
-      ...result,
-      text: assistantText,
+      status: turnResult.status,
+      text: turnResult.text,
+      error: turnResult.error,
     };
   }
 
-  function registerContactCallback(cb) {
-    contactCallback = cb;
-  }
-
-  function formatBattleCommentPrefix(timestamp, epoch) {
-    const d = new Date(timestamp);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    const epochText = epoch != null ? `epoch ${epoch}` : "epoch ?";
-    return `(${hh}:${mm}:${ss} || ${epochText})`;
-  }
-
-  async function onLossUpdate(lossData) {
-    const now = Date.now();
-
-    if (!lossData || lossData.length === 0) return null;
-    if (now - lastPerceptionTime < COOLDOWN_MS) return null;
-
-    const result = perception.comment(lossData);
-    const { comment, feature, epoch } = result;
-
-    if (!comment || feature === "none") return null;
-
-    if (feature === lastPerceptionFeature || comment === lastPerceptionComment) {
-      return null;
-    }
-
-    lastPerceptionTime = now;
-    lastPerceptionFeature = feature;
-    lastPerceptionComment = comment;
-
-    setTrainingStatus("running", feature);
-
-    const payload = {
-      comment: `${formatBattleCommentPrefix(now, epoch)} ${comment}`,
-      rawComment: comment,
-      feature,
-      epoch,
-      timestamp: now,
-    };
-
-    await safeCall(
-      () =>
-        memory?.recordTrainingObservation?.({
-          type: "perception_comment",
-          feature,
-          epoch,
-          comment,
-          timestamp: now,
-        }),
-      null,
-      "memory.recordTrainingObservation"
-    );
-
-    if (contactCallback) {
-      contactCallback(payload);
-    }
-
-    return payload;
-  }
+  const trainingCommentaryPipeline = createTrainingCommentaryPipeline({
+    perception,
+    perceptionGate,
+    setTrainingStatus,
+    recordObservation: (observation) =>
+      memory?.recordTrainingObservation?.(observation),
+    emitContactFeed,
+    safeCall,
+    formatBattleCommentPrefix,
+  });
 
   function interrupt() {
     return language.interrupt();
@@ -583,16 +488,132 @@ export function createMikiAgent({
     return language.isBusy?.() ?? false;
   }
 
+  /**
+   * Agent 启动阶段。
+   *
+   * 语义：
+   * - memory.boot 归入这里，不在 create 时偷跑
+   * - 如果 memory 中存在“可恢复上下文”，就执行一次 remind
+   * - UI 有历史消息，不等于 LLM 已有上下文
+   * - 只有关键步骤成功，才把 hasStarted 置 true
+   *
+   * 这样做可以修复之前那个问题：
+   * - boot remind 失败了，但 hasStarted 已经被置 true
+   * - 导致之后再也不会尝试恢复上下文
+   */
+  async function start() {
+    if (hasStarted) return;
+    if (startPromise) return startPromise;
+
+    startPromise = (async () => {
+      await ensureMemoryBooted();
+
+      await safeCall(
+        () => memory?.archiveStaleWakeCyclesIfNeeded?.(),
+        null,
+        "memory.archiveStaleWakeCyclesIfNeeded"
+      );
+
+      /**
+       * 这里故意不用 getBootstrapMessages() 来判断。
+       * 因为 getBootstrapMessages() 会包含 boot_remind，
+       * 而我们真正关心的是：是否存在“原始可恢复上下文”。
+       */
+      const recoverableMessages = await collectRecentMessagesForRemind(memory, 3);
+      const hasRecoverableContext = recoverableMessages.length > 0;
+
+      console.log(
+        "[MikiAgent.start]",
+        "recoverableMessages =",
+        recoverableMessages.length,
+        "| action =",
+        hasRecoverableContext ? "boot_remind" : "skip_remind"
+      );
+
+      let remindResult = {
+        status: "idle",
+        text: "",
+        error: null,
+      };
+
+      if (hasRecoverableContext) {
+        remindResult = await safeCall(
+          () => remind(),
+          {
+            status: "error",
+            text: "",
+            error: new Error("boot remind failed"),
+          },
+          "agent.remindOnBoot"
+        );
+      }
+
+      /**
+       * 关键修正：
+       * - 只有在无需 remind，或 remind 成功/至少非 error 时，才标记启动完成
+       * - 如果 remind 失败，hasStarted 仍保持 false，后续可以重试
+       */
+      const bootSucceeded =
+        !hasRecoverableContext ||
+        (remindResult && remindResult.status !== "error");
+
+      if (bootSucceeded) {
+        hasStarted = true;
+      }
+    })();
+
+    try {
+      return await startPromise;
+    } finally {
+      startPromise = null;
+    }
+  }
+
+  function subscribeStage(listener) {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+
+    stageListeners.add(listener);
+
+    return () => {
+      stageListeners.delete(listener);
+    };
+  }
+
+  function setStagePreset(nextStageProps = {}) {
+    externality.patch(nextStageProps);
+  }
+
+  function resetStage() {
+    externality.patch(DEFAULT_STAGE_PROPS);
+  }
+
+  function subscribeContactFeed(cb) {
+    if (typeof cb !== "function") {
+      return () => {};
+    }
+
+    contactListeners.add(cb);
+
+    return () => {
+      contactListeners.delete(cb);
+    };
+  }
+
   function getDebugAPI() {
     return {
       getCharacterState: () => character.getState?.(),
       dispatchCharacter: (event) => character.dispatch(event),
 
+      /**
+       * 这些是开发调试入口，不建议业务层依赖。
+       */
       getMemory: () => memory,
       dumpMemoryDB: () => memory?.dump?.(),
 
       resetMemoryDB: async () => {
-        const mod = await import("./memory");
+        const mod = await import("./memory/memoryModule.js");
         mod.resetMemoryDB?.();
       },
 
@@ -605,7 +626,8 @@ export function createMikiAgent({
           {
             onThinkingStart: () => console.log("[debug hear] thinking"),
             onTextChunk: (chunk) => console.log("[debug hear] chunk:", chunk),
-            onTextUpdate: (fullText) => console.log("[debug hear] full:", fullText),
+            onTextUpdate: (fullText) =>
+              console.log("[debug hear] full:", fullText),
             onDone: (finalText) => console.log("[debug hear] done:", finalText),
             onInterrupted: (partialText) =>
               console.log("[debug hear] interrupted:", partialText),
@@ -634,6 +656,13 @@ export function createMikiAgent({
 
       userActive: (source = "debug") => setUserActive(source),
       setCharacterMode: (nextMode) => setAppMode(nextMode),
+      setTrainingStatus: (status = "idle", semantic = "idle") =>
+        setTrainingStatus(status, semantic),
+
+      perceptionGate: {
+        getState: () => perceptionGate.getState(),
+        reset: () => perceptionGate.reset(),
+      },
 
       externality: {
         getState: () => externality.getState(),
@@ -641,49 +670,40 @@ export function createMikiAgent({
         setPosition: (position) => externality.setPosition(position),
         setScale: (scale) => externality.setScale(scale),
         patch: (partial) => externality.patch(partial),
-        reset: () =>
-          externality.patch({
-            modelKey: "normal",
-            position: { x: 0.5, y: 0.85 },
-            scale: 1.0,
-          }),
+        reset: () => resetStage(),
       },
     };
   }
 
-  if (!bootRemindStarted) {
-    bootRemindStarted = true;
-    bootRemindPromise = Promise.resolve().then(() =>
-      safeCall(
-        () => remind(),
-        {
-          status: "error",
-          text: "",
-          error: new Error("boot remind failed"),
-        },
-        "agent.remindOnBoot"
-      )
-    );
-  }
-
   return {
-    hear,
-    remind,
-    interrupt,
-    isBusy,
-    memory,
-    bootRemindPromise,
+    chat: {
+      sendUserMessage: hear,
+      runRemindTurn: remind,
+      interrupt,
+      isBusy,
+      getBootstrapMessages,
+    },
 
-    setAppMode,
-    setTrainingStatus,
-    setUserActive,
+    app: {
+      start,
+      setMode: setAppMode,
+      notifyUserActivity: setUserActive,
+    },
 
-    getStageProps,
+    battle: {
+      submitLossData: trainingCommentaryPipeline.handleLossUpdate,
+      subscribeContactFeed,
+      setTrainingSemantic: setTrainingStatus,
+      interrupt,
+    },
+
+    stage: {
+      getSnapshot: getStageProps,
+      subscribe: subscribeStage,
+      setPreset: setStagePreset,
+      reset: resetStage,
+    },
+
     getDebugAPI,
-
-    externality,
-    perception,
-    onLossUpdate,
-    registerContactCallback,
   };
 }

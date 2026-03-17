@@ -1,10 +1,14 @@
-import { expressionEngine } from "./expressionEngine";
-import { motionEngine } from "./motionEngine";
-import { speechEngine } from "./speechEngine";
+import { expressionEngine } from "./engines/expressionEngine";
+import { motionEngine } from "./engines/motionEngine";
+import { speechEngine } from "./engines/speechEngine";
 
 const DEBUG_EMOTION_ENGINE = true;
 
-class EmotionEngineCoordinator {
+/**
+ * 这个文件本质上是 body 层协调器。
+ * 名字先不动，避免上层 import 改动。
+ */
+class BodyEngineCoordinator {
   constructor() {
     this.mode = "chat";
     this.autonomousBehaviorEnabled = false;
@@ -37,6 +41,7 @@ class EmotionEngineCoordinator {
     speechEngine.setMode(mode);
 
     this.emit({ type: "mode", mode });
+    return true;
   }
 
   setAutonomousBehaviorEnabled(enabled) {
@@ -45,6 +50,8 @@ class EmotionEngineCoordinator {
     this.log("AUTONOMOUS_BEHAVIOR", {
       enabled: this.autonomousBehaviorEnabled,
     });
+
+    return true;
   }
 
   setExpressionById(expressionId, options = {}) {
@@ -60,15 +67,22 @@ class EmotionEngineCoordinator {
   }
 
   interrupt(options = {}) {
+    /**
+     * 目前 interrupt 的 body 语义主要由 speechEngine 统一触发：
+     * - 停止嘴型
+     * - 调 live2dController.interrupt
+     */
     return speechEngine.interrupt(options);
   }
 
+  /**
+   * 先保留兼容接口，但不再伪装成真的“状态驱动器”。
+   */
   setTypingState(kind = "thinking") {
-    this.log("SET_TYPING_STATE_IGNORED", {
+    this.log("SET_TYPING_STATE_UNIMPLEMENTED", {
       kind,
       autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
     });
-
     return false;
   }
 
@@ -76,30 +90,37 @@ class EmotionEngineCoordinator {
     this.log("USER_ACTIVITY", {
       autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
     });
+    return true;
   }
 
   setBattleState(kind) {
-    this.log("SET_BATTLE_STATE_IGNORED", {
+    this.log("SET_BATTLE_STATE_UNIMPLEMENTED", {
       kind,
       autonomousBehaviorEnabled: this.autonomousBehaviorEnabled,
     });
-
     return false;
   }
 
   reset() {
-    speechEngine.reset();
-    expressionEngine.reset();
-    motionEngine.reset();
+    const speechApplied = speechEngine.reset();
+    const expressionApplied = expressionEngine.reset();
+    const motionApplied = motionEngine.reset();
+
+    const state = this.getCurrentState();
 
     this.emit({
       type: "reset",
-      state: this.getCurrentState(),
+      state,
     });
 
     this.log("RESET", {
-      state: this.getCurrentState(),
+      state,
+      speechApplied,
+      expressionApplied,
+      motionApplied,
     });
+
+    return speechApplied || expressionApplied || motionApplied;
   }
 
   getCurrentState() {
@@ -125,4 +146,4 @@ class EmotionEngineCoordinator {
   }
 }
 
-export const emotionEngine = new EmotionEngineCoordinator();
+export const emotionEngine = new BodyEngineCoordinator();

@@ -1,4 +1,4 @@
-# MIKI Frontend v1.0 — Extinguisher
+# MIKI Frontend v1.1 — Extinguisher
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,7 +6,13 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v1.0 — Extinguisher
+## What's New in 
+
+### v1.1
+
+Remanaged program Structure.
+
+### v1.0 — Extinguisher
 
 - 🧠 **Short-term memory**: Miki now maintains conversation context across messages within a session.
 - 💾 **Long-term memory**: A persistent memory management system allows Miki to remember important facts, project states, and user context across sessions. No more waking up with amnesia every time.

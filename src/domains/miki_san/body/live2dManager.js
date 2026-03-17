@@ -19,13 +19,13 @@ export class Live2DManager {
     this.initialized = false;
 
     this._tickerBound = false;
+    this._loadToken = 0;
 
     this.layoutState = {
       position: { ...DEFAULT_LAYOUT.position },
       scale: DEFAULT_LAYOUT.scale,
     };
 
-    // 仅作调试/状态记录，不直接驱动口型逻辑
     this.speaking = false;
     this.mouthOpen = 0;
   }
@@ -69,38 +69,64 @@ export class Live2DManager {
       throw new Error(`Unknown model key: ${modelKey}`);
     }
 
+    const token = ++this._loadToken;
+    const nextModel = await Live2DModel.from(path, { autoInteract: false });
+
+    /**
+     * 只允许最后一次请求提交。
+     * 避免 normal -> magical -> normal 之类快速切换时旧请求反压回来。
+     */
+    if (token !== this._loadToken) {
+      try {
+        nextModel.destroy();
+      } catch (err) {
+        console.warn("[Live2DManager] stale model destroy failed:", err);
+      }
+      return false;
+    }
+
+    if (!this.app) {
+      try {
+        nextModel.destroy();
+      } catch (err) {
+        console.warn("[Live2DManager] app missing, destroy model failed:", err);
+      }
+      return false;
+    }
+
     if (this.model) {
       try {
         this.app.stage.removeChild(this.model);
-      } catch (e) {
-        console.warn("[Live2DManager] removeChild failed:", e);
+      } catch (err) {
+        console.warn("[Live2DManager] removeChild failed:", err);
       }
 
       try {
         this.model.destroy();
-      } catch (e) {
-        console.warn("[Live2DManager] model destroy failed:", e);
+      } catch (err) {
+        console.warn("[Live2DManager] model destroy failed:", err);
       }
 
       this.model = null;
     }
 
-    const model = await Live2DModel.from(path, { autoInteract: false });
-
-    if (!this.app) {
-      model.destroy();
-      return;
-    }
-
     this.app.stage.removeChildren();
-    this.app.stage.addChild(model);
+    this.app.stage.addChild(nextModel);
 
-    this.model = model;
+    this.model = nextModel;
     this.currentModelKey = modelKey;
 
     this.layout();
-
     live2dController.applyMouthOverride();
+
+    return true;
+  }
+
+  async switchTo(modelKey) {
+    if (this.currentModelKey === modelKey && this.model) {
+      return true;
+    }
+    return this.loadModel(modelKey);
   }
 
   setLayout({
@@ -115,7 +141,9 @@ export class Live2DManager {
         : { ...this.layoutState.position };
 
     const nextScale =
-      typeof scale === "number" && Number.isFinite(scale) ? scale : this.layoutState.scale;
+      typeof scale === "number" && Number.isFinite(scale)
+        ? scale
+        : this.layoutState.scale;
 
     this.layoutState = {
       position: nextPosition,
@@ -137,7 +165,6 @@ export class Live2DManager {
 
     const { position, scale } = this.layoutState;
 
-    // 先按高度进行基准缩放，再乘外部 scale
     const baseScale = h / mh;
     const finalScale = baseScale * scale;
 
@@ -157,24 +184,21 @@ export class Live2DManager {
       (scaledBounds.y + scaledBounds.height) * this.model.scale.y;
   }
 
-  async switchTo(modelKey) {
-    if (this.currentModelKey === modelKey && this.model) return;
-    await this.loadModel(modelKey);
-  }
-
   resize() {
     this.layout();
   }
 
   destroy() {
+    this._loadToken += 1;
+
     if (this.model && this.app) {
       try {
         this.app.stage.removeChild(this.model);
-      } catch (e) {}
+      } catch (err) {}
 
       try {
         this.model.destroy();
-      } catch (e) {}
+      } catch (err) {}
 
       this.model = null;
     }
@@ -184,7 +208,7 @@ export class Live2DManager {
 
       try {
         this.app.destroy(true, true);
-      } catch (e) {}
+      } catch (err) {}
 
       if (view && view.parentNode) {
         view.parentNode.removeChild(view);
@@ -199,41 +223,31 @@ export class Live2DManager {
 
     this.initialized = false;
     this._tickerBound = false;
+    this.currentModelKey = null;
   }
 
   setExpressionByFileName(fileName) {
     if (!this.model) {
       console.warn("[Live2DManager] model not ready");
-      return;
+      return false;
     }
 
     const settings = this.model.internalModel?.settings;
     const expressions = settings?.expressions || settings?.Expressions || [];
 
-    // console.log("[Live2DManager] setExpressionByFileName called:", fileName);
-    // console.log("[Live2DManager] available expressions:", expressions);
-    // console.log("[Live2DManager] model.expression:", typeof this.model.expression);
-    // console.log(
-    //   "[Live2DManager] expressionManager:",
-    //   this.model.internalModel?.expressionManager
-    // );
-
     const targetIndex = expressions.findIndex(
       (exp) => exp.File === fileName || exp.Name === fileName
     );
 
-    // console.log("[Live2DManager] matched expression index:", targetIndex);
-
     if (targetIndex < 0) {
       console.warn("[Live2DManager] expression not found:", fileName);
-      return;
+      return false;
     }
 
     try {
       if (typeof this.model.expression === "function") {
         this.model.expression(targetIndex);
-        //console.log("[Live2DManager] expression applied by model.expression");
-        return;
+        return true;
       }
 
       const expressionManager = this.model.internalModel?.expressionManager;
@@ -242,34 +256,29 @@ export class Live2DManager {
         typeof expressionManager.setExpression === "function"
       ) {
         expressionManager.setExpression(targetIndex);
-        //console.log("[Live2DManager] expression applied by expressionManager");
-        return;
+        return true;
       }
 
       console.warn("[Live2DManager] no expression API available");
+      return false;
     } catch (err) {
       console.error("[Live2DManager] setExpression failed:", err);
+      return false;
     }
   }
 
   playMotionByName(motionName) {
     if (!this.model) {
       console.warn("[Live2DManager] model not ready");
-      return;
+      return false;
     }
 
     const settings = this.model.internalModel?.settings;
     const motions = settings?.motions || settings?.Motions || {};
 
-    // console.log("[Live2DManager] playMotionByName called:", motionName);
-    // console.log("[Live2DManager] available motion groups:", motions);
-    // console.log("[Live2DManager] model.motion:", typeof this.model.motion);
-
     for (const groupName of Object.keys(motions)) {
       const group = motions[groupName];
       if (!Array.isArray(group)) continue;
-
-      // console.log(`[Live2DManager] checking group ${groupName}:`, group);
 
       const index = group.findIndex((m) => {
         return (
@@ -280,39 +289,35 @@ export class Live2DManager {
       });
 
       if (index >= 0) {
-        // console.log(
-        //   `[Live2DManager] matched motion in group=${groupName}, index=${index}`
-        // );
-
         try {
           if (typeof this.model.motion === "function") {
             this.model.motion(groupName, index);
-            //console.log("[Live2DManager] motion applied by model.motion");
-            return;
+            return true;
           }
 
           console.warn("[Live2DManager] no motion API available");
-          return;
+          return false;
         } catch (err) {
           console.error("[Live2DManager] playMotion failed:", err);
-          return;
+          return false;
         }
       }
     }
 
     console.warn("[Live2DManager] motion not found:", motionName);
+    return false;
   }
 
   setMouthOpen(value) {
-    const v = Math.max(0, Math.min(1, Number(value) || 0));
-    this.mouthOpen = v;
-    return this.setParameterValueById("ParamMouthOpenY", v);
+    const next = Math.max(0, Math.min(1, Number(value) || 0));
+    this.mouthOpen = next;
+    return this.setParameterValueById("ParamMouthOpenY", next);
   }
 
   setParameterValueById(paramId, value) {
     if (!this.model) return false;
 
-    const v = Number(value) || 0;
+    const next = Number(value) || 0;
 
     const coreModel =
       this.model?.internalModel?.coreModel ||
@@ -321,7 +326,7 @@ export class Live2DManager {
 
     if (coreModel?.setParameterValueById) {
       try {
-        coreModel.setParameterValueById(paramId, v);
+        coreModel.setParameterValueById(paramId, next);
         return true;
       } catch (err) {
         console.warn(
@@ -357,9 +362,5 @@ export class Live2DManager {
     }
 
     return false;
-  }
-
-  stopMotion() {
-    return this.stopAllMotions();
   }
 }

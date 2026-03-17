@@ -1,7 +1,35 @@
-function createInitialCharacterState() {
-  return {
-    appMode: "chat",
+const DEFAULT_IDLE_MOTION_POOL = ["idle_default", "idle_relaxing"];
+const DEFAULT_IDLE_EXPRESSION_POOL = ["smile", "neutral"];
 
+const DEFAULT_TRAINING_INTENT_MAP = Object.freeze({
+  rapid_drop: { emotion: "smile", motion: "assertive" },
+  plateau: { emotion: "worried", motion: "idle_relaxing" },
+  rebound: { emotion: "righteous_anger", motion: "anger" },
+  stuck: { emotion: "focused", motion: "shy" },
+  normal: { emotion: "neutral", motion: "idle_relaxing" },
+  idle: { emotion: "neutral", motion: null },
+  unknown: { emotion: "angry", motion: "idle_default" },
+});
+
+function pickRandom(items, fallback = null) {
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  const index = Math.floor(Math.random() * items.length);
+  return items[index] ?? fallback;
+}
+
+function stampEvent(event = {}) {
+  const now = Date.now();
+  return {
+    ...event,
+    meta: {
+      ...(event.meta ?? {}),
+      now,
+    },
+  };
+}
+
+export function createInitialCharacterState(now = Date.now()) {
+  return {
     activeIntent: null,
 
     chat: {
@@ -19,15 +47,16 @@ function createInitialCharacterState() {
 
     idle: {
       enabled: true,
-      active: true,
-      lastActiveAt: Date.now(),
+      active: false,
+      lastUserActiveAt: now,
+      startedAt: 0,
       motion: null,
       expression: null,
     },
   };
 }
 
-function makeIntent({
+function createIntent({
   source,
   priority = 0,
   emotion = null,
@@ -35,6 +64,7 @@ function makeIntent({
   speech = false,
   interruptible = true,
   durationMs = null,
+  now = Date.now(),
 }) {
   return {
     source,
@@ -44,82 +74,78 @@ function makeIntent({
     speech,
     interruptible,
     durationMs,
-    createdAt: Date.now(),
+    createdAt: now,
   };
 }
 
-function pickIdleMotion() {
-  return Math.random() < 0.5 ? "idle_default" : "idle_relaxing";
+function createHoldIntent(prevIntent, now = Date.now()) {
+  if (!prevIntent) return null;
+
+  return createIntent({
+    source: prevIntent.source,
+    priority: prevIntent.priority,
+    emotion: prevIntent.emotion ?? null,
+    motion: prevIntent.motion ?? null,
+    speech: false,
+    interruptible: prevIntent.interruptible ?? true,
+    durationMs: prevIntent.durationMs ?? null,
+    now,
+  });
 }
 
-function pickIdleExpression() {
-  return Math.random() < 0.8 ? "smile" : "neutral";
-}
-
-// 修改下面的映射实现这个映射
-// // perception/motorMapping.js
-
-// /**
-//  * 根据 loss 特征映射到 character 的表情和动作
-//  * @param {string} feature - loss 特征
-//  * @returns {{emotion: string, motion: string}}
-//  */
-// export function mapMotorInstruction(feature) {
-//   switch (feature) {
-//     case "rapid_drop":
-//       return { emotion: "smile", motion: "excited" };
-//     case "plateau":
-//       return { emotion: "worried", motion: "idle_relaxing" };
-//     case "rebound":
-//       return { emotion: "righteous_anger", motion: "anger" };
-//     case "stuck":
-//       return { emotion: "focused", motion: "shy" };
-//     default:
-//       return { emotion: "angry", motion: "idle_default" };
-//   }
-// }
-
-function mapTrainingSemanticToEmotion(semantic) {
-  switch (semantic) {
-    case 'rapid_drop':
-      return 'smile';
-    case 'plateau':
-      return 'worried';
-    case 'rebound':
-      return 'righteous_anger';
-    case 'stuck':
-      return 'focused';
-    case 'normal':
-      return 'neutral';
-    default:
-      return 'angry';
-  }
-}
-
-function mapTrainingSemanticToMotion(semantic) {
-  switch (semantic) {
-    case 'rapid_drop':
-      return 'assertive';
-    case 'plateau':
-      return 'idle_relaxing';
-    case 'rebound':
-      return 'anger';
-    case 'stuck':
-      return 'shy';
-    case 'normal':
-      return 'idle_relaxing';
-    default:
-      return 'idle_default';
-  }
-}
-
-function reduceState(state, event) {
-  switch (event.type) {
-    case "APP_MODE_CHANGED":
-      return {
-        ...state,
-        appMode: event.mode,
+/**
+ * 把 training semantic -> 角色语义 映射抽成可注入 resolver。
+ * 后面你如果想单独拆到 trainingPolicy.js，直接把这个 resolver 挪出去即可。
+ */
+export function createTrainingIntentResolver(intentMap = DEFAULT_TRAINING_INTENT_MAP) {
+  return function resolveTrainingIntent({ training }) {
+    const semantic = training?.semantic ?? "unknown";
+    const mapped =
+      intentMap[semantic] ??
+      intentMap.unknown ?? {
+        emotion: "angry",
+        motion: "idle_default",
       };
+
+    return {
+      priority: 50,
+      emotion: mapped.emotion ?? null,
+      motion: mapped.motion ?? null,
+      speech: false,
+      interruptible: true,
+    };
+  };
+}
+
+export const defaultTrainingIntentResolver = createTrainingIntentResolver();
+
+export function defaultPickIdlePresentation({
+  idleMotionPool = DEFAULT_IDLE_MOTION_POOL,
+  idleExpressionPool = DEFAULT_IDLE_EXPRESSION_POOL,
+} = {}) {
+  return {
+    motion: pickRandom(idleMotionPool, null),
+    expression: pickRandom(idleExpressionPool, null),
+  };
+}
+
+/**
+ * reduceState:
+ * 只负责“事件如何更新状态”
+ *
+ * 不负责：
+ * - 决定当前该播什么 intent
+ * - 做 mapper 映射
+ * - 生成随机 idle 动作/表情
+ * - 触发任何 runtime side effect
+ */
+export function reduceState(state, event) {
+  const now = event?.meta?.now ?? Date.now();
+
+  switch (event?.type) {
+    case "APP_MODE_CHANGED":
+      // 兼容旧调用方；当前 orchestrator 已不再消费 appMode。
+      return state;
 
     case "CHAT_BEGIN":
       return {
@@ -128,15 +154,16 @@ function reduceState(state, event) {
           ...state.chat,
           active: true,
           speaking: false,
-          lastTokenAt: Date.now(),
+          lastTokenAt: now,
           pendingEmotion: null,
           pendingMotion: null,
         },
         idle: {
           ...state.idle,
           active: false,
+          startedAt: 0,
           motion: null,
-          lastActiveAt: Date.now(),
+          expression: null,
         },
       };
 
@@ -147,12 +174,14 @@ function reduceState(state, event) {
           ...state.chat,
           active: true,
           speaking: true,
-          lastTokenAt: Date.now(),
+          lastTokenAt: now,
         },
         idle: {
           ...state.idle,
           active: false,
-          lastActiveAt: Date.now(),
+          startedAt: 0,
+          motion: null,
+          expression: null,
         },
       };
 
@@ -161,11 +190,7 @@ function reduceState(state, event) {
         ...state,
         chat: {
           ...state.chat,
-          lastTokenAt: Date.now(),
-        },
-        idle: {
-          ...state.idle,
-          lastActiveAt: Date.now(),
+          lastTokenAt: now,
         },
       };
 
@@ -174,8 +199,8 @@ function reduceState(state, event) {
         ...state,
         chat: {
           ...state.chat,
-          pendingEmotion: event.value,
-          lastTokenAt: Date.now(),
+          pendingEmotion: event.value ?? null,
+          lastTokenAt: now,
         },
       };
 
@@ -184,33 +209,33 @@ function reduceState(state, event) {
         ...state,
         chat: {
           ...state.chat,
-          pendingMotion: event.value,
-          lastTokenAt: Date.now(),
+          pendingMotion: event.value ?? null,
+          lastTokenAt: now,
         },
       };
 
-      case "CHAT_END":
-        return {
-          ...state,
-          chat: {
-            ...state.chat,
-            active: false,
-            speaking: false,
-            pendingEmotion: null,
-            pendingMotion: null,
-          },
-          idle: {
-            ...state.idle,
-            active: true,
-            motion: null,   // 关键：这里必须清空
-            expression: null,
-            lastActiveAt: Date.now(),
-          },
-        };
+    case "CHAT_END":
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          active: false,
+          speaking: false,
+          pendingEmotion: null,
+          pendingMotion: null,
+        },
+        idle: {
+          ...state.idle,
+          active: false,
+          startedAt: 0,
+          motion: null,
+          expression: null,
+        },
+      };
+
     case "TRAINING_STATUS": {
       const nextStatus = event.payload?.status ?? "idle";
       const nextSemantic = event.payload?.semantic ?? "idle";
-      const trainingRunning = nextStatus === "running";
 
       return {
         ...state,
@@ -220,10 +245,10 @@ function reduceState(state, event) {
         },
         idle: {
           ...state.idle,
-          active: !trainingRunning && !state.chat.active,
-          motion: trainingRunning ? null : state.idle.motion,
-          expression: trainingRunning ? null : state.idle.expression,
-          lastActiveAt: Date.now(),
+          active: false,
+          startedAt: 0,
+          motion: null,
+          expression: null,
         },
       };
     }
@@ -233,11 +258,15 @@ function reduceState(state, event) {
         ...state,
         idle: {
           ...state.idle,
-          lastActiveAt: Date.now(),
+          lastUserActiveAt: now,
+          active: false,
+          startedAt: 0,
+          motion: null,
+          expression: null,
         },
       };
 
-    case "IDLE_TICK":
+    case "IDLE_ENTER":
       if (!state.idle.enabled) return state;
       if (state.chat.active) return state;
       if (state.training.status === "running") return state;
@@ -247,9 +276,9 @@ function reduceState(state, event) {
         idle: {
           ...state.idle,
           active: true,
-          motion: pickIdleMotion(),
-          lastActiveAt: Date.now(),
-          expression: pickIdleExpression(),
+          startedAt: now,
+          motion: event.payload?.motion ?? null,
+          expression: event.payload?.expression ?? null,
         },
       };
 
@@ -258,99 +287,147 @@ function reduceState(state, event) {
   }
 }
 
-  function resolveIntent(state, prevIntent) {
-    if (state.chat.active && !state.chat.speaking) {
-      return makeIntent({
-        source: "chat",
-        priority: 100,
-        emotion: "focused",
-        motion: "shy",
-        speech: false,
-        interruptible: true,
-      });
-    }
+/**
+ * resolveIntent:
+ * 只负责“从当前状态推导当前想呈现什么 intent”
+ *
+ * 不负责：
+ * - 修改 state
+ * - 触发 runtime side effect
+ * - 安排 idle 定时器
+ * - 生成随机 idle 候选
+ */
+export function resolveIntent(
+  state,
+  prevIntent,
+  { trainingIntentResolver = defaultTrainingIntentResolver } = {}
+) {
+  const now = Date.now();
 
-    if (state.chat.active && state.chat.speaking) {
-      return makeIntent({
-        source: "chat",
-        priority: 100,
-        emotion: state.chat.pendingEmotion || "speaking",
-        motion: state.chat.pendingMotion || null,
-        speech: true,
-        interruptible: true,
-      });
-    }
-
-    if (state.training.status === "running") {
-      return makeIntent({
-        source: "training",
-        priority: 50,
-        emotion: mapTrainingSemanticToEmotion(state.training.semantic),
-        motion: mapTrainingSemanticToMotion(state.training.semantic),
-        speech: false,
-        interruptible: true,
-      });
-    }
-
-    // 只有 idle tick 真正给了动作，才进入 idle intent
-    if (state.idle.active && state.idle.motion) {
-      return makeIntent({
-        source: "idle",
-        priority: 10,
-        emotion: "smile",
-        motion: state.idle.motion,
-        speech: false,
-        interruptible: true,
-      });
-    }
-
-    // 关键：默认保留上一帧表情/动作，只关嘴
-    if (prevIntent) {
-      return {
-        ...prevIntent,
-        speech: false,
-      };
-    }
-
-    return makeIntent({
-      source: "idle",
-      priority: 10,
-      emotion: "smile",
-      motion: null,
-      speech: false,
+  if (state.chat.active && state.chat.speaking) {
+    return createIntent({
+      source: "chat",
+      priority: 100,
+      emotion: state.chat.pendingEmotion || "speaking",
+      motion: state.chat.pendingMotion || null,
+      speech: true,
       interruptible: true,
+      now,
     });
   }
 
-function isSameIntent(a, b) {
+  if (state.chat.active && !state.chat.speaking) {
+    return createIntent({
+      source: "chat",
+      priority: 100,
+      emotion: state.chat.pendingEmotion || "focused",
+      motion: state.chat.pendingMotion || "shy",
+      speech: false,
+      interruptible: true,
+      now,
+    });
+  }
+
+  if (state.training.status === "running") {
+    const trainingIntent =
+      trainingIntentResolver?.({
+        training: state.training,
+        state,
+        prevIntent,
+      }) ?? {};
+
+    return createIntent({
+      source: "training",
+      priority: trainingIntent.priority ?? 50,
+      emotion: trainingIntent.emotion ?? null,
+      motion: trainingIntent.motion ?? null,
+      speech: trainingIntent.speech ?? false,
+      interruptible: trainingIntent.interruptible ?? true,
+      durationMs: trainingIntent.durationMs ?? null,
+      now,
+    });
+  }
+
+  if (state.idle.active && (state.idle.expression || state.idle.motion)) {
+    return createIntent({
+      source: "idle",
+      priority: 10,
+      emotion: state.idle.expression ?? null,
+      motion: state.idle.motion ?? null,
+      speech: false,
+      interruptible: true,
+      now,
+    });
+  }
+
+  /**
+   * 没有新的强语义来源时，保留上一帧外观，只关嘴。
+   * 这样角色不会突然抽回默认态。
+   */
+  if (prevIntent && (prevIntent.emotion || prevIntent.motion)) {
+    return createHoldIntent(prevIntent, now);
+  }
+
+  return createIntent({
+    source: "baseline",
+    priority: 0,
+    emotion: "neutral",
+    motion: null,
+    speech: false,
+    interruptible: true,
+    now,
+  });
+}
+
+export function isSameIntent(a, b) {
   if (!a || !b) return false;
+
   return (
     a.source === b.source &&
     a.priority === b.priority &&
     a.emotion === b.emotion &&
     a.motion === b.motion &&
     a.speech === b.speech &&
-    a.interruptible === b.interruptible
+    a.interruptible === b.interruptible &&
+    a.durationMs === b.durationMs
   );
 }
 
-function applyIntent(intent, prevIntent, { runtimeBridge, emotionMapper, motionMapper }) {
+function applyIntent(
+  intent,
+  prevIntent,
+  { runtimeBridge, emotionMapper, motionMapper }
+) {
   const emotionChanged = !prevIntent || intent.emotion !== prevIntent.emotion;
   const motionChanged = !prevIntent || intent.motion !== prevIntent.motion;
   const speechChanged = !prevIntent || intent.speech !== prevIntent.speech;
 
-  if (emotionChanged && intent.emotion) {
-    runtimeBridge.apply({
-      type: "SET_EMOTION",
-      value: emotionMapper(intent.emotion),
-    });
+  if (emotionChanged && intent.emotion != null) {
+    const mappedEmotion =
+      typeof emotionMapper === "function"
+        ? emotionMapper(intent.emotion)
+        : intent.emotion;
+
+    if (mappedEmotion != null) {
+      runtimeBridge.apply({
+        type: "SET_EMOTION",
+        value: mappedEmotion,
+      });
+    }
   }
 
-  if (motionChanged && intent.motion) {
-    runtimeBridge.apply({
-      type: "PLAY_MOTION",
-      value: motionMapper(intent.motion),
-    });
+  if (motionChanged && intent.motion != null) {
+    const mappedMotion =
+      typeof motionMapper === "function"
+        ? motionMapper(intent.motion)
+        : intent.motion;
+
+    if (mappedMotion != null) {
+      runtimeBridge.apply({
+        type: "PLAY_MOTION",
+        value: mappedMotion,
+      });
+    }
   }
 
   if (speechChanged) {
@@ -358,27 +435,20 @@ function applyIntent(intent, prevIntent, { runtimeBridge, emotionMapper, motionM
       type: intent.speech ? "SET_SPEECH" : "STOP_SPEECH",
     });
   }
-
-  // console.log(
-  //   "[CharacterIntent]",
-  //   intent.source,
-  //   "emotion=",
-  //   intent.emotion,
-  //   "motion=",
-  //   intent.motion,
-  //   "speech=",
-  //   intent.speech
-  // );
 }
+
 export function createCharacterOrchestrator({
   runtimeBridge,
   emotionMapper,
   motionMapper,
-  idleIntervalMs = 4000,
-}) {
+  idleDelayMs = 4000,
+  idleMotionPool = DEFAULT_IDLE_MOTION_POOL,
+  idleExpressionPool = DEFAULT_IDLE_EXPRESSION_POOL,
+  pickIdlePresentation = defaultPickIdlePresentation,
+  trainingIntentResolver = defaultTrainingIntentResolver,
+} = {}) {
   let state = createInitialCharacterState();
   const listeners = new Set();
-
   let idleTimer = null;
 
   function getState() {
@@ -392,7 +462,11 @@ export function createCharacterOrchestrator({
 
   function emit() {
     for (const listener of listeners) {
-      listener(state);
+      try {
+        listener(state);
+      } catch (err) {
+        console.error("[CharacterOrchestrator] listener error:", err);
+      }
     }
   }
 
@@ -403,27 +477,60 @@ export function createCharacterOrchestrator({
     }
   }
 
+  /**
+   * 只有在：
+   * - 未处于 chat
+   * - 未处于 training running
+   * - 当前还没进入 idle
+   * 的情况下，才根据“距离上次 USER_ACTIVE 的时间”安排 idle。
+   */
   function scheduleIdleIfNeeded() {
     clearIdleTimer();
 
     if (!state.idle.enabled) return;
+    if (state.idle.active) return;
     if (state.chat.active) return;
     if (state.training.status === "running") return;
 
+    const now = Date.now();
+    const inactiveForMs = now - state.idle.lastUserActiveAt;
+    const waitMs = Math.max(0, idleDelayMs - inactiveForMs);
+
     idleTimer = setTimeout(() => {
-      dispatch({ type: "IDLE_TICK" });
-    }, idleIntervalMs);
+      if (!state.idle.enabled) return;
+      if (state.idle.active) return;
+      if (state.chat.active) return;
+      if (state.training.status === "running") return;
+
+      const presentation =
+        pickIdlePresentation?.({
+          state,
+          idleMotionPool,
+          idleExpressionPool,
+        }) ?? {};
+
+      dispatch({
+        type: "IDLE_ENTER",
+        payload: {
+          motion: presentation.motion ?? null,
+          expression: presentation.expression ?? null,
+        },
+      });
+    }, waitMs);
   }
 
-  function dispatch(event) {
-    const prevState = state;
+  function dispatch(event = {}) {
     const prevIntent = state.activeIntent;
+    const nextEvent = stampEvent(event);
 
-    state = reduceState(state, event);
-    const nextIntent = resolveIntent(state, prevIntent);
+    state = reduceState(state, nextEvent);
+
+    const nextIntent = resolveIntent(state, prevIntent, {
+      trainingIntentResolver,
+    });
 
     if (!isSameIntent(prevIntent, nextIntent)) {
-      applyIntent(nextIntent,prevIntent, {
+      applyIntent(nextIntent, prevIntent, {
         runtimeBridge,
         emotionMapper,
         motionMapper,
@@ -435,22 +542,10 @@ export function createCharacterOrchestrator({
       activeIntent: nextIntent,
     };
 
-    // console.log(
-    //   "[CharacterEvent]",
-    //   { time: Date.now() },
-    //   event.type,
-    //   event.value ?? "",
-    //   event.messageId ?? "",
-    //   event.token ?? ""
-    // );
-    // console.log("[CharacterState:before]", prevState);
-    // console.log("[CharacterState:after]", state);
-
     emit();
     scheduleIdleIfNeeded();
   }
 
-  // 初始化后就开始 idle 调度
   scheduleIdleIfNeeded();
 
   return {

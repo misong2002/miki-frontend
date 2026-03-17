@@ -1,65 +1,105 @@
-// perception/featureDetection.js
 import { PERCEPTION_CONFIG } from "./perceptionConfig.js";
+import {
+  toFiniteLossSeries,
+  head,
+  tail,
+  mean,
+} from "./windowUtils.js";
 
 /**
- * 检测 loss 曲线特征（无状态）
- * 输入数据应当已经是统一截取后的 recent window
+ * 纯 detector：
+ * - 输入：recent window
+ * - 输出：raw feature
+ *
+ * 不做：
+ * - 慢特征累计
+ * - comment 生成
+ * - 状态更新
  */
 export function detectFeatures(lossData) {
-  const N = lossData?.length ?? 0;
-  if (!lossData || N < PERCEPTION_CONFIG.MIN_POINTS) return "none";
+  const series = toFiniteLossSeries(lossData);
+  const N = series.length;
 
-  const losses = lossData.map((d) => Number(d.loss)).filter(Number.isFinite);
-  if (losses.length < PERCEPTION_CONFIG.MIN_POINTS) return "normal_candidate";
+  if (N < PERCEPTION_CONFIG.MIN_POINTS) {
+    return "none";
+  }
+
+  const losses = series.map((d) => d.loss);
+  if (losses.length < PERCEPTION_CONFIG.MIN_POINTS) {
+    return "none";
+  }
+
+  const firstLoss = losses[0];
+  const lastLoss = losses[losses.length - 1];
 
   const maxLoss = Math.max(...losses);
   const minLoss = Math.min(...losses);
   const globalRange = Math.max(maxLoss - minLoss, 1e-8);
 
-  const firstLoss = losses[0];
-  const lastLoss = losses[losses.length - 1];
+  const earlyValues = head(
+    losses,
+    Math.min(PERCEPTION_CONFIG.EARLY_SEGMENT_SIZE, losses.length)
+  );
+  const lateValues = tail(
+    losses,
+    Math.min(PERCEPTION_CONFIG.LATE_SEGMENT_SIZE, losses.length)
+  );
 
-  const meanLoss = losses.reduce((a, b) => a + b, 0) / losses.length;
-  const slope = (lastLoss - firstLoss);
+  const earlyLossMean = mean(earlyValues);
+  const lateLossMean = mean(lateValues);
+  const meanLoss = mean(losses);
 
+  if (
+    !Number.isFinite(firstLoss) ||
+    !Number.isFinite(lastLoss) ||
+    !Number.isFinite(globalRange) ||
+    !Number.isFinite(earlyLossMean) ||
+    !Number.isFinite(lateLossMean) ||
+    !Number.isFinite(meanLoss)
+  ) {
+    return "none";
+  }
+
+  /**
+   * rebound:
+   * 起点已经很低，但窗口里出现了显著抬升。
+   */
   if (firstLoss < 0.3 * maxLoss && globalRange > firstLoss) {
-    // console.log("[Feature Detection]: Rebound Detected", {
-    //   firstLoss,
-    //   lastLoss,
-    //   maxLoss,
-    //   minLoss,
-    //   globalRange,
-    // });
     return "rebound";
   }
 
+  /**
+   * rapid_drop:
+   * 末端显著低于开头，并且下降幅度相对整个窗口波动范围足够大。
+   */
   if (
     lastLoss < 0.3 * firstLoss &&
     firstLoss - lastLoss > 0.2 * globalRange
   ) {
-    // console.log("[Feature Detection]: Rapid Drop Detected", {
-    //   firstLoss,
-    //   lastLoss,
-    //   globalRange,
-    // });
     return "rapid_drop";
   }
 
-  if (Math.abs(slope) < 0.01 && meanLoss > 3 * globalRange && maxLoss >1.05*firstLoss) {
-    // console.log("[Feature Detection]: Plateau Candidate Detected", {
-    //   slope,
-    //   meanLoss,
-    //   globalRange,
-    // });
+  /**
+   * plateau_candidate:
+   * 前后均值差不多，但整体 loss 基线高于波动尺度很多。
+   */
+  if (
+    lateLossMean > earlyLossMean * 0.99 &&
+    meanLoss > 3 * globalRange &&
+    maxLoss > 1.05 * firstLoss
+  ) {
     return "plateau_candidate";
   }
 
-  if (Math.abs(slope) < 1 && meanLoss < 3 * globalRange && maxLoss > 1.1 * firstLoss) {
-    // console.log("[Feature Detection]: Stuck Candidate Detected", {
-    //   slope,
-    //   meanLoss,
-    //   globalRange,
-    // });
+  /**
+   * stuck_candidate:
+   * 前后均值差不多，但整体波动幅度相对 mean 不算太小。
+   */
+  if (
+    lateLossMean > earlyLossMean * 0.99 &&
+    meanLoss < 3 * globalRange &&
+    maxLoss > 1.1 * firstLoss
+  ) {
     return "stuck_candidate";
   }
 

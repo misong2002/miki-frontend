@@ -1,19 +1,17 @@
-import { SAYAKA_EXPRESSIONS, SAYAKA_MOTIONS } from "./sayakaCatalog";
+import {
+  getExpressionFileById,
+  getMotionFileById,
+} from "./types/sayakaCatalog";
 
 class Live2DController {
   constructor() {
     this.manager = null;
-
-    // 口部覆盖状态
     this.speaking = false;
     this.mouthOverrideValue = 0;
   }
 
   bindManager(manager) {
-    this.manager = manager;
-    //console.log("[Live2DController] manager bound:", manager);
-
-    // 新 manager 绑定后立刻同步一次当前口型状态
+    this.manager = manager ?? null;
     this.applyMouthOverride();
   }
 
@@ -22,8 +20,8 @@ class Live2DController {
   }
 
   setExpressionById(expressionId) {
-    const fileName = SAYAKA_EXPRESSIONS[String(expressionId)];
-    //console.log("[Live2DController] setExpressionById:", expressionId, fileName);
+    const nextId = String(expressionId);
+    const fileName = getExpressionFileById(nextId);
 
     if (!fileName) {
       console.warn("[Live2DController] unknown expression id:", expressionId);
@@ -35,13 +33,17 @@ class Live2DController {
       return false;
     }
 
-    this.manager.setExpressionByFileName(fileName);
-    return true;
+    try {
+      return this.manager.setExpressionByFileName(fileName) === true;
+    } catch (err) {
+      console.warn("[Live2DController] setExpressionById failed:", err);
+      return false;
+    }
   }
 
   playMotionById(motionId) {
-    const fileName = SAYAKA_MOTIONS[String(motionId)];
-    //console.log("[Live2DController] playMotionById:", motionId, fileName);
+    const nextId = String(motionId);
+    const fileName = getMotionFileById(nextId);
 
     if (!fileName) {
       console.warn("[Live2DController] unknown motion id:", motionId);
@@ -53,26 +55,30 @@ class Live2DController {
       return false;
     }
 
-    this.manager.playMotionByName(fileName);
-    return true;
+    try {
+      return this.manager.playMotionByName(fileName) === true;
+    } catch (err) {
+      console.warn("[Live2DController] playMotionById failed:", err);
+      return false;
+    }
   }
 
   /**
-   * 说话开关只维护状态，不假设 manager 一定有 speaking API。
-   * 真正的嘴型由 mouth override 在每帧刷新时接管。
+   * 这里只维护 speaking 状态。
+   * 真正的嘴型值由 mouth override + manager ticker 每帧覆盖。
    */
   setSpeaking(active) {
     this.speaking = !!active;
-    //console.log("[Live2DController] setSpeaking:", this.speaking);
 
     if (!this.speaking) {
       this.mouthOverrideValue = 0;
     }
 
-    // 先立刻尝试写一次；之后 manager ticker 会持续刷新
-    this.applyMouthOverride();
+    const applied = this.applyMouthOverride();
 
-    if (!this.hasManager()) return false;
+    if (!this.hasManager()) {
+      return applied;
+    }
 
     if (typeof this.manager.setSpeaking === "function") {
       try {
@@ -82,24 +88,19 @@ class Live2DController {
       }
     }
 
-    return true;
+    return applied;
   }
 
   /**
-   * 更新“目标嘴型值”，不再只是一次性碰运气写值。
-   * 真正稳定生效依赖 applyMouthOverride() 的每帧覆盖。
+   * 只更新目标嘴型值。
+   * 落到模型上的动作由 applyMouthOverride 统一完成。
    */
   setMouthOpen(value) {
-    const v = Math.max(0, Math.min(1, Number(value) || 0));
-    this.mouthOverrideValue = v;
-
-    // 先立刻尝试写一次，减少体感延迟
+    const next = Math.max(0, Math.min(1, Number(value) || 0));
+    this.mouthOverrideValue = next;
     return this.applyMouthOverride();
   }
 
-  /**
-   * 每帧调用，保证嘴部参数在 motion 更新之后仍被覆盖到模型上。
-   */
   applyMouthOverride() {
     if (!this.hasManager()) {
       return false;
@@ -107,21 +108,20 @@ class Live2DController {
 
     const finalValue = this.speaking ? this.mouthOverrideValue : 0;
 
-    // 1. 优先用 manager 暴露的统一接口
     if (typeof this.manager.setMouthOpen === "function") {
       try {
-        this.manager.setMouthOpen(finalValue);
-        return true;
+        return this.manager.setMouthOpen(finalValue) === true;
       } catch (err) {
         console.warn("[Live2DController] manager.setMouthOpen failed:", err);
       }
     }
 
-    // 2. manager 的通用参数接口
     if (typeof this.manager.setParameterValueById === "function") {
       try {
-        this.manager.setParameterValueById("ParamMouthOpenY", finalValue);
-        return true;
+        return (
+          this.manager.setParameterValueById("ParamMouthOpenY", finalValue) ===
+          true
+        );
       } catch (err) {
         console.warn(
           "[Live2DController] manager.setParameterValueById failed:",
@@ -130,7 +130,6 @@ class Live2DController {
       }
     }
 
-    // 3. 直接写底层 coreModel
     const coreModel =
       this.manager?.model?.internalModel?.coreModel ||
       this.manager?.model?._internalModel?.coreModel ||
@@ -149,28 +148,36 @@ class Live2DController {
   }
 
   interrupt() {
-    //console.log("[Live2DController] interrupt");
-
     if (!this.hasManager()) return false;
 
     if (typeof this.manager.stopAllMotions === "function") {
-      this.manager.stopAllMotions();
-      return true;
+      try {
+        return this.manager.stopAllMotions() === true;
+      } catch (err) {
+        console.warn("[Live2DController] stopAllMotions failed:", err);
+        return false;
+      }
     }
 
     if (typeof this.manager.stopMotion === "function") {
-      this.manager.stopMotion();
-      return true;
+      try {
+        return this.manager.stopMotion() === true;
+      } catch (err) {
+        console.warn("[Live2DController] stopMotion failed:", err);
+        return false;
+      }
     }
 
     return false;
   }
 
   resetToIdle() {
-    this.playMotionById("000");
-    this.setExpressionById("50");
+    const motionApplied = this.playMotionById("000");
+    const expressionApplied = this.setExpressionById("50");
     this.setSpeaking(false);
     this.setMouthOpen(0);
+
+    return motionApplied || expressionApplied;
   }
 }
 

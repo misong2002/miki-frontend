@@ -1,4 +1,4 @@
-import { live2dController } from "./live2dController";
+import { live2dController } from "../live2dController";
 
 const DEBUG_SPEECH_ENGINE = true;
 
@@ -13,21 +13,18 @@ class SpeechEngine {
     };
 
     this.listeners = new Set();
-
-    // 用接近帧率的更新，避免 motion 覆盖后嘴型长时间不刷新
     this.mouthTimer = null;
     this.mouthPhase = 0;
+    this.mouthIntervalMs = 16;
 
-    // 更稳定的波形参数
-    this.mouthIntervalMs = 16; // ~60fps
-
-    this.pattern = [0.08, 0.12,0.16,0.2,0.24,
-                    0.28, 0.34,0.4, 0.46,0.52,0.58,
-                    0.62, 0.68, 0.74,0.8, 0.86,
-                    0.92, 0.86, 0.8, 0.74,0.68,0.62,
-                    0.55, 0.48, 0.42,0.36,0.3, 0.26,
-                    0.22, 0.18, 0.14,0.1, 0.06
-                ];
+    this.pattern = [
+      0.08, 0.12, 0.16, 0.2, 0.24,
+      0.28, 0.34, 0.4, 0.46, 0.52, 0.58,
+      0.62, 0.68, 0.74, 0.8, 0.86,
+      0.92, 0.86, 0.8, 0.74, 0.68, 0.62,
+      0.55, 0.48, 0.42, 0.36, 0.3, 0.26,
+      0.22, 0.18, 0.14, 0.1, 0.06,
+    ];
   }
 
   subscribe(fn) {
@@ -63,31 +60,20 @@ class SpeechEngine {
       source,
     };
 
-    live2dController.setSpeaking(next);
+    const controllerApplied = live2dController.setSpeaking(next) === true;
 
     if (next) {
       this.startMouthLoop();
     } else {
       this.stopMouthLoop();
+
       this.current = {
         ...this.current,
         speaking: false,
         mouthOpen: 0,
       };
-    live2dController.setSpeaking(false);
-    live2dController.setMouthOpen(0);
-    live2dController.applyMouthOverride?.();
 
-    // 再补一帧，吃掉浏览器/动画系统的尾巴
-    requestAnimationFrame(() => {
-      live2dController.applyMouthOverride?.();
-      });
-
-    console.log("[SpeechEngine] setSpeaking", {
-      time: new Date().toLocaleTimeString(),
-      active: next,
-      source,
-    });
+      live2dController.setMouthOpen(0);
     }
 
     this.emit({
@@ -100,6 +86,7 @@ class SpeechEngine {
     this.log("SET_SPEAKING", {
       active: next,
       source,
+      controllerApplied,
     });
 
     return true;
@@ -109,8 +96,6 @@ class SpeechEngine {
     if (this.mouthTimer) return;
 
     this.mouthPhase = 0;
-
-    // 先立刻打一帧，减少启动延迟
     this.stepMouth();
 
     this.mouthTimer = setInterval(() => {
@@ -123,12 +108,8 @@ class SpeechEngine {
 
     this.mouthPhase += 1;
 
-    // 基础波形
     const base = this.pattern[this.mouthPhase % this.pattern.length];
-
-    // 加一点轻微随机抖动，减少机械感
     const jitter = (Math.random() - 0.5) * 0.08;
-
     const value = Math.max(0, Math.min(1, base + jitter));
 
     this.current = {
@@ -136,11 +117,11 @@ class SpeechEngine {
       mouthOpen: value,
     };
 
-    // 这里只更新目标值；真正稳定覆盖靠 controller/manager 的每帧 apply
+    /**
+     * 这里只更新 controller 持有的目标值。
+     * 真正的“持续覆盖”由 live2dManager 的 ticker 完成。
+     */
     live2dController.setMouthOpen(value);
-
-    // 保险起见，再立刻补一次
-    live2dController.applyMouthOverride?.();
   }
 
   stopMouthLoop() {
@@ -168,7 +149,6 @@ class SpeechEngine {
 
     live2dController.setMouthOpen(0);
     live2dController.setSpeaking(false);
-    live2dController.applyMouthOverride?.();
     live2dController.interrupt();
 
     this.emit({
@@ -191,7 +171,6 @@ class SpeechEngine {
 
     live2dController.setMouthOpen(0);
     live2dController.setSpeaking(false);
-    live2dController.applyMouthOverride?.();
 
     this.emit({
       type: "speech_reset",
@@ -199,6 +178,8 @@ class SpeechEngine {
     });
 
     this.log("RESET", { state: this.current });
+
+    return true;
   }
 
   log(type, payload) {

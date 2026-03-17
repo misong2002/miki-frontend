@@ -1,123 +1,127 @@
-/**
- * 最小缓存控制符解析器
- *
- * 设计目标：
- * 1. 普通文本尽量直接输出，不做额外缓存
- * 2. 只有看到 < 才进入 tag buffer
- * 3. 一旦 tag 闭合，立刻输出：
- *    - 合法控制符 => events
- *    - 非法标签   => text
- * 4. 兼容两种协议：
- *    <emotion:happy>
- *    <<emotion:happy>>
- */
-export function createControlStreamParser() {
+const MAX_TAG_BUFFER_LENGTH = 128;
+const CONTROL_TAG_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+function parseClosedTag(tag) {
+  if (tag === "<<initialization_ready>>") {
+    return {
+      text: "",
+      events: [],
+    };
+  }
+
+  let match = tag.match(/^<<emotion:\s*([a-zA-Z0-9_-]+)\s*>>$/i);
+  if (match && CONTROL_TAG_PATTERN.test(match[1])) {
+    return {
+      text: "",
+      events: [{ type: "emotion", value: match[1] }],
+    };
+  }
+
+  match = tag.match(/^<<motion:\s*([a-zA-Z0-9_-]+)\s*>>$/i);
+  if (match && CONTROL_TAG_PATTERN.test(match[1])) {
+    return {
+      text: "",
+      events: [{ type: "motion", value: match[1] }],
+    };
+  }
+
+  match = tag.match(/^<emotion:\s*([a-zA-Z0-9_-]+)\s*>$/i);
+  if (match && CONTROL_TAG_PATTERN.test(match[1])) {
+    return {
+      text: "",
+      events: [{ type: "emotion", value: match[1] }],
+    };
+  }
+
+  match = tag.match(/^<motion:\s*([a-zA-Z0-9_-]+)\s*>$/i);
+  if (match && CONTROL_TAG_PATTERN.test(match[1])) {
+    return {
+      text: "",
+      events: [{ type: "motion", value: match[1] }],
+    };
+  }
+
   return {
-    state: "TEXT", // TEXT | TAG
-    tagBuffer: "",
+    text: tag,
+    events: [],
+  };
+}
 
-    push(chunk) {
-      let text = "";
-      const events = [];
+function isClosedTag(tag) {
+  const isSingleClosed =
+    tag.startsWith("<") &&
+    !tag.startsWith("<<") &&
+    tag.endsWith(">");
 
-      for (let i = 0; i < chunk.length; i += 1) {
-        const ch = chunk[i];
+  const isDoubleClosed =
+    tag.startsWith("<<") &&
+    tag.endsWith(">>");
 
-        // 普通文本状态：字符直接输出，只有遇到 < 才开始怀疑是控制符
-        if (this.state === "TEXT") {
-          if (ch === "<") {
-            this.state = "TAG";
-            this.tagBuffer = "<";
-          } else {
-            text += ch;
-          }
-          continue;
+  return isSingleClosed || isDoubleClosed;
+}
+
+export function createControlStreamParser() {
+  let state = "TEXT";
+  let tagBuffer = "";
+
+  function reset() {
+    state = "TEXT";
+    tagBuffer = "";
+  }
+
+  function push(chunk = "") {
+    let text = "";
+    const events = [];
+
+    for (let i = 0; i < chunk.length; i += 1) {
+      const ch = chunk[i];
+
+      if (state === "TEXT") {
+        if (ch === "<") {
+          state = "TAG";
+          tagBuffer = "<";
+        } else {
+          text += ch;
         }
-
-        // TAG 状态：只缓存疑似标签内容
-        this.tagBuffer += ch;
-
-        const tag = this.tagBuffer;
-
-        // 兼容单尖括号和双尖括号的闭合
-        const isSingleClosed =
-          tag.startsWith("<") &&
-          !tag.startsWith("<<") &&
-          tag.endsWith(">");
-
-        const isDoubleClosed =
-          tag.startsWith("<<") &&
-          tag.endsWith(">>");
-
-        if (isSingleClosed || isDoubleClosed) {
-          // 先尝试匹配双尖括号协议
-          let emotionMatch = tag.match(
-            /^<<emotion:\s*([a-zA-Z0-9_-]+)\s*>>$/i
-          );
-          let motionMatch = tag.match(
-            /^<<motion:\s*([a-zA-Z0-9_-]+)\s*>>$/i
-          );
-
-          // 再尝试单尖括号协议
-          if (!emotionMatch) {
-            emotionMatch = tag.match(
-              /^<emotion:\s*([a-zA-Z0-9_-]+)\s*>$/i
-            );
-          }
-          if (!motionMatch) {
-            motionMatch = tag.match(
-              /^<motion:\s*([a-zA-Z0-9_-]+)\s*>$/i
-            );
-          }
-
-          if (emotionMatch) {
-            events.push({ type: "emotion", value: emotionMatch[1] });
-          } else if (motionMatch) {
-            events.push({ type: "motion", value: motionMatch[1] });
-          } else {
-            // 闭合了但不是合法控制符，原样回吐为普通文本
-            //检查控制符是不是<<initailization_ready>>，如果是的话就不输出，但也不进行表情控制
-            if (tag === "<<initialization_ready>>") {
-              // do nothing
-            } else {
-              text += tag;
-            }
-          }
-
-          // 一闭合就立刻清空 tagBuffer，回到 TEXT
-          this.state = "TEXT";
-          this.tagBuffer = "";
-          continue;
-        }
-
-        // 如果疑似标签太长还没闭合，直接降级为普通文本
-        if (this.tagBuffer.length > 128) {
-          text += this.tagBuffer;
-          this.state = "TEXT";
-          this.tagBuffer = "";
-        }
+        continue;
       }
 
-      return { text, events };
-    },
+      tagBuffer += ch;
 
-    flush() {
-      let text = "";
-
-      // 流结束时，残余疑似标签按普通文本吐出
-      if (this.state === "TAG" && this.tagBuffer) {
-        text = this.tagBuffer;
+      if (isClosedTag(tagBuffer)) {
+        const parsed = parseClosedTag(tagBuffer);
+        text += parsed.text;
+        events.push(...parsed.events);
+        state = "TEXT";
+        tagBuffer = "";
+        continue;
       }
 
-      this.state = "TEXT";
-      this.tagBuffer = "";
+      if (tagBuffer.length > MAX_TAG_BUFFER_LENGTH) {
+        text += tagBuffer;
+        state = "TEXT";
+        tagBuffer = "";
+      }
+    }
 
-      return { text, events: [] };
-    },
+    return { text, events };
+  }
 
-    reset() {
-      this.state = "TEXT";
-      this.tagBuffer = "";
-    },
+  function flush() {
+    let text = "";
+
+    if (state === "TAG" && tagBuffer) {
+      text = tagBuffer;
+    }
+
+    reset();
+
+    return { text, events: [] };
+  }
+
+  return {
+    push,
+    flush,
+    reset,
   };
 }

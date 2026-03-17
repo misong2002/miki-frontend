@@ -233,31 +233,33 @@ export function createTrainingRun({
   config = {},
   modelName = null,
   dataset = null,
+  meta = {},
 }) {
-  const db = loadDB();
+  const now = Date.now();
 
   const run = {
-    id: createId("run"),
+    id: `run-${now}-${Math.random().toString(36).slice(2, 8)}`,
     wakeCycleId,
-    startAt: now(),
-    endAt: null,
-    status: "running",
+    config,
     modelName,
     dataset,
-    config,
+    meta,
+    status: "running",
+    startAt: now,
+    createdAt: now,
+    endAt: null,
   };
 
   db.trainingRuns.push(run);
 
   const wakeIndex = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
   if (wakeIndex >= 0) {
-    db.wakeCycles[wakeIndex].lastActiveAt = now();
+    db.wakeCycles[wakeIndex].lastActiveAt = now;
   }
 
   saveDB(db);
   return run;
 }
-
 /**
  * 更新训练 run。
  */
@@ -279,9 +281,13 @@ export function updateTrainingRun(runId, patch) {
  * 结束训练 run。
  */
 export function finishTrainingRun(runId, status = "finished") {
+  if (!runId) {
+    throw new Error("finishTrainingRun: runId is required");
+  }
+
   return updateTrainingRun(runId, {
     status,
-    endAt: now(),
+    endAt: Date.now(),
   });
 }
 
@@ -314,7 +320,20 @@ export function saveTrainingMetricSeries({
   resolution,
   points,
 }) {
+  if (!runId) {
+    throw new Error("saveTrainingMetricSeries: runId is required");
+  }
+
+  if (!resolution) {
+    throw new Error("saveTrainingMetricSeries: resolution is required");
+  }
+
   const db = loadDB();
+
+  const runExists = (db.trainingRuns ?? []).some((run) => run.id === runId);
+  if (!runExists) {
+    throw new Error(`saveTrainingMetricSeries: training run not found: ${runId}`);
+  }
 
   const existingIndex = db.trainingMetricSeries.findIndex(
     (item) =>
@@ -332,7 +351,7 @@ export function saveTrainingMetricSeries({
     metricName,
     resolution,
     points: Array.isArray(points) ? points : [],
-    updatedAt: now(),
+    updatedAt: Date.now(),
   };
 
   if (existingIndex >= 0) {
@@ -344,7 +363,6 @@ export function saveTrainingMetricSeries({
   saveDB(db);
   return series;
 }
-
 /**
  * 列出某个 run 的所有 metric series。
  */
