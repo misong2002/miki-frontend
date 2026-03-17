@@ -340,10 +340,11 @@ export function createMikiAgent({
     if (assistantText.trim()) {
       await safeCall(
         () =>
-          memory?.recordAssistantMessage?.({
-            wakeCycleId: getCurrentWakeCycleIdSafe(),
-            content: assistantText,
-            meta: assistantMeta,
+          memory?.recordAssistantMessage?.(assistantText, {
+            messageId,
+            interrupted: Boolean(turn?.interrupted),
+            error: turn?.error ? String(turn.error) : null,
+            ...assistantMeta,
           }),
         null,
         assistantRecordLabel
@@ -357,7 +358,7 @@ export function createMikiAgent({
     await ensureMemoryBooted();
 
     const messages = await collectRecentMessagesForRemind(memory, 3);
-
+    console.log("[MikiAgent.remind] collected messages for remind =", messages);
     if (messages.length === 0) {
       return {
         status: "idle",
@@ -375,7 +376,8 @@ export function createMikiAgent({
     } catch (err) {
       console.warn("[remind] fetchLongTermSystemPromptMemory failed:", err);
     }
-
+    //日志输出长期记忆内容
+    console.log("[remind] loaded longTermMemory =", longTermMemory);
     const prompt = buildRemindPrompt(messages, longTermMemory);
 
     if (!prompt.trim()) {
@@ -387,7 +389,7 @@ export function createMikiAgent({
     }
 
     const messageId = createMessageId("miki-remind");
-
+    console.log("[MikiAgent.remind] running remind");
     const turnResult = await runAgentTurn({
       inputText: prompt,
       messageId,
@@ -401,7 +403,7 @@ export function createMikiAgent({
         awaitDisplayDrain: false,
       },
     });
-
+    console.log("[MikiAgent.remind] finished reminding ");
     return {
       status: turnResult.status,
       text: turnResult.text,

@@ -1,4 +1,4 @@
-# Api/memory/memory_consolidator_rules.py
+# api/memory/memory_consolidator_rules.py
 
 from __future__ import annotations
 

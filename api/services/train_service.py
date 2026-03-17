@@ -1,4 +1,4 @@
-# miki-frontend/Api/services/training_service.py
+# miki-frontend/api/services/training_service.py
 
 import json
 import os

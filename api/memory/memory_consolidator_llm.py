@@ -1,4 +1,4 @@
-# Api/memory/memory_consolidator_llm.py
+# api/memory/memory_consolidator_llm.py
 
 from __future__ import annotations
 

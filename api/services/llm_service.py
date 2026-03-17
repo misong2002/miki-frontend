@@ -1,4 +1,4 @@
-# Api/services/llm_service.py
+# api/services/llm_service.py
 
 import os
 from openai import OpenAI

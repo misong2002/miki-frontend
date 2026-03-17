@@ -11,6 +11,18 @@ import {
   makeContactMessage,
   normalizeContactMessages,
 } from "../domains/Battle/utils/contactMessageUtils";
+import { saveTrainingHistory } from "../domains/Battle/services/historyService";
+
+async function trySaveTrainingHistory() {
+  try {
+    const result = await saveTrainingHistory("config/train_config.json");
+    console.log("[battle] save history success:", result);
+    return true;
+  } catch (err) {
+    console.error("[battle] save history failed:", err);
+    return false;
+  }
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,7 +102,10 @@ export function useBattleController({
   }
 
   async function handleBattleFinishedExit() {
+    setBattleExiting(true);
     stopLossPolling();
+
+    await trySaveTrainingHistory();
 
     setBattle((prev) => ({
       ...prev,
@@ -236,6 +251,8 @@ export function useBattleController({
     } catch (err) {
       console.error("[battle] stop failed:", err);
     }
+
+    await trySaveTrainingHistory();
 
     stageAgent?.setPreset?.(defaultStageProps);
 

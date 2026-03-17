@@ -10,8 +10,8 @@ TRAIN_SESSION_PATH = MIKI_ROOT + "/data/training_session.json"
 TRAIN_CONFIG_PATH = MIKI_ROOT + "/config/train_config.json"
 
 #训练脚本
-BATTLE_SCRIPT_PATH = MIKI_ROOT + "/scripts/train.sh"
-BATTLE_STOP_SCRIPT_PATH = MIKI_ROOT + "/scripts/stop_train.sh"
+BATTLE_SCRIPT_PATH = MIKI_ROOT + "/scripts/training_session/train.sh"
+BATTLE_STOP_SCRIPT_PATH = MIKI_ROOT + "/scripts/training_session/stop_train.sh"
 
 
 #LLM配置

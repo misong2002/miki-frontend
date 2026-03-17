@@ -8,6 +8,10 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ## What's New in 
 
+### v1.2
+
+Add automated history management for model training sessions.
+
 ### v1.1
 
 Remanaged program Structure.
