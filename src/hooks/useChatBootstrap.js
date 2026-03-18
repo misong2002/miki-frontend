@@ -1,5 +1,14 @@
 // src/hooks/useChatBootstrap.js
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const SUMMARIZING_HINTS = [
+  "正在收拾房间……",
+  "正在净化灵魂宝石……",
+  "正在殴打白色孽畜……",
+  "正在泡茶……",
+  "正在指挥交响乐团……",
+  '正在被圆环之理救赎……',
+];
 
 export function useChatBootstrap({
   chatAgent,
@@ -9,35 +18,75 @@ export function useChatBootstrap({
 }) {
   const [chatBootReady, setChatBootReady] = useState(false);
   const [initialChatMessages, setInitialChatMessages] = useState([]);
+  const [bootPhase, setBootPhase] = useState("idle");
+  const [hintIndex, setHintIndex] = useState(0);
+
+  /**
+   * 在“摘要/整理”阶段轮播提示语
+   */
+  useEffect(() => {
+    if (bootPhase !== "summarizing") return;
+
+    const timer = window.setInterval(() => {
+      setHintIndex((prev) => (prev + 1) % SUMMARIZING_HINTS.length);
+    }, 1600);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [bootPhase]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrapChat() {
       /**
-       * 关键修正：
+       * 关键约束：
        * - 只有当前真正处于聊天模式时，才执行 chat bootstrap
-       * - 避免 battle 恢复场景下先误跑 appAgent.start() / chat restore
+       * - 避免 battle 恢复场景下误跑 appAgent.start() / chat restore
        */
       if (mode !== chatModeValue) {
         return;
       }
 
       setChatBootReady(false);
+      setBootPhase("summarizing");
+      setHintIndex(0);
 
       try {
-        await appAgent?.start?.();
+        /**
+         * 先启动 app agent。
+         * 这里约定 appAgent.start 可接收一个 handlers 对象：
+         * {
+         *   onBootPhaseChange: ({ phase }) => {}
+         * }
+         *
+         * 如果旧版 start 不接这个参数，也不会有问题。
+         */
+        await appAgent?.start?.({
+          onBootPhaseChange: ({ phase } = {}) => {
+            if (cancelled) return;
+            if (!phase) return;
+            setBootPhase(phase);
+          },
+        });
 
+        /**
+         * start 完成后，再恢复 chat 消息。
+         * 这样能保证 remind 后落盘/恢复状态更一致。
+         */
         const restoredMessages =
           (await chatAgent?.getBootstrapMessages?.()) ?? [];
 
         if (cancelled) return;
         setInitialChatMessages(restoredMessages);
+        setBootPhase("ready");
       } catch (err) {
         console.warn("[useChatBootstrap] bootstrapChat failed:", err);
 
         if (cancelled) return;
         setInitialChatMessages([]);
+        setBootPhase("error");
       } finally {
         if (cancelled) return;
         setChatBootReady(true);
@@ -81,8 +130,38 @@ export function useChatBootstrap({
     };
   }, [mode, chatBootReady, chatModeValue, chatAgent]);
 
+  const bootLoadingText = useMemo(() => {
+    if (chatBootReady) return "";
+
+    if (bootPhase === "summarizing") {
+      return SUMMARIZING_HINTS[hintIndex] ?? SUMMARIZING_HINTS[0];
+    }
+
+    if (bootPhase === "reminding") {
+      return "美树同学正在回想…";
+    }
+
+    if (bootPhase === "error") {
+      return "启动时出了点小问题…";
+    }
+
+    return "正在准备中…";
+  }, [chatBootReady, bootPhase, hintIndex]);
+
+  /**
+   * 你的需求是：
+   * - 摘要阶段不显示 Live2D
+   * - remind 阶段再显示“美树同学正在回想”
+   *
+   * 所以这里只在 summarizing 隐藏模型。
+   */
+  const hideStageModel = bootPhase === "summarizing" && !chatBootReady;
+
   return {
     chatBootReady,
     initialChatMessages,
+    bootPhase,
+    bootLoadingText,
+    hideStageModel,
   };
 }

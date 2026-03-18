@@ -71,6 +71,7 @@ function formatTime(ts) {
 export default function ChatPanel({
   disabled = false,
   chatAgent,
+  bootLoadingText = "美樹さん正在回想……",
   initialMessages = [],
   bootLoading = false,
 }) {
@@ -274,7 +275,7 @@ export default function ChatPanel({
         {bootLoading ? (
           <div className="chat-boot-state">
             <div className="chat-boot-state-inner">
-              <div className="chat-boot-title">美樹さん正在回想……</div>
+              <div className="chat-boot-title">{bootLoadingText}</div>
             </div>
           </div>
         ) : (

@@ -194,8 +194,8 @@ function listActiveTrainingRunsByBackendMode(mode = null) {
 export function createMemoryRuntime(options = {}) {
 
   const {
-    wakeCycleReuseWindowMs = 1000 * 60 * 30,
-    keepRecentWakeCycles = 3,
+    wakeCycleReuseWindowMs = 1000 * 60 * 60 *4,
+    keepRecentWakeCycles = 5,
   } = options;
 
   let currentWakeCycle = null;

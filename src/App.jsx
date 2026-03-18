@@ -46,7 +46,13 @@ export default function App() {
     initialStageProps ?? DEFAULT_STAGE_PROPS
   );
 
-  const { chatBootReady, initialChatMessages } = useChatBootstrap({
+  const {
+    chatBootReady,
+    initialChatMessages,
+    bootPhase,
+    bootLoadingText,
+    hideStageModel,
+  } = useChatBootstrap({
     chatAgent: agent.chat,
     appAgent: agent.app,
     mode,
@@ -100,17 +106,24 @@ export default function App() {
           </aside>
 
           <main className="stage-column">
-            <Live2DStage
-              modelKey={stageProps.modelKey}
-              position={stageProps.position}
-              scale={stageProps.scale}
-            />
+            {hideStageModel ? (
+              <div className="boot-stage-screen">
+                <div className="boot-stage-copy">{bootLoadingText}</div>
+              </div>
+            ) : (
+              <Live2DStage
+                modelKey={stageProps.modelKey}
+                position={stageProps.position}
+                scale={stageProps.scale}
+              />
+            )}
           </main>
 
           <aside className="chat-column">
             <ChatPanel
               disabled={!chatBootReady}
               bootLoading={!chatBootReady}
+              bootLoadingText={bootLoadingText}
               chatAgent={agent.chat}
               initialMessages={initialChatMessages}
             />
