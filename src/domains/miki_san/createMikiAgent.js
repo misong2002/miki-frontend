@@ -45,6 +45,17 @@ async function safeCall(fn, fallback = null, label = "safeCall") {
   }
 }
 
+function emitBootPhase(handlers, phase, extra = {}) {
+  try {
+    handlers?.onBootPhaseChange?.({
+      phase,
+      ...extra,
+    });
+  } catch (err) {
+    console.warn("[MikiAgent] onBootPhaseChange failed:", err);
+  }
+}
+
 function formatBattleCommentPrefix(timestamp, epoch) {
   const d = new Date(timestamp);
   const hh = String(d.getHours()).padStart(2, "0");
@@ -503,11 +514,17 @@ export function createMikiAgent({
    * - boot remind 失败了，但 hasStarted 已经被置 true
    * - 导致之后再也不会尝试恢复上下文
    */
-  async function start() {
-    if (hasStarted) return;
+  async function start(handlers = {}) {
+    if (hasStarted) {
+      emitBootPhase(handlers, "ready");
+      return;
+    }
+
     if (startPromise) return startPromise;
 
     startPromise = (async () => {
+      emitBootPhase(handlers, "summarizing");
+
       await ensureMemoryBooted();
 
       await safeCall(
@@ -516,11 +533,6 @@ export function createMikiAgent({
         "memory.archiveStaleWakeCyclesIfNeeded"
       );
 
-      /**
-       * 这里故意不用 getBootstrapMessages() 来判断。
-       * 因为 getBootstrapMessages() 会包含 boot_remind，
-       * 而我们真正关心的是：是否存在“原始可恢复上下文”。
-       */
       const recoverableMessages = await collectRecentMessagesForRemind(memory, 3);
       const hasRecoverableContext = recoverableMessages.length > 0;
 
@@ -539,6 +551,8 @@ export function createMikiAgent({
       };
 
       if (hasRecoverableContext) {
+        emitBootPhase(handlers, "reminding");
+
         remindResult = await safeCall(
           () => remind(),
           {
@@ -550,17 +564,17 @@ export function createMikiAgent({
         );
       }
 
-      /**
-       * 关键修正：
-       * - 只有在无需 remind，或 remind 成功/至少非 error 时，才标记启动完成
-       * - 如果 remind 失败，hasStarted 仍保持 false，后续可以重试
-       */
       const bootSucceeded =
         !hasRecoverableContext ||
         (remindResult && remindResult.status !== "error");
 
       if (bootSucceeded) {
         hasStarted = true;
+        emitBootPhase(handlers, "ready");
+      } else {
+        emitBootPhase(handlers, "error", {
+          error: remindResult?.error ?? null,
+        });
       }
     })();
 
