@@ -1,38 +1,30 @@
-// src/domains/miki_san/memory/memoryStore.js
+const STORAGE_KEY = "miki_memory_v2";
+const LEGACY_STORAGE_KEY = "miki_memory_v1";
 
-const STORAGE_KEY = "miki_memory_v1";
-
-/**
- * 返回当前毫秒级时间戳。
- */
 function now() {
   return Date.now();
 }
 
-/**
- * 生成简单唯一 id。
- * 本地 memory 场景下已经够用了。
- */
 function createId(prefix = "id") {
   return `${prefix}_${now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * 创建空数据库。
- */
 function createEmptyDB() {
   return {
     wakeCycles: [],
     chatMessages: [],
     trainingRuns: [],
-    trainingMetricSeries: [],
     trainingObservations: [],
+    meta: {
+      schemaVersion: 2,
+      migratedFromSchemaVersion: null,
+      droppedLegacyFields: [],
+      lastCompactedAt: null,
+      lastSavedAt: null,
+    },
   };
 }
 
-/**
- * 安全 JSON.parse，避免 storage 被污染后直接崩掉。
- */
 function safeParse(json, fallback) {
   try {
     return JSON.parse(json);
@@ -41,60 +33,149 @@ function safeParse(json, fallback) {
   }
 }
 
+function inferSchemaVersion(db) {
+  if (Number.isFinite(db?.meta?.schemaVersion)) {
+    return db.meta.schemaVersion;
+  }
+
+  /**
+   * 老库如果带 trainingMetricSeries，但没有明确 schemaVersion，
+   * 视为旧版结构。
+   */
+  if (Array.isArray(db?.trainingMetricSeries)) {
+    return 1;
+  }
+
+  return 2;
+}
+
 /**
- * 读取整个 memory DB。
+ * 兼容旧库，并在规范化时：
+ * - 保留 wakeCycles/chatMessages/trainingRuns/trainingObservations
+ * - 显式丢弃 trainingMetricSeries
  */
-function loadDB() {
+function normalizeDB(db) {
+  const source = db ?? {};
+  const inferredSchemaVersion = inferSchemaVersion(source);
+
+  const droppedLegacyFields = [];
+  if (Array.isArray(source?.trainingMetricSeries)) {
+    droppedLegacyFields.push("trainingMetricSeries");
+  }
+
+  return {
+    wakeCycles: Array.isArray(source?.wakeCycles) ? source.wakeCycles : [],
+    chatMessages: Array.isArray(source?.chatMessages) ? source.chatMessages : [],
+    trainingRuns: Array.isArray(source?.trainingRuns) ? source.trainingRuns : [],
+    trainingObservations: Array.isArray(source?.trainingObservations)
+      ? source.trainingObservations
+      : [],
+    meta: {
+      schemaVersion: 2,
+      migratedFromSchemaVersion:
+        inferredSchemaVersion === 2 ? null : inferredSchemaVersion,
+      droppedLegacyFields,
+      lastCompactedAt: source?.meta?.lastCompactedAt ?? null,
+      lastSavedAt: source?.meta?.lastSavedAt ?? null,
+    },
+  };
+}
+
+let memoryCache = null;
+
+function readFromStorage() {
   if (typeof window === "undefined" || !window.localStorage) {
     return createEmptyDB();
   }
 
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return createEmptyDB();
+  const rawV2 = window.localStorage.getItem(STORAGE_KEY);
+  if (rawV2) {
+    return normalizeDB(safeParse(rawV2, createEmptyDB()));
+  }
 
-  const db = safeParse(raw, createEmptyDB());
+  const rawLegacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (rawLegacy) {
+    return normalizeDB(safeParse(rawLegacy, createEmptyDB()));
+  }
 
-  return {
-    wakeCycles: Array.isArray(db.wakeCycles) ? db.wakeCycles : [],
-    chatMessages: Array.isArray(db.chatMessages) ? db.chatMessages : [],
-    trainingRuns: Array.isArray(db.trainingRuns) ? db.trainingRuns : [],
-    trainingMetricSeries: Array.isArray(db.trainingMetricSeries)
-      ? db.trainingMetricSeries
-      : [],
-    trainingObservations: Array.isArray(db.trainingObservations)
-      ? db.trainingObservations
-      : [],
-  };
+  return createEmptyDB();
 }
 
-/**
- * 保存整个 memory DB。
- */
-function saveDB(db) {
+function writeToStorage(db) {
   if (typeof window === "undefined" || !window.localStorage) return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+
+  const normalized = normalizeDB(db);
+
+  const nextDB = {
+    ...normalized,
+    meta: {
+      ...normalized.meta,
+      schemaVersion: 2,
+      lastSavedAt: now(),
+    },
+  };
+
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDB));
+
+  /**
+   * 一旦成功写回 v2，就移除旧 key。
+   */
+  if (STORAGE_KEY !== LEGACY_STORAGE_KEY) {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
 }
 
-/**
- * 对外暴露：直接看整个 DB，用于 debug。
- */
+function ensureCache() {
+  if (!memoryCache) {
+    memoryCache = readFromStorage();
+  }
+  return memoryCache;
+}
+
+function commitDB(mutator) {
+  const base = normalizeDB(ensureCache());
+  const next = normalizeDB(mutator(base) ?? base);
+  memoryCache = next;
+  writeToStorage(next);
+  return next;
+}
+
 export function getMemoryDB() {
-  return loadDB();
+  return normalizeDB(ensureCache());
 }
 
-/**
- * 对外暴露：重置 memory。
- */
+export function reloadMemoryDB() {
+  memoryCache = readFromStorage();
+  return memoryCache;
+}
+
 export function resetMemoryDB() {
-  saveDB(createEmptyDB());
+  memoryCache = createEmptyDB();
+  writeToStorage(memoryCache);
+  return memoryCache;
 }
 
-/**
- * 创建新的 wake cycle。
- */
-export function createWakeCycle() {
-  const db = loadDB();
+export function clearMemoryDB() {
+  return resetMemoryDB();
+}
 
+export function estimateMemoryDBSize() {
+  const db = getMemoryDB();
+  try {
+    return JSON.stringify(db).length;
+  } catch {
+    return 0;
+  }
+}
+
+export function replaceMemoryDB(nextDB) {
+  const safeDB = normalizeDB(nextDB);
+  memoryCache = safeDB;
+  writeToStorage(safeDB);
+  return safeDB;
+}
+
+export function createWakeCycle() {
   const wakeCycle = {
     id: createId("wake"),
     startAt: now(),
@@ -104,58 +185,59 @@ export function createWakeCycle() {
     summaryId: null,
   };
 
-  db.wakeCycles.push(wakeCycle);
-  saveDB(db);
+  commitDB((db) => {
+    db.wakeCycles.push(wakeCycle);
+    return db;
+  });
+
   return wakeCycle;
 }
 
-/**
- * 获取最新 wake cycle。
- */
-export function getLatestWakeCycle() {
-  const db = loadDB();
-  if (db.wakeCycles.length === 0) return null;
-
-  return [...db.wakeCycles].sort((a, b) => b.startAt - a.startAt)[0];
+export function listWakeCycles() {
+  const db = getMemoryDB();
+  return [...db.wakeCycles].sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0));
 }
 
-/**
- * 按 id 获取 wake cycle。
- */
+export function listRecentWakeCycles(limit = 3) {
+  const db = getMemoryDB();
+  return [...db.wakeCycles]
+    .sort((a, b) => (b.startAt ?? 0) - (a.startAt ?? 0))
+    .slice(0, Math.max(0, limit));
+}
+
+export function getLatestWakeCycle() {
+  return listRecentWakeCycles(1)[0] ?? null;
+}
+
 export function getWakeCycleById(wakeCycleId) {
-  const db = loadDB();
+  const db = getMemoryDB();
   return db.wakeCycles.find((item) => item.id === wakeCycleId) ?? null;
 }
 
-/**
- * 更新 wake cycle。
- */
 export function updateWakeCycle(wakeCycleId, patch) {
-  const db = loadDB();
-  const index = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
-  if (index < 0) return null;
+  let updated = null;
 
-  db.wakeCycles[index] = {
-    ...db.wakeCycles[index],
-    ...patch,
-  };
+  commitDB((db) => {
+    const index = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
+    if (index < 0) return db;
 
-  saveDB(db);
-  return db.wakeCycles[index];
+    db.wakeCycles[index] = {
+      ...db.wakeCycles[index],
+      ...patch,
+    };
+    updated = db.wakeCycles[index];
+    return db;
+  });
+
+  return updated;
 }
 
-/**
- * 用户活动时刷新 lastActiveAt。
- */
 export function touchWakeCycle(wakeCycleId) {
   return updateWakeCycle(wakeCycleId, {
     lastActiveAt: now(),
   });
 }
 
-/**
- * 关闭 wake cycle。
- */
 export function closeWakeCycle(wakeCycleId, status = "closed") {
   return updateWakeCycle(wakeCycleId, {
     status,
@@ -164,70 +246,52 @@ export function closeWakeCycle(wakeCycleId, status = "closed") {
   });
 }
 
-/**
- * 追加一条聊天消息。
- */
 export function appendMessage({
   wakeCycleId,
   role,
   content,
   meta = {},
 }) {
-  const db = loadDB();
+  const timestamp = now();
 
   const message = {
     id: createId("msg"),
     wakeCycleId,
     role,
     content,
-    createdAt: now(),
+    createdAt: timestamp,
     meta: {
       emotion: meta.emotion ?? null,
       motion: meta.motion ?? null,
       interrupted: meta.interrupted ?? false,
       messageId: meta.messageId ?? null,
       error: meta.error ?? null,
+      source: meta.source ?? null,
     },
   };
 
-  db.chatMessages.push(message);
+  commitDB((db) => {
+    db.chatMessages.push(message);
 
-  const wakeIndex = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
-  if (wakeIndex >= 0) {
-    db.wakeCycles[wakeIndex].lastActiveAt = now();
-  }
+    const wakeIndex = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
+    if (wakeIndex >= 0) {
+      db.wakeCycles[wakeIndex].lastActiveAt = timestamp;
+    }
 
-  saveDB(db);
+    return db;
+  });
+
   return message;
 }
 
-/**
- * 获取某个 wake cycle 下的全部消息。
- */
 export function listMessagesByWakeCycle(wakeCycleId) {
-  const db = loadDB();
+  const db = getMemoryDB();
 
   return db.chatMessages
     .filter((item) => item.wakeCycleId === wakeCycleId)
-    .sort((a, b) => a.createdAt - b.createdAt);
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 }
 
-export function listWakeCycles() {
-  const db = loadDB();
-
-  return [...db.wakeCycles].sort((a, b) => a.startAt - b.startAt);
-}
-
-export function listRecentWakeCycles(limit = 3) {
-  const db = loadDB();
-
-  return [...db.wakeCycles]
-    .sort((a, b) => b.startAt - a.startAt)
-    .slice(0, limit);
-}
-/**
- * 创建训练 run。
- */
 export function createTrainingRun({
   wakeCycleId,
   config = {},
@@ -235,51 +299,58 @@ export function createTrainingRun({
   dataset = null,
   meta = {},
 }) {
-  const now = Date.now();
+  const ts = now();
 
   const run = {
-    id: `run-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `run-${ts}-${Math.random().toString(36).slice(2, 8)}`,
     wakeCycleId,
     config,
     modelName,
     dataset,
     meta,
     status: "running",
-    startAt: now,
-    createdAt: now,
+    startAt: ts,
+    createdAt: ts,
     endAt: null,
   };
 
-  db.trainingRuns.push(run);
+  commitDB((db) => {
+    db.trainingRuns.push(run);
 
-  const wakeIndex = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
-  if (wakeIndex >= 0) {
-    db.wakeCycles[wakeIndex].lastActiveAt = now;
-  }
+    const wakeIndex = db.wakeCycles.findIndex((item) => item.id === wakeCycleId);
+    if (wakeIndex >= 0) {
+      db.wakeCycles[wakeIndex].lastActiveAt = ts;
+    }
 
-  saveDB(db);
+    return db;
+  });
+
   return run;
 }
-/**
- * 更新训练 run。
- */
-export function updateTrainingRun(runId, patch) {
-  const db = loadDB();
-  const index = db.trainingRuns.findIndex((item) => item.id === runId);
-  if (index < 0) return null;
 
-  db.trainingRuns[index] = {
-    ...db.trainingRuns[index],
-    ...patch,
-  };
-
-  saveDB(db);
-  return db.trainingRuns[index];
+export function getTrainingRunById(runId) {
+  const db = getMemoryDB();
+  return db.trainingRuns.find((item) => item.id === runId) ?? null;
 }
 
-/**
- * 结束训练 run。
- */
+export function updateTrainingRun(runId, patch) {
+  let updated = null;
+
+  commitDB((db) => {
+    const index = db.trainingRuns.findIndex((item) => item.id === runId);
+    if (index < 0) return db;
+
+    db.trainingRuns[index] = {
+      ...db.trainingRuns[index],
+      ...patch,
+    };
+    updated = db.trainingRuns[index];
+    return db;
+  });
+
+  return updated;
+}
+
 export function finishTrainingRun(runId, status = "finished") {
   if (!runId) {
     throw new Error("finishTrainingRun: runId is required");
@@ -287,93 +358,18 @@ export function finishTrainingRun(runId, status = "finished") {
 
   return updateTrainingRun(runId, {
     status,
-    endAt: Date.now(),
+    endAt: now(),
   });
 }
 
-/**
- * 获取 run。
- */
-export function getTrainingRunById(runId) {
-  const db = loadDB();
-  return db.trainingRuns.find((item) => item.id === runId) ?? null;
-}
-
-/**
- * 获取某 wake cycle 下的训练 runs。
- */
 export function listTrainingRunsByWakeCycle(wakeCycleId) {
-  const db = loadDB();
+  const db = getMemoryDB();
 
   return db.trainingRuns
     .filter((item) => item.wakeCycleId === wakeCycleId)
-    .sort((a, b) => a.startAt - b.startAt);
+    .sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0));
 }
 
-/**
- * 保存训练 metric series。
- * 同一个 runId + metricName + resolution 只保留一份最新值。
- */
-export function saveTrainingMetricSeries({
-  runId,
-  metricName = "loss",
-  resolution,
-  points,
-}) {
-  if (!runId) {
-    throw new Error("saveTrainingMetricSeries: runId is required");
-  }
-
-  if (!resolution) {
-    throw new Error("saveTrainingMetricSeries: resolution is required");
-  }
-
-  const db = loadDB();
-
-  const runExists = (db.trainingRuns ?? []).some((run) => run.id === runId);
-  if (!runExists) {
-    throw new Error(`saveTrainingMetricSeries: training run not found: ${runId}`);
-  }
-
-  const existingIndex = db.trainingMetricSeries.findIndex(
-    (item) =>
-      item.runId === runId &&
-      item.metricName === metricName &&
-      item.resolution === resolution
-  );
-
-  const series = {
-    id:
-      existingIndex >= 0
-        ? db.trainingMetricSeries[existingIndex].id
-        : createId("metric"),
-    runId,
-    metricName,
-    resolution,
-    points: Array.isArray(points) ? points : [],
-    updatedAt: Date.now(),
-  };
-
-  if (existingIndex >= 0) {
-    db.trainingMetricSeries[existingIndex] = series;
-  } else {
-    db.trainingMetricSeries.push(series);
-  }
-
-  saveDB(db);
-  return series;
-}
-/**
- * 列出某个 run 的所有 metric series。
- */
-export function listTrainingMetricSeriesByRunId(runId) {
-  const db = loadDB();
-  return db.trainingMetricSeries.filter((item) => item.runId === runId);
-}
-
-/**
- * 记录训练观察，例如 perception comment。
- */
 export function appendTrainingObservation({
   runId = null,
   wakeCycleId,
@@ -383,8 +379,6 @@ export function appendTrainingObservation({
   comment = "",
   timestamp = now(),
 }) {
-  const db = loadDB();
-
   const observation = {
     id: createId("obs"),
     runId,
@@ -396,39 +390,18 @@ export function appendTrainingObservation({
     timestamp,
   };
 
-  db.trainingObservations.push(observation);
-  saveDB(db);
+  commitDB((db) => {
+    db.trainingObservations.push(observation);
+    return db;
+  });
+
   return observation;
 }
 
-/**
- * 列出某个 wake cycle 下的训练观察。
- */
 export function listTrainingObservationsByWakeCycle(wakeCycleId) {
-  const db = loadDB();
+  const db = getMemoryDB();
 
   return db.trainingObservations
     .filter((item) => item.wakeCycleId === wakeCycleId)
-    .sort((a, b) => a.timestamp - b.timestamp);
-}
-
-/**
- * 用新的 db 整体覆盖当前 memory DB。
- * 主要给 compact / migration 之类的场景使用。
- */
-export function replaceMemoryDB(nextDB) {
-  const safeDB = {
-    wakeCycles: Array.isArray(nextDB?.wakeCycles) ? nextDB.wakeCycles : [],
-    chatMessages: Array.isArray(nextDB?.chatMessages) ? nextDB.chatMessages : [],
-    trainingRuns: Array.isArray(nextDB?.trainingRuns) ? nextDB.trainingRuns : [],
-    trainingMetricSeries: Array.isArray(nextDB?.trainingMetricSeries)
-      ? nextDB.trainingMetricSeries
-      : [],
-    trainingObservations: Array.isArray(nextDB?.trainingObservations)
-      ? nextDB.trainingObservations
-      : [],
-  };
-
-  saveDB(safeDB);
-  return safeDB;
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 }

@@ -1,4 +1,7 @@
-//src/domains/miki_san/agent/remindPromptBuilder.js
+const DEFAULT_RECENT_MESSAGE_LIMIT = 50;
+const DEFAULT_TOTAL_DIALOGUE_BUDGET = 5000;
+const DEFAULT_LONG_TERM_BUDGET = 1800;
+
 function formatDialogueRole(role) {
   if (role === "user") return "用户";
   if (role === "assistant") return "你";
@@ -19,10 +22,97 @@ function formatPromptTime(ts) {
   return `${yyyy}-${MM}-${dd} ${hh}:${mm}:${ss}`;
 }
 
-function buildLongTermMemoryBlock(longTermMemory) {
+function truncateText(text, maxLength) {
+  const s = typeof text === "string" ? text.trim() : "";
+  if (!s) return "";
+  if (s.length <= maxLength) return s;
+  return `${s.slice(0, maxLength)}…`;
+}
+
+function getPerMessageLimit(content) {
+  const hasCodeBlock = typeof content === "string" && content.includes("```");
+  return hasCodeBlock ? 220 : 420;
+}
+
+function getMessagePriority(msg) {
+  if (msg?.role === "user") return 3;
+  if (msg?.role === "assistant") return 2;
+  return 1;
+}
+
+function normalizeMessages(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
+    .slice(-DEFAULT_RECENT_MESSAGE_LIMIT)
+    .map((msg) => {
+      const rawContent = msg.content.trim();
+      const clippedContent = truncateText(rawContent, getPerMessageLimit(rawContent));
+
+      return {
+        ...msg,
+        content: clippedContent,
+        _priority: getMessagePriority(msg),
+        _sortTime: Number.isFinite(msg?.createdAt) ? msg.createdAt : 0,
+      };
+    });
+}
+
+/**
+ * 先偏向保留最近消息，但在总预算下对 user 消息更宽容。
+ */
+function selectMessagesWithinBudget(messages, totalBudget = DEFAULT_TOTAL_DIALOGUE_BUDGET) {
+  const normalized = normalizeMessages(messages);
+
+  if (normalized.length === 0) return [];
+
+  const selected = [];
+  let used = 0;
+
+  for (let i = normalized.length - 1; i >= 0; i -= 1) {
+    const msg = normalized[i];
+    const lineOverhead = 32;
+    const cost = (msg.content?.length ?? 0) + lineOverhead;
+
+    const softBonus =
+      msg.role === "user" ? 120 :
+      msg.role === "assistant" ? 40 :
+      0;
+
+    if (used + cost > totalBudget + softBonus) {
+      continue;
+    }
+
+    selected.push(msg);
+    used += cost;
+  }
+
+  return selected.sort((a, b) => a._sortTime - b._sortTime);
+}
+
+function buildDialogueBlock(messages) {
+  return messages
+    .map((msg) => {
+      const role = formatDialogueRole(msg.role);
+      const timeText = formatPromptTime(msg.createdAt);
+      return `[${timeText}] ${role}：${msg.content}`;
+    })
+    .join("\n");
+}
+
+function truncateBlock(blockText, maxBudget) {
+  const text = typeof blockText === "string" ? blockText.trim() : "";
+  if (!text) return "";
+  if (text.length <= maxBudget) return text;
+  return `${text.slice(0, maxBudget)}…`;
+}
+
+function buildLongTermMemoryBlock(longTermMemory, totalBudget = DEFAULT_LONG_TERM_BUDGET) {
   if (!longTermMemory) return "";
 
-  const digestText = longTermMemory?.digest?.content?.trim?.() ?? "";
+  const digestText = truncateText(
+    longTermMemory?.digest?.content?.trim?.() ?? "",
+    700
+  );
 
   const facts = Array.isArray(longTermMemory?.facts)
     ? longTermMemory.facts
@@ -33,15 +123,16 @@ function buildLongTermMemoryBlock(longTermMemory) {
     : [];
 
   const factLines = facts
-    .slice(0, 8)
-    .map((fact) => `- ${fact.value ?? ""}`.trim())
-    .filter((line) => line !== "-");
+    .slice(0, 6)
+    .map((fact) => truncateText(`- ${fact?.value ?? ""}`.trim(), 120))
+    .filter((line) => line && line !== "-");
 
   const projectLines = projects
-    .slice(0, 5)
+    .slice(0, 4)
     .map((project) => {
-      const title = project?.title ?? "";
-      const summary = project?.summary ?? "";
+      const title = truncateText(project?.title ?? "", 40);
+      const summary = truncateText(project?.summary ?? "", 120);
+
       if (title && summary) return `- ${title}：${summary}`;
       if (title) return `- ${title}`;
       return "";
@@ -65,55 +156,22 @@ function buildLongTermMemoryBlock(longTermMemory) {
     blocks.push(...projectLines);
   }
 
-  return blocks.join("\n").trim();
-}
-
-function truncatePromptContent(content, limit) {
-  if (typeof content !== "string") return "";
-  const text = content.trim();
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}…`;
+  return truncateBlock(blocks.join("\n").trim(), totalBudget);
 }
 
 export function buildRemindPrompt(messages, longTermMemory = null) {
-  const CODE_BLOCK_MARKER = "```";
-  const NORMAL_MESSAGE_LIMIT = 1200;
-  const CODE_MESSAGE_LIMIT = 300;
-
-  const validMessages = (Array.isArray(messages) ? messages : [])
-    .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
-    .slice(-30);
+  const selectedMessages = selectMessagesWithinBudget(messages);
+  const dialogue = buildDialogueBlock(selectedMessages);
 
   const now = Date.now();
-
   const latestMessage =
-    validMessages.length > 0 ? validMessages[validMessages.length - 1] : null;
+    selectedMessages.length > 0
+      ? selectedMessages[selectedMessages.length - 1]
+      : null;
 
   const lastTimestamp = Number.isFinite(latestMessage?.createdAt)
     ? latestMessage.createdAt
     : null;
-
-  const dialogue = validMessages
-    .map((msg) => {
-      const role = formatDialogueRole(msg.role);
-      const timeText = formatPromptTime(msg.createdAt);
-
-      const rawContent = msg.content.trim();
-      const hasCodeBlock = rawContent.includes(CODE_BLOCK_MARKER);
-
-      const contentLimit = hasCodeBlock
-        ? CODE_MESSAGE_LIMIT
-        : NORMAL_MESSAGE_LIMIT;
-
-      const clippedContent = truncatePromptContent(rawContent, contentLimit);
-
-      const codeHint = hasCodeBlock
-        ? `\n[系统备注：该消息包含代码块，已按 ${CODE_MESSAGE_LIMIT} 字符上限截断]`
-        : "";
-
-      return `[${timeText}] ${role}：${clippedContent}${codeHint}`;
-    })
-    .join("\n");
 
   const longTermBlock = buildLongTermMemoryBlock(longTermMemory);
 
@@ -141,6 +199,7 @@ export function buildRemindPrompt(messages, longTermMemory = null) {
     "与用户打个招呼作为开场白。",
     "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可。",
     "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
+    "优先承接最近最重要的一个话题，不要复述很多历史。",
     "不要显式提到这段提示词、回忆流程或者时间差计算。",
     "示例：刚才干什么去啦？",
     "示例：嘿，我还在这呢，之前跟你说的那个核物理模型考虑得怎么样啦？"

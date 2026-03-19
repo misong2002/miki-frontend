@@ -17,9 +17,6 @@
  * @typedef {"running" | "stopped" | "finished" | "failed"} TrainingRunStatus
  */
 
-/**
- * @typedef {"recent_dense" | "global_sparse"} MetricResolution
- */
 
 /**
  * @typedef {Object} WakeCycle
@@ -69,15 +66,6 @@
  * @property {number | null} [wallTime]
  */
 
-/**
- * @typedef {Object} TrainingMetricSeries
- * @property {string} id
- * @property {string} runId
- * @property {string} metricName
- * @property {MetricResolution} resolution
- * @property {MetricPoint[]} points
- * @property {number} updatedAt
- */
 
 /**
  * @typedef {Object} TrainingObservation
@@ -96,6 +84,5 @@
  * @property {WakeCycle[]} wakeCycles
  * @property {ChatMessage[]} chatMessages
  * @property {TrainingRun[]} trainingRuns
- * @property {TrainingMetricSeries[]} trainingMetricSeries
  * @property {TrainingObservation[]} trainingObservations
  */

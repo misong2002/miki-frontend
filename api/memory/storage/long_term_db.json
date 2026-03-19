@@ -2,9 +2,9 @@
   "meta": {
     "version": 1,
     "created_at": 1773652891145,
-    "updated_at": 1773885143721,
-    "last_archive_at": 1773885143673,
-    "last_digest_rebuild_at": 1773885143721
+    "updated_at": 1773902572236,
+    "last_archive_at": 1773902572233,
+    "last_digest_rebuild_at": 1773902572236
   },
   "session_summaries": [
     {
@@ -388,6 +388,23 @@
       "source_message_count": 255,
       "created_at": 1773885143669,
       "updated_at": 1773885143669
+    },
+    {
+      "id": "summary-ae212805f1ed",
+      "wake_cycle_ids": [
+        "wake_1773760155447_jr9jxc"
+      ],
+      "start_at": 1773760188351,
+      "end_at": 1773761027716,
+      "summary": "这是一段非常简短的交互，助手在等待用户回应，期间出现了一次网络连接失败（Failed to fetch），之后连接恢复。整个对话没有实质性内容交流。",
+      "topics": [
+        "连接问题"
+      ],
+      "open_loops": [],
+      "resolved_items": [],
+      "source_message_count": 4,
+      "created_at": 1773902572233,
+      "updated_at": 1773902572233
     }
   ],
   "user_facts": [
@@ -1750,7 +1767,7 @@
         "project-0892508dd775"
       ],
       "created_at": 1773652891146,
-      "updated_at": 1773885143721
+      "updated_at": 1773902572236
     }
   ]
 }

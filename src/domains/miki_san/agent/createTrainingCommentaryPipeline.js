@@ -1,5 +1,3 @@
-// src/domains/miki_san/agent/createTrainingCommentaryPipeline.js
-
 function defaultSafeCall(fn, fallback = null, label = "safeCall") {
   return Promise.resolve()
     .then(() => {
@@ -21,14 +19,22 @@ function defaultFormatBattleCommentPrefix(timestamp, epoch) {
   return `(${hh}:${mm}:${ss} || ${epochText})`;
 }
 
-/**
- * 训练评论流水线：
- * - perception: 从 lossData 提取 comment / feature / epoch
- * - perceptionGate: 做节流和同类抑制
- * - setTrainingStatus: 把 feature 传给角色状态机
- * - recordObservation: 持久化训练观察
- * - emitContactFeed: 广播给 battle contact panel
- */
+function buildCommentaryPayload({
+  now,
+  epoch,
+  comment,
+  feature,
+  formatBattleCommentPrefix,
+}) {
+  return {
+    comment: `${formatBattleCommentPrefix(now, epoch)} ${comment}`,
+    rawComment: comment,
+    feature,
+    epoch,
+    timestamp: now,
+  };
+}
+
 export function createTrainingCommentaryPipeline({
   perception,
   perceptionGate,
@@ -44,53 +50,95 @@ export function createTrainingCommentaryPipeline({
     );
   }
 
-  if (!perceptionGate?.shouldEmit || !perceptionGate?.markEmitted) {
+  if (!perceptionGate?.accept) {
     throw new Error(
-      "createTrainingCommentaryPipeline: perceptionGate.shouldEmit and markEmitted are required"
+      "createTrainingCommentaryPipeline: perceptionGate.accept is required"
     );
   }
 
-  async function handleLossUpdate(lossData) {
+  function analyzeLossUpdate(lossData) {
     const now = Date.now();
 
     if (!Array.isArray(lossData) || lossData.length === 0) {
-      return null;
+      return {
+        emit: false,
+        reason: "empty_loss_data",
+        now,
+      };
     }
 
-    const result = perception.comment(lossData);
-    const { comment, feature, epoch } = result ?? {};
+    const perceptionResult = perception.comment(lossData);
+    const { comment, feature, epoch, rawFeature } = perceptionResult ?? {};
 
-    if (!comment || !String(comment).trim()) {
-      return null;
-    }
-
-    const shouldEmit = perceptionGate.shouldEmit({
-      comment,
-      feature,
-      now,
-    });
-
-    if (!shouldEmit) {
-      return null;
-    }
-
-    perceptionGate.markEmitted({
-      comment,
-      feature,
-      now,
-    });
-
-    if (typeof setTrainingStatus === "function") {
+    /**
+     * 训练语义更新不依赖 comment 是否最终发出。
+     * 只要 perception 给出了 feature，就把它喂给状态机。
+     */
+    if (typeof setTrainingStatus === "function" && feature && feature !== "none") {
       setTrainingStatus("running", feature);
     }
 
-    const payload = {
-      comment: `${formatBattleCommentPrefix(now, epoch)} ${comment}`,
-      rawComment: comment,
+    if (!comment || !String(comment).trim()) {
+      return {
+        emit: false,
+        reason: "empty_comment",
+        now,
+        feature,
+        rawFeature,
+        epoch,
+        perceptionResult,
+      };
+    }
+
+    const gateDecision = perceptionGate.accept({
+      comment,
       feature,
       epoch,
-      timestamp: now,
+      now,
+    });
+
+    if (!gateDecision.emit) {
+      return {
+        emit: false,
+        reason: gateDecision.reason,
+        now,
+        feature,
+        rawFeature,
+        epoch,
+        comment,
+        perceptionResult,
+        gateDecision,
+      };
+    }
+
+    const payload = buildCommentaryPayload({
+      now,
+      epoch,
+      comment,
+      feature,
+      formatBattleCommentPrefix,
+    });
+
+    return {
+      emit: true,
+      reason: "accepted",
+      now,
+      feature,
+      rawFeature,
+      epoch,
+      comment,
+      payload,
+      perceptionResult,
+      gateDecision,
     };
+  }
+
+  async function commitCommentaryDecision(decision) {
+    if (!decision?.emit || !decision.payload) {
+      return null;
+    }
+
+    const { now, epoch, feature, comment, payload } = decision;
 
     await safeCall(
       () =>
@@ -112,7 +160,17 @@ export function createTrainingCommentaryPipeline({
     return payload;
   }
 
+  async function handleLossUpdate(lossData) {
+    const decision = analyzeLossUpdate(lossData);
+    if (!decision.emit) {
+      return null;
+    }
+    return commitCommentaryDecision(decision);
+  }
+
   return {
+    analyzeLossUpdate,
+    commitCommentaryDecision,
     handleLossUpdate,
   };
 }

@@ -1,5 +1,3 @@
-// src/domains/miki_san/memory/memorySelectors.js
-
 import {
   getLatestWakeCycle,
   listMessagesByWakeCycle,
@@ -7,39 +5,34 @@ import {
   listTrainingRunsByWakeCycle,
 } from "./memoryStore";
 
-/**
- * 获取最新 wake cycle。
- */
+function truncateText(text, maxChars) {
+  const s = typeof text === "string" ? text : "";
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return "";
+  if (s.length <= maxChars) return s;
+  return `${s.slice(0, maxChars)}…`;
+}
+
 export function selectLatestWakeCycle() {
   return getLatestWakeCycle();
 }
 
-/**
- * 获取 UI 显示的最近消息，跨 wakeCycle
- * @param {number} limit - 消息条数
- * @param {number} wakeCycleCount - 最近几个 wakeCycle
- */
 export function selectMessagesForUI(limit = 50, wakeCycleCount = 3) {
   const wakeCycles = listRecentWakeCycles(wakeCycleCount);
   if (!wakeCycles.length) return [];
 
   const mergedMessages = wakeCycles
-    .slice() // copy
-    .reverse() // 从最旧到最新
+    .slice()
+    .reverse()
     .flatMap((wc) => listMessagesByWakeCycle(wc.id));
 
-  mergedMessages.sort((a, b) => a.createdAt - b.createdAt);
+  mergedMessages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 
   return mergedMessages.slice(-limit);
 }
 
-/**
- * 给 prompt 注入的上下文。
- * 这里故意更保守，避免把整个历史一股脑塞进 LLM。
- */
 export function selectContextForPrompt({
-  maxMessages = 200,
-  maxCharsPerMessage = 10000,
+  maxMessages = 24,
+  maxCharsPerMessage = 600,
 } = {}) {
   const wakeCycle = getLatestWakeCycle();
   if (!wakeCycle) return [];
@@ -48,17 +41,11 @@ export function selectContextForPrompt({
 
   return messages.slice(-maxMessages).map((msg) => ({
     role: msg.role,
-    content:
-      typeof msg.content === "string"
-        ? msg.content.slice(-maxCharsPerMessage)
-        : "",
+    content: truncateText(msg.content, maxCharsPerMessage),
     meta: msg.meta ?? {},
   }));
 }
 
-/**
- * 获取最新 wake cycle 对应的训练 runs。
- */
 export function selectTrainingRunsForLatestWakeCycle() {
   const wakeCycle = getLatestWakeCycle();
   if (!wakeCycle) return [];

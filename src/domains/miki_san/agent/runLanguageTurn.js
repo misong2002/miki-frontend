@@ -1,3 +1,23 @@
+function resolveFinalAssistantText({
+  result,
+  finalAssistantText,
+  latestAssistantText,
+}) {
+  if (typeof result?.text === "string" && result.text) {
+    return result.text;
+  }
+
+  if (finalAssistantText) {
+    return finalAssistantText;
+  }
+
+  if (latestAssistantText) {
+    return latestAssistantText;
+  }
+
+  return "";
+}
+
 export async function runLanguageTurn(
   language,
   input,
@@ -38,16 +58,15 @@ export async function runLanguageTurn(
 
   const result = await language.hear(input, wrappedHandlers, options);
 
-  const assistantText =
-    (typeof result?.text === "string" && result.text) ||
-    finalAssistantText ||
-    latestAssistantText ||
-    "";
-
   return {
     result,
-    assistantText,
-    interrupted,
-    errorObj,
+    assistantText: resolveFinalAssistantText({
+      result,
+      finalAssistantText,
+      latestAssistantText,
+    }),
+    interrupted:
+      interrupted || result?.status === "interrupted" || false,
+    errorObj: errorObj ?? result?.error ?? null,
   };
 }
