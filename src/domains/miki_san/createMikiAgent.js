@@ -400,7 +400,7 @@ export function createMikiAgent({
     }
 
     const messageId = createMessageId("miki-remind");
-    console.log("[MikiAgent.remind] running remind");
+    console.log("[MikiAgent.remind] running remind with prompt:",{prompt});
     const turnResult = await runAgentTurn({
       inputText: prompt,
       messageId,

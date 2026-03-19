@@ -68,10 +68,21 @@ function buildLongTermMemoryBlock(longTermMemory) {
   return blocks.join("\n").trim();
 }
 
+function truncatePromptContent(content, limit) {
+  if (typeof content !== "string") return "";
+  const text = content.trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…`;
+}
+
 export function buildRemindPrompt(messages, longTermMemory = null) {
+  const CODE_BLOCK_MARKER = "```";
+  const NORMAL_MESSAGE_LIMIT = 1200;
+  const CODE_MESSAGE_LIMIT = 300;
+
   const validMessages = (Array.isArray(messages) ? messages : [])
     .filter((msg) => typeof msg?.content === "string" && msg.content.trim())
-    .slice(-50);
+    .slice(-30);
 
   const now = Date.now();
 
@@ -86,7 +97,21 @@ export function buildRemindPrompt(messages, longTermMemory = null) {
     .map((msg) => {
       const role = formatDialogueRole(msg.role);
       const timeText = formatPromptTime(msg.createdAt);
-      return `[${timeText}] ${role}：${msg.content.trim()}`;
+
+      const rawContent = msg.content.trim();
+      const hasCodeBlock = rawContent.includes(CODE_BLOCK_MARKER);
+
+      const contentLimit = hasCodeBlock
+        ? CODE_MESSAGE_LIMIT
+        : NORMAL_MESSAGE_LIMIT;
+
+      const clippedContent = truncatePromptContent(rawContent, contentLimit);
+
+      const codeHint = hasCodeBlock
+        ? `\n[系统备注：该消息包含代码块，已按 ${CODE_MESSAGE_LIMIT} 字符上限截断]`
+        : "";
+
+      return `[${timeText}] ${role}：${clippedContent}${codeHint}`;
     })
     .join("\n");
 

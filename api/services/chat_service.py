@@ -44,7 +44,7 @@ def create_chat_stream_response(
             model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=50000,
+            max_tokens=8000,
             stream=True,
         )
     except Exception as e:

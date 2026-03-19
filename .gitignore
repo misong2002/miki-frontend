@@ -1,3 +1,4 @@
 public/model/
 node_modules/
 dist/
+api/memory/storage
