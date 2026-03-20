@@ -88,8 +88,10 @@ export function createMikiAgent({
   initialStageProps = DEFAULT_STAGE_PROPS,
 } = {}) {
   const externality = createExternalityModule({
-    initialStageProps,
-    onStageChange,
+    initialModelKey: initialStageProps?.modelKey ?? DEFAULT_STAGE_PROPS.modelKey,
+    initialPosition: initialStageProps?.position ?? DEFAULT_STAGE_PROPS.position,
+    initialScale: initialStageProps?.scale ?? DEFAULT_STAGE_PROPS.scale,
+    onChange: onStageChange,
   });
 
   const runtimeBridge = createCharacterRuntimeBridge({
@@ -123,7 +125,7 @@ export function createMikiAgent({
   };
 
   function emitStageChange(nextStageProps) {
-    externality?.setStageProps?.(nextStageProps);
+    externality?.patch?.(nextStageProps);
   }
 
   function setTrainingStatus(status = "idle", semantic = "idle") {
@@ -464,12 +466,27 @@ export function createMikiAgent({
     }
   }
 
-  function setStagePreset(preset) {
-    externality?.setStagePreset?.(preset);
+  function setStageProps(nextStageProps) {
+    if (!nextStageProps) return;
+
+    emitStageChange({
+      ...getStageProps(),
+      ...nextStageProps,
+    });
+  }
+
+  function setStagePreset(presetKey) {
+    if (presetKey === "normal" || presetKey === "magical") {
+      externality?.setModelKey?.(presetKey);
+    }
   }
 
   function resetStage() {
-    externality?.resetStage?.();
+    externality?.patch?.({
+      modelKey: initialStageProps?.modelKey ?? DEFAULT_STAGE_PROPS.modelKey,
+      position: initialStageProps?.position ?? DEFAULT_STAGE_PROPS.position,
+      scale: initialStageProps?.scale ?? DEFAULT_STAGE_PROPS.scale,
+    });
   }
 
   function subscribeStage(listener) {
@@ -477,7 +494,7 @@ export function createMikiAgent({
   }
 
   function getStageProps() {
-    return externality?.getStageProps?.() ?? DEFAULT_STAGE_PROPS;
+    return externality?.getState?.() ?? DEFAULT_STAGE_PROPS;
   }
 
   function setBattleModeActive(active) {
@@ -564,8 +581,10 @@ export function createMikiAgent({
       stage: {
         subscribeStage,
         setStagePreset,
-        resetStage,
+        setPreset: setStagePreset,
         getStageProps,
+        resetStage,
+        setStageProps,
       },
 
       getDebugAPI,

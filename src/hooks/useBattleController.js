@@ -119,7 +119,7 @@ export function useBattleController({
 
     await delay(800);
 
-    stageAgent?.setPreset?.(defaultStageProps);
+    stageAgent?.setStageProps?.(defaultStageProps);
 
     setBattle(resetBattleState());
     setBattleExiting(false);
@@ -183,14 +183,14 @@ export function useBattleController({
       startResult = await startBattle(trainConfig);
     } catch (err) {
       console.error("[battle] startBattle failed:", err);
-      stageAgent?.setPreset?.(defaultStageProps);
+      stageAgent?.setStageProps?.(defaultStageProps);
       appAgent?.setMode?.(appModeEnum.CHAT);
       setMode(appModeEnum.CHAT);
       return;
     }
 
     await delay(150);
-    stageAgent?.setPreset?.(magicalStageProps);
+    stageAgent?.setStageProps?.(magicalStageProps);
     await delay(350);
 
     try {
@@ -254,7 +254,7 @@ export function useBattleController({
 
     await trySaveTrainingHistory();
 
-    stageAgent?.setPreset?.(defaultStageProps);
+    stageAgent?.setStageProps?.(defaultStageProps);
 
     setBattle(resetBattleState());
     appAgent?.setMode?.(appModeEnum.CHAT);
@@ -271,7 +271,7 @@ export function useBattleController({
         if (cancelled) return;
 
         if (status.running) {
-          stageAgent?.setPreset?.(magicalStageProps);
+          stageAgent?.setStageProps?.(magicalStageProps);
 
           const introMessages = [
             makeContactMessage({
@@ -293,13 +293,13 @@ export function useBattleController({
           appAgent?.setMode?.(appModeEnum.BATTLE);
           setMode(appModeEnum.BATTLE);
         } else {
-          stageAgent?.setPreset?.(defaultStageProps);
+          stageAgent?.setStageProps?.(defaultStageProps);
           appAgent?.setMode?.(appModeEnum.CHAT);
           setMode(appModeEnum.CHAT);
         }
       } catch (err) {
         console.error("[bootstrap] failed to get battle status:", err);
-        stageAgent?.setPreset?.(defaultStageProps);
+        stageAgent?.setStageProps?.(defaultStageProps);
         appAgent?.setMode?.(appModeEnum.CHAT);
         setMode(appModeEnum.CHAT);
       }
