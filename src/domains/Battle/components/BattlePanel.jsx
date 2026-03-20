@@ -58,7 +58,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
         <div className="battle-chart-title">最近魔力波动（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={recentData}>
+            <LineChart data={recentData.slice(-200)}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
               <XAxis dataKey="epoch" />
               <YAxis domain={["auto", "auto"]} />

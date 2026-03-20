@@ -1,3 +1,4 @@
+// src/domains/miki_san/memory/memoryStore.js
 const STORAGE_KEY = "miki_memory_v2";
 const LEGACY_STORAGE_KEY = "miki_memory_v1";
 
@@ -38,22 +39,13 @@ function inferSchemaVersion(db) {
     return db.meta.schemaVersion;
   }
 
-  /**
-   * 老库如果带 trainingMetricSeries，但没有明确 schemaVersion，
-   * 视为旧版结构。
-   */
   if (Array.isArray(db?.trainingMetricSeries)) {
     return 1;
   }
 
-  return 2;
+  return 1;
 }
 
-/**
- * 兼容旧库，并在规范化时：
- * - 保留 wakeCycles/chatMessages/trainingRuns/trainingObservations
- * - 显式丢弃 trainingMetricSeries
- */
 function normalizeDB(db) {
   const source = db ?? {};
   const inferredSchemaVersion = inferSchemaVersion(source);
@@ -83,25 +75,7 @@ function normalizeDB(db) {
 
 let memoryCache = null;
 
-function readFromStorage() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return createEmptyDB();
-  }
-
-  const rawV2 = window.localStorage.getItem(STORAGE_KEY);
-  if (rawV2) {
-    return normalizeDB(safeParse(rawV2, createEmptyDB()));
-  }
-
-  const rawLegacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-  if (rawLegacy) {
-    return normalizeDB(safeParse(rawLegacy, createEmptyDB()));
-  }
-
-  return createEmptyDB();
-}
-
-function writeToStorage(db) {
+function writeNormalizedV2ToStorage(db) {
   if (typeof window === "undefined" || !window.localStorage) return;
 
   const normalized = normalizeDB(db);
@@ -117,12 +91,34 @@ function writeToStorage(db) {
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDB));
 
-  /**
-   * 一旦成功写回 v2，就移除旧 key。
-   */
   if (STORAGE_KEY !== LEGACY_STORAGE_KEY) {
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
+}
+
+function readFromStorage() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return createEmptyDB();
+  }
+
+  const rawV2 = window.localStorage.getItem(STORAGE_KEY);
+  if (rawV2) {
+    const parsed = safeParse(rawV2, createEmptyDB());
+    return normalizeDB(parsed);
+  }
+
+  const rawLegacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (rawLegacy) {
+    const parsedLegacy = safeParse(rawLegacy, createEmptyDB());
+    const migrated = normalizeDB(parsedLegacy);
+
+    // 强制迁移：只要读到了 v1，就立刻写成 v2 并删除 v1
+    writeNormalizedV2ToStorage(migrated);
+
+    return migrated;
+  }
+
+  return createEmptyDB();
 }
 
 function ensureCache() {
@@ -136,7 +132,7 @@ function commitDB(mutator) {
   const base = normalizeDB(ensureCache());
   const next = normalizeDB(mutator(base) ?? base);
   memoryCache = next;
-  writeToStorage(next);
+  writeNormalizedV2ToStorage(next);
   return next;
 }
 
@@ -151,7 +147,7 @@ export function reloadMemoryDB() {
 
 export function resetMemoryDB() {
   memoryCache = createEmptyDB();
-  writeToStorage(memoryCache);
+  writeNormalizedV2ToStorage(memoryCache);
   return memoryCache;
 }
 
@@ -171,7 +167,7 @@ export function estimateMemoryDBSize() {
 export function replaceMemoryDB(nextDB) {
   const safeDB = normalizeDB(nextDB);
   memoryCache = safeDB;
-  writeToStorage(safeDB);
+  writeNormalizedV2ToStorage(safeDB);
   return safeDB;
 }
 

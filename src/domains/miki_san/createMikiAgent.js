@@ -15,7 +15,7 @@ import { createPerceptionGate } from "./agent/perceptionGate";
 
 const DEFAULT_STAGE_PROPS = {
   modelKey: "normal",
-  position: { x: 0.5, y: 0.85 },
+  position: { x: 0.5, y: 1.0 },
   scale: 1.0,
 };
 
@@ -391,6 +391,7 @@ export function createMikiAgent({
   }
 
   async function start(handlers = {}) {
+    console.log("[MikiAgent.start] called with handlers:", handlers);
     if (hasStarted) {
       emitBootPhase(handlers, "ready");
       return;
@@ -538,12 +539,14 @@ export function createMikiAgent({
 
     agent: {
       chat: {
-        hear,
-        remind,
-        interrupt,
-        isBusy,
-        getBootstrapMessages,
-      },
+              hear,
+              sendMessage: hear,
+              sendUserMessage: hear,
+              remind,
+              interrupt,
+              isBusy,
+              getBootstrapMessages,
+            },
 
       app: {
         start,

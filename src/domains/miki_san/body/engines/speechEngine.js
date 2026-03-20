@@ -186,12 +186,12 @@ class SpeechEngine {
     if (!DEBUG_SPEECH_ENGINE) return;
 
     const time = new Date().toLocaleTimeString();
-    console.log(
-      `%c[SpeechEngine ${type}]`,
-      "color:#17a34a;font-weight:bold",
-      time,
-      payload
-    );
+    // console.log(
+    //   `%c[SpeechEngine ${type}]`,
+    //   "color:#17a34a;font-weight:bold",
+    //   time,
+    //   payload
+    // );
   }
 }
 

@@ -1,27 +1,35 @@
-// src/hooks/useMikiAgent.js
 import { useRef } from "react";
 import { createMikiAgent } from "../domains/miki_san/createMikiAgent";
+
+const FALLBACK_STAGE_PROPS = {
+  modelKey: "normal",
+  position: { x: 0.5, y: 1.0 },
+  scale: 1.0,
+};
 
 export function useMikiAgent({ onStageChange } = {}) {
   const agentRef = useRef(null);
   const initialStagePropsRef = useRef(null);
 
   if (!agentRef.current) {
-    const agent = createMikiAgent({
+    const created = createMikiAgent({
       onStageChange,
     });
 
-    agentRef.current = agent;
+    agentRef.current = created?.agent ?? null;
     initialStagePropsRef.current =
-      agent?.stage?.getSnapshot?.() ?? {
-        modelKey: "normal",
-        position: { x: 0.5, y: 1.0 },
-        scale: 1.0,
-      };
+      created?.initialStageProps ?? FALLBACK_STAGE_PROPS;
   }
 
   return {
-    agent: agentRef.current,
-    initialStageProps: initialStagePropsRef.current,
+    agent:
+      agentRef.current ?? {
+        chat: {},
+        app: {},
+        battle: {},
+        stage: {},
+        getDebugAPI: null,
+      },
+    initialStageProps: initialStagePropsRef.current ?? FALLBACK_STAGE_PROPS,
   };
 }

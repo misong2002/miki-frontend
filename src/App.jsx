@@ -83,7 +83,19 @@ export default function App() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    window.mikiCharacterDebug = agent?.getDebugAPI?.();
+    const debugAPI =
+      agent && typeof agent.getDebugAPI === "function"
+        ? agent.getDebugAPI()
+        : null;
+
+    console.log("[App] agent =", agent);
+    console.log("[App] debugAPI =", debugAPI);
+
+    if (debugAPI) {
+      window.mikiCharacterDebug = debugAPI;
+    } else {
+      delete window.mikiCharacterDebug;
+    }
 
     return () => {
       delete window.mikiCharacterDebug;

@@ -20,12 +20,15 @@ export function useChatBootstrap({
   const [initialChatMessages, setInitialChatMessages] = useState([]);
   const [bootPhase, setBootPhase] = useState("idle");
   const [hintIndex, setHintIndex] = useState(0);
-
+  const isSummarizingPhase =
+      bootPhase === "archiving" || bootPhase === "compacting";
   /**
    * 在“摘要/整理”阶段轮播提示语
    */
   useEffect(() => {
-    if (bootPhase !== "summarizing") return;
+
+
+    if (!isSummarizingPhase) return;
 
     const timer = window.setInterval(() => {
       setHintIndex((prev) => (prev + 1) % SUMMARIZING_HINTS.length);
@@ -50,7 +53,7 @@ export function useChatBootstrap({
       }
 
       setChatBootReady(false);
-      setBootPhase("summarizing");
+      setBootPhase("archiving");
       setHintIndex(0);
 
       try {
@@ -133,7 +136,7 @@ export function useChatBootstrap({
   const bootLoadingText = useMemo(() => {
     if (chatBootReady) return "";
 
-    if (bootPhase === "summarizing") {
+    if (isSummarizingPhase) {
       return SUMMARIZING_HINTS[hintIndex] ?? SUMMARIZING_HINTS[0];
     }
 
@@ -155,7 +158,7 @@ export function useChatBootstrap({
    *
    * 所以这里只在 summarizing 隐藏模型。
    */
-  const hideStageModel = bootPhase === "summarizing" && !chatBootReady;
+  const hideStageModel = isSummarizingPhase && !chatBootReady;
 
   return {
     chatBootReady,

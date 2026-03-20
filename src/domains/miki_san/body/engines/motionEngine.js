@@ -147,12 +147,12 @@ class MotionEngine {
     if (!DEBUG_MOTION_ENGINE) return;
 
     const time = new Date().toLocaleTimeString();
-    console.log(
-      `%c[MotionEngine ${type}]`,
-      "color:#4d7cff;font-weight:bold",
-      time,
-      payload
-    );
+    // console.log(
+    //   `%c[MotionEngine ${type}]`,
+    //   "color:#4d7cff;font-weight:bold",
+    //   time,
+    //   payload
+    // );
   }
 }
 

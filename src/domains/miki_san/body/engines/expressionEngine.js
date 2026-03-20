@@ -147,12 +147,12 @@ class ExpressionEngine {
     if (!DEBUG_EXPRESSION_ENGINE) return;
 
     const time = new Date().toLocaleTimeString();
-    console.log(
-      `%c[ExpressionEngine ${type}]`,
-      "color:#ff4d6d;font-weight:bold",
-      time,
-      payload
-    );
+    // console.log(
+    //   `%c[ExpressionEngine ${type}]`,
+    //   "color:#ff4d6d;font-weight:bold",
+    //   time,
+    //   payload
+    // );
   }
 }
 
