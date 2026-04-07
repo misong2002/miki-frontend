@@ -144,6 +144,10 @@ export function createMikiAgent({
     externality?.emitContactFeed?.(payload);
   }
 
+  function subscribeContactFeed(listener) {
+    return externality?.subscribeContactFeed?.(listener) ?? (() => {});
+  }
+
   function getCurrentWakeCycleIdSafe() {
     return memory?.getCurrentWakeCycleId?.() ?? null;
   }
@@ -184,6 +188,13 @@ export function createMikiAgent({
 
     character.dispatch({
       type: "USER_ACTIVE",
+      source,
+    });
+  }
+
+  function setUserIdle(source = "user_idle") {
+    character.dispatch({
+      type: "USER_IDLE",
       source,
     });
   }
@@ -540,6 +551,7 @@ export function createMikiAgent({
       trainingStatus: () => trainingStatus,
 
       setUserActive,
+      setUserIdle,
       setBattleModeActive,
       setStagePreset,
       resetStage,
@@ -548,6 +560,7 @@ export function createMikiAgent({
       startTrainingRun,
       endTrainingRun,
       handleLossUpdate,
+      subscribeContactFeed,
     };
   }
 
@@ -556,18 +569,21 @@ export function createMikiAgent({
 
     agent: {
       chat: {
-              hear,
-              sendMessage: hear,
-              sendUserMessage: hear,
-              remind,
-              interrupt,
-              isBusy,
-              getBootstrapMessages,
-            },
+        hear,
+        sendMessage: hear,
+        sendUserMessage: hear,
+        remind,
+        interrupt,
+        isBusy,
+        getBootstrapMessages,
+      },
 
       app: {
         start,
         setUserActive,
+        setUserIdle,
+        notifyUserActivity: setUserActive,
+        notifyUserIdle: setUserIdle,
         clearLocalMemory: () => memory?.clearLocalMemory?.(),
         compactLocalMemory: () => memory?.compactLocalMemory?.(),
       },
@@ -576,6 +592,10 @@ export function createMikiAgent({
         startTrainingRun,
         endTrainingRun,
         handleLossUpdate,
+        submitLossData: handleLossUpdate,
+        subscribeContactFeed,
+        setTrainingSemantic: setTrainingStatus,
+        interrupt,
       },
 
       stage: {

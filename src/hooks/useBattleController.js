@@ -28,6 +28,20 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getSessionKey(session) {
+  if (!session) return null;
+
+  if (session.job_id != null) {
+    return `cluster:${session.job_id}`;
+  }
+
+  if (session.pid != null) {
+    return `local:${session.pid}`;
+  }
+
+  return null;
+}
+
 export function useBattleController({
   battleAgent,
   appAgent,
@@ -53,6 +67,14 @@ export function useBattleController({
   const modeRef = useRef(mode);
   const battleExitingRef = useRef(battleExiting);
 
+  /**
+   * 当前活跃 session 的 key。
+   * 用来在“检测到 session 关闭”时只保存一次 history，
+   * 避免轮询阶段重复触发。
+   */
+  const activeSessionKeyRef = useRef(null);
+  const savedClosedSessionKeyRef = useRef(null);
+
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
@@ -69,6 +91,32 @@ export function useBattleController({
       ),
     });
   }, [initialBattleState]);
+
+  function markSessionRunning(session) {
+    const nextKey = getSessionKey(session);
+    if (!nextKey) return;
+
+    if (activeSessionKeyRef.current !== nextKey) {
+      activeSessionKeyRef.current = nextKey;
+      savedClosedSessionKeyRef.current = null;
+    }
+  }
+
+  async function saveHistoryOnSessionClosedOnce(sessionKey = null) {
+    const key = sessionKey ?? activeSessionKeyRef.current ?? "__unknown_session__";
+
+    if (savedClosedSessionKeyRef.current === key) {
+      return false;
+    }
+
+    const ok = await trySaveTrainingHistory();
+
+    if (ok) {
+      savedClosedSessionKeyRef.current = key;
+    }
+
+    return ok;
+  }
 
   async function loadBattleLoss() {
     try {
@@ -105,8 +153,6 @@ export function useBattleController({
     setBattleExiting(true);
     stopLossPolling();
 
-    await trySaveTrainingHistory();
-
     setBattle((prev) => ({
       ...prev,
       contactMessages: [
@@ -122,6 +168,7 @@ export function useBattleController({
     stageAgent?.setStageProps?.(defaultStageProps);
 
     setBattle(resetBattleState());
+    activeSessionKeyRef.current = null;
     setBattleExiting(false);
 
     appAgent?.setMode?.(appModeEnum.CHAT);
@@ -139,12 +186,19 @@ export function useBattleController({
     try {
       const status = await fetchBattleStatus();
 
-      if (!status.running) {
-        await handleBattleFinishedExit();
-        return false;
+      if (status.running) {
+        markSessionRunning(status.session);
+        return true;
       }
 
-      return true;
+      /**
+       * 这里是本次改动的核心：
+       * 只要检测到 session 已关闭，就立刻自动保存 history，
+       * 不再把 save_history 绑定到 AppMode 切换本身。
+       */
+      await saveHistoryOnSessionClosedOnce();
+      await handleBattleFinishedExit();
+      return false;
     } catch (err) {
       console.error("[battle] fetch status failed:", err);
       return true;
@@ -189,6 +243,11 @@ export function useBattleController({
       return;
     }
 
+    markSessionRunning({
+      job_id: startResult?.result?.job_id ?? null,
+      pid: startResult?.result?.pid ?? startResult?.pid ?? null,
+    });
+
     await delay(150);
     stageAgent?.setStageProps?.(magicalStageProps);
     await delay(350);
@@ -201,18 +260,19 @@ export function useBattleController({
           ? `JOB ${startResult.result.job_id}`
           : `PID ${startResult?.result?.pid ?? startResult?.pid ?? "unknown"}`;
 
-      setBattle((prev) => ({
-        ...prev,
-        contactMessages: [
-          makeContactMessage({ comment: "准备好了吗？要进入结界了！" }),
-          makeContactMessage({ comment: `已进入魔女结界：${pidOrJob}` }),
-          makeContactMessage({
-            comment: "站在我身后就好，帮我盯着魔力波动！",
-          }),
-        ],
-        lossData: result.data ?? [],
-        lossMeta: result.meta ?? null,
-      }));
+          setBattle((prev) => ({
+            ...prev,
+            contactMessages: [
+              ...prev.contactMessages,
+              makeContactMessage({ comment: "准备好了吗？要进入结界了！" }),
+              makeContactMessage({ comment: `已进入魔女结界：${pidOrJob}` }),
+              makeContactMessage({
+                comment: "站在我身后就好，帮我盯着魔力波动！",
+              }),
+            ].slice(-100),
+            lossData: result.data ?? [],
+            lossMeta: result.meta ?? null,
+          }));
     } catch (err) {
       console.error("[battle] fetchLossData failed:", err);
 
@@ -252,11 +312,16 @@ export function useBattleController({
       console.error("[battle] stop failed:", err);
     }
 
-    await trySaveTrainingHistory();
+    /**
+     * 手动退出本质上也是 session 被关闭。
+     * 这里同样按“检测到关闭后保存一次”的语义处理。
+     */
+    await saveHistoryOnSessionClosedOnce();
 
     stageAgent?.setStageProps?.(defaultStageProps);
 
     setBattle(resetBattleState());
+    activeSessionKeyRef.current = null;
     appAgent?.setMode?.(appModeEnum.CHAT);
     setMode(appModeEnum.CHAT);
     setBattleExiting(false);
@@ -271,6 +336,7 @@ export function useBattleController({
         if (cancelled) return;
 
         if (status.running) {
+          markSessionRunning(status.session);
           stageAgent?.setStageProps?.(magicalStageProps);
 
           const introMessages = [

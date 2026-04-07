@@ -10,6 +10,7 @@ import {
 
 export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
   const recentData = lossData.slice(-200);
+
   //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (
     <div className="battle-shell">
@@ -34,7 +35,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={lossData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
-              <XAxis dataKey="epoch" />
+              <XAxis dataKey="epoch" type="number" domain={["dataMin", "dataMax"]} />
               <YAxis
               scale='log' 
               domain={["auto", "auto"]} 
@@ -58,9 +59,13 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
         <div className="battle-chart-title">最近魔力波动（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={recentData.slice(-200)}>
+            <LineChart data={recentData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
-              <XAxis dataKey="epoch" />
+              <XAxis
+                  dataKey="epoch"
+                  type="number"
+                  domain={["dataMin", "dataMax"]}
+                />
               <YAxis domain={["auto", "auto"]} />
               <Tooltip  isAnimationActive={false}/>
               <Line

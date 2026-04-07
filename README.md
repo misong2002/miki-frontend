@@ -1,4 +1,4 @@
-# MIKI Frontend v1.1 — Extinguisher
+# MIKI Frontend v1.8 — Extinguisher
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -7,6 +7,14 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 ---
 
 ## What's New in 
+
+### v1.8
+
+Add plotting. Improved history saving logic. Add initialization from history. Fixed some bugs.
+
+### v1.5
+
+Improve local context management and memory retrieval. Now can smoothly run on servers.
 
 ### v1.2
 

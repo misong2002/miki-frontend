@@ -1,5 +1,5 @@
 const DEFAULT_IDLE_MOTION_POOL = ["idle_default", "idle_relaxing"];
-const DEFAULT_IDLE_EXPRESSION_POOL = ["smile", "neutral"];
+const DEFAULT_IDLE_EXPRESSION_POOL = ["smile", "calm_smile"];
 
 const DEFAULT_TRAINING_INTENT_MAP = Object.freeze({
   rapid_drop: { emotion: "smile", motion: "assertive" },

@@ -18,8 +18,8 @@ export const PERCEPTION_CONFIG = {
   /**
    * 慢特征累计触发阈值。
    */
-  PLATEAU_TRIGGER_COUNT: 4,
-  STUCK_TRIGGER_COUNT: 5,
+  PLATEAU_TRIGGER_COUNT: 3,
+  STUCK_TRIGGER_COUNT: 3,
 
   /**
    * 候选态断续时，允许 miss 的次数。

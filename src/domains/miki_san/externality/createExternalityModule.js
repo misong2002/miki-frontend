@@ -10,8 +10,45 @@ export function createExternalityModule({
     scale: initialScale,
   };
 
+  const contactFeedListeners = new Set();
+  const stageListeners = new Set();
+
   function emitChange() {
-    onChange?.(getState());
+    const snapshot = getState();
+    onChange?.(snapshot);
+    stageListeners.forEach((listener) => {
+      try {
+        listener(snapshot);
+      } catch (err) {
+        console.warn("[externality] stage listener failed:", err);
+      }
+    });
+  }
+
+  function emitContactFeed(payload) {
+    contactFeedListeners.forEach((listener) => {
+      try {
+        listener(payload);
+      } catch (err) {
+        console.warn("[externality] contact feed listener failed:", err);
+      }
+    });
+  }
+
+  function subscribeContactFeed(listener) {
+    if (typeof listener !== "function") return () => {};
+    contactFeedListeners.add(listener);
+    return () => {
+      contactFeedListeners.delete(listener);
+    };
+  }
+
+  function subscribeStage(listener) {
+    if (typeof listener !== "function") return () => {};
+    stageListeners.add(listener);
+    return () => {
+      stageListeners.delete(listener);
+    };
   }
 
   function getState() {
@@ -114,5 +151,8 @@ export function createExternalityModule({
     setPosition,
     setScale,
     patch,
+    emitContactFeed,
+    subscribeContactFeed,
+    subscribeStage,
   };
 }

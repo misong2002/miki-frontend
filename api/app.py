@@ -14,7 +14,7 @@ def create_app() -> Flask:
     app.register_blueprint(battle_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(memory_bp)
-    app.register_blueprint(history_bp)
+    app.register_blueprint(history_bp, url_prefix="/api/history")
 
     return app
 

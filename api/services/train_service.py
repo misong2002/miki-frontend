@@ -384,7 +384,7 @@ def read_training_loss():
 
         sampled_data = downsample_loss_data(
             raw_data,
-            keep_recent=100,
+            keep_recent=200,
             max_history_samples=1000,
         )
 

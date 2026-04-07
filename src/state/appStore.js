@@ -30,7 +30,7 @@ export const initialBattleState = {
   contactMessages: [
     {
       id: "battle-init-1",
-      content:  "……准备好了吗？这边就先顶上了。",
+      content:  "（语音频道初始化中……）",
       createdAt: Date.now(),
       epoch: null,
     },
