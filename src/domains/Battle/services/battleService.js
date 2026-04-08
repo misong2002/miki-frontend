@@ -1,5 +1,7 @@
+import { buildApiUrl } from "../../../api";
+
 export async function startBattle(config) {
-  const res = await fetch("/api/battle/start", {
+  const res = await fetch(buildApiUrl("/api/battle/start"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -16,7 +18,7 @@ export async function startBattle(config) {
 }
 
 export async function stopBattle() {
-  const response = await fetch("/api/battle/stop", {
+  const response = await fetch(buildApiUrl("/api/battle/stop"), {
     method: "POST",
   });
 
@@ -28,7 +30,7 @@ export async function stopBattle() {
 }
 
 export async function fetchLossData() {
-  const response = await fetch("/api/battle/loss");
+  const response = await fetch(buildApiUrl("/api/battle/loss"));
 
   if (!response.ok) {
     throw new Error(`Failed to fetch loss data: ${response.status}`);
@@ -37,7 +39,7 @@ export async function fetchLossData() {
 }
 
 export async function fetchBattleStatus() {
-  const response = await fetch("/api/battle/status");
+  const response = await fetch(buildApiUrl("/api/battle/status"));
 
   if (!response.ok) {
     throw new Error(`Failed to fetch battle status: ${response.status}`);

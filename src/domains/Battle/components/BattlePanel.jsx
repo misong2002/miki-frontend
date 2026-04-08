@@ -7,9 +7,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { APP_CONFIG } from "../../../config";
 
 export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
-  const recentData = lossData.slice(-200);
+  const recentData = lossData.slice(
+    -APP_CONFIG.battleCharts.recentWindowPoints
+  );
 
   //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (

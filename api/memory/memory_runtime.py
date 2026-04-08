@@ -11,10 +11,12 @@ from .memory_store import (
     get_long_term_db,
     get_memory_digest_by_type,
     list_idea_memories,
+    list_idea_tag_catalog,
     list_memory_digests,
     list_project_states,
     list_session_summaries,
     list_user_facts,
+    rebuild_idea_tag_catalog,
     upsert_idea_memory,
     upsert_memory_digest,
     upsert_project_state,
@@ -188,6 +190,8 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         created_or_updated_projects.append(upsert_project_state(project_obj))
 
+    idea_tag_catalog = rebuild_idea_tag_catalog()
+
     digest = None
     if force_rebuild_digest:
       digest = rebuild_system_prompt_digest()
@@ -198,6 +202,7 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
         "summary": summary_obj,
         "fact_ids": [item["id"] for item in created_or_updated_facts],
         "idea_ids": [item["id"] for item in created_or_updated_ideas],
+        "idea_tag_catalog_count": len(idea_tag_catalog),
         "project_ids": [item["id"] for item in created_or_updated_projects],
         "digest_id": digest["id"] if digest else None,
         "updated_fact_keys": [item["key"] for item in created_or_updated_facts],
@@ -237,6 +242,7 @@ def get_recent_memory_snapshot(
         "session_summaries": list_session_summaries(limit=summary_limit),
         "user_facts": list_user_facts(),
         "idea_memories": list_idea_memories()[:idea_limit],
+        "idea_tag_catalog": list_idea_tag_catalog(),
         "project_states": list_project_states(),
         "memory_digests": list_memory_digests(),
     }

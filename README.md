@@ -1,4 +1,4 @@
-# MIKI Frontend v1.8 — Extinguisher
+# MIKI Frontend v2.0 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,29 +6,14 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in 
+## What's New in v2.0 — Saber
 
-### v1.8
-
-Add plotting. Improved history saving logic. Add initialization from history. Fixed some bugs.
-
-### v1.5
-
-Improve local context management and memory retrieval. Now can smoothly run on servers.
-
-### v1.2
-
-Add automated history management for model training sessions.
-
-### v1.1
-
-Remanaged program Structure.
-
-### v1.0 — Extinguisher
-
-- 🧠 **Short-term memory**: Miki now maintains conversation context across messages within a session.
-- 💾 **Long-term memory**: A persistent memory management system allows Miki to remember important facts, project states, and user context across sessions. No more waking up with amnesia every time.
-- 🎭 **Emotion & motion control**: Live2D expressions and animations are now driven by structured control tags, enabling Miki to react naturally during conversation and training.
+- 🧠 **Memory retrieval is now query-aware**: Miki no longer injects long-term memory as a static summary only. The backend now classifies the user's question by level and retrieves different memory bundles for profile questions, project-status questions, session recall, idea lookup, and targeted entity recall.
+- 🏷️ **Idea tags are now first-class retrieval signals**: all `idea_memories.tags` are collected into an `idea_tag_catalog`, maintained during wake-cycle archival, and used as direct retrieval keywords.
+- 💬 **Chat prompting is cleaner and more focused**: normal chat turns now primarily use the current user question plus the retrieved long-term memory block, instead of repeatedly stuffing the full short-term transcript into every turn.
+- 🔄 **Boot remind now runs after entering chat mode**: startup summarization and memory maintenance complete first, then Miki performs the wake-up recall once chat mode is ready, making the boot flow cleaner and less blocking.
+- 📊 **Battle chart sampling is now unified**: the recent-window limit and sparse-history sampling are shared between frontend and backend through one config source.
+- 🧪 **Retrieval visibility is easier to inspect**: retrieval debug information and the final injected memory block are now visible in the browser console for inspection and tuning.
 
 ---
 
@@ -187,7 +172,12 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
-| v1.0 | Extinguisher | Short-term & long-term memory system, emotion/motion control |
+| v2.0 | Saber | Query-level long-term memory routing, idea tag catalog maintenance, focused prompt injection, deferred remind after chat-mode entry, unified battle chart sampling |
+| v1.8 | Extinguisher | Plotting, improved history saving logic, initialization from history, bug fixes |
+| v1.5 | Extinguisher | Improved local context management and memory retrieval, smoother server-side running |
+| v1.2 | Extinguisher | Automated history management for model training sessions |
+| v1.1 | Extinguisher | Reorganized program structure |
+| v1.0 | Extinguisher | Short-term and long-term memory system, emotion and motion control |
 
 ---
 

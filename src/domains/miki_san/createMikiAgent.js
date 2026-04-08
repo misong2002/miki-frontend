@@ -199,6 +199,18 @@ export function createMikiAgent({
     });
   }
 
+  function setMode(mode = "chat") {
+    const normalizedMode =
+      mode === "battle" || mode === "transforming" ? mode : "chat";
+
+    emotionEngine.setMode(normalizedMode);
+
+    return {
+      ok: true,
+      mode: normalizedMode,
+    };
+  }
+
   async function getBootstrapMessages() {
     await ensureMemoryBooted();
 
@@ -278,6 +290,10 @@ export function createMikiAgent({
         status: "idle",
         text: "",
         error: null,
+        messageId: null,
+        meta: {
+          source: "boot_remind",
+        },
       };
     }
 
@@ -300,6 +316,10 @@ export function createMikiAgent({
         status: "idle",
         text: "",
         error: null,
+        messageId: null,
+        meta: {
+          source: "boot_remind",
+        },
       };
     }
 
@@ -326,6 +346,10 @@ export function createMikiAgent({
       status: turnResult?.result?.status ?? "done",
       text: turnResult?.assistantText ?? "",
       error: turnResult?.errorObj ?? null,
+      messageId,
+      meta: {
+        source: "boot_remind",
+      },
     };
   }
 
@@ -405,6 +429,8 @@ export function createMikiAgent({
 
   async function start(handlers = {}) {
     console.log("[MikiAgent.start] called with handlers:", handlers);
+    const deferRemind = Boolean(handlers?.deferRemind);
+
     if (hasStarted) {
       emitBootPhase(handlers, "ready");
       return;
@@ -439,7 +465,11 @@ export function createMikiAgent({
         "recoverableMessages =",
         recoverableMessages.length,
         "| action =",
-        hasRecoverableContext ? "boot_remind" : "skip_remind"
+        hasRecoverableContext
+          ? deferRemind
+            ? "defer_remind"
+            : "boot_remind"
+          : "skip_remind"
       );
 
       let remindResult = {
@@ -448,12 +478,13 @@ export function createMikiAgent({
         error: null,
       };
 
-      if (hasRecoverableContext) {
+      if (hasRecoverableContext && !deferRemind) {
         emitBootPhase(handlers, "reminding");
         remindResult = await remind(handlers);
       }
 
       const bootSucceeded =
+        deferRemind ||
         remindResult.status === "idle" ||
         remindResult.status === "done" ||
         remindResult.status === "interrupted";
@@ -580,6 +611,7 @@ export function createMikiAgent({
 
       app: {
         start,
+        setMode,
         setUserActive,
         setUserIdle,
         notifyUserActivity: setUserActive,

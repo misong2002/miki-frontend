@@ -1,5 +1,14 @@
+import json
+from pathlib import Path
+
 # 根目录
 MIKI_ROOT = "/home/mingzhuo/miki"  # 请不要用相对路径
+API_DIR = Path(__file__).resolve().parent
+FRONTEND_ROOT = API_DIR.parent
+SHARED_CONFIG_PATH = FRONTEND_ROOT / "shared" / "battle_chart_config.json"
+
+with SHARED_CONFIG_PATH.open("r", encoding="utf-8") as f:
+    _BATTLE_CHART_CONFIG = json.load(f)
 
 # 日志文件路径
 LOSS_FILE_PATH = MIKI_ROOT + "/data/loss.txt"
@@ -24,3 +33,10 @@ PLOT_SCRIPT_PATH = MIKI_ROOT + "/scripts/plot/plot.py"
 # LLM配置
 OPENAI_MODEL = "claude-opus-4-6"
 CHAT_SESSION_MEMORY_LIMIT = 12
+PROFILE_BUNDLE_MAX_FACTS = 20
+
+# Battle / loss sampling
+BATTLE_RECENT_WINDOW_POINTS = int(_BATTLE_CHART_CONFIG["recentWindowPoints"])
+BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS = int(
+    _BATTLE_CHART_CONFIG["globalSnapshotMaxPoints"]
+)

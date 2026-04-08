@@ -1,15 +1,21 @@
-from collections import defaultdict
+SINGLE_CHAT_SESSION_ID = "single-user-session"
+_session_messages: list[dict[str, str]] = []
 
-_sessions = defaultdict(list)
 
-def append_message(session_id: str, role: str, content: str):
-    _sessions[session_id].append({
+def get_single_chat_session_id() -> str:
+    return SINGLE_CHAT_SESSION_ID
+
+
+def append_message(role: str, content: str):
+    _session_messages.append({
         "role": role,
         "content": content,
     })
 
-def get_recent_messages(session_id: str, limit: int = 12):
-    return _sessions[session_id][-limit:]
 
-def clear_session(session_id: str):
-    _sessions.pop(session_id, None)
+def get_recent_messages(limit: int = 12):
+    return _session_messages[-limit:]
+
+
+def clear_session():
+    _session_messages.clear()

@@ -19,6 +19,34 @@ ARCHIVE_LOG_DIR = STORAGE_DIR / "archive_logs"
 DB_PATH = STORAGE_DIR / "long_term_db.json"
 
 
+def _normalize_tag_value(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _derive_idea_tag_catalog_from_db(db: Dict[str, Any]) -> List[str]:
+    seen = set()
+    catalog = []
+
+    for idea in db.get("idea_memories", []):
+        tags = idea.get("tags") or []
+        if not isinstance(tags, list):
+            continue
+
+        for raw_tag in tags:
+            tag = _normalize_tag_value(raw_tag)
+            if not tag:
+                continue
+
+            tag_key = tag.casefold()
+            if tag_key in seen:
+                continue
+
+            seen.add(tag_key)
+            catalog.append(tag)
+
+    return sorted(catalog, key=lambda item: item.casefold())
+
+
 def ensure_storage_dirs() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -38,6 +66,8 @@ def _normalize_db_shape(db: Dict[str, Any]) -> Dict[str, Any]:
     for meta_key, meta_value in default_db["meta"].items():
         if meta_key not in db["meta"]:
             db["meta"][meta_key] = meta_value
+
+    db["idea_tag_catalog"] = _derive_idea_tag_catalog_from_db(db)
 
     return db
 
@@ -160,6 +190,21 @@ def list_idea_memories(status: Optional[str] = None) -> List[Dict[str, Any]]:
     if status is not None:
         ideas = [x for x in ideas if x.get("status") == status]
     return sorted(ideas, key=lambda x: x.get("updated_at", 0), reverse=True)
+
+
+def list_idea_tag_catalog() -> List[str]:
+    db = load_long_term_db()
+    catalog = db.get("idea_tag_catalog") or []
+    if not isinstance(catalog, list):
+        return []
+    return [tag for tag in catalog if isinstance(tag, str) and tag.strip()]
+
+
+def rebuild_idea_tag_catalog() -> List[str]:
+    db = load_long_term_db()
+    db["idea_tag_catalog"] = _derive_idea_tag_catalog_from_db(db)
+    save_long_term_db(db)
+    return db["idea_tag_catalog"]
 
 
 def upsert_idea_memory(idea: Dict[str, Any]) -> Dict[str, Any]:

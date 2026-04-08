@@ -12,6 +12,7 @@ from memory.memory_runtime import (
     get_system_prompt_memory,
     rebuild_system_prompt_digest,
 )
+from services.chat_service import get_long_term_memory_retrieval_payload
 
 memory_bp = Blueprint("memory", __name__)
 
@@ -73,6 +74,22 @@ def rebuild_digest_route():
     except Exception as e:
         print("[memory rebuild-digest] error:", e, flush=True)
         return jsonify({"ok": False, "error": f"rebuild failed: {e}"}), 500
+
+
+@memory_bp.route("/api/memory/retrieve", methods=["GET"])
+def retrieve_memory_route():
+    try:
+        query = (request.args.get("query", "") or "").strip()
+        limit = int(request.args.get("limit", 6))
+
+        if not query:
+            return jsonify({"ok": False, "error": "query is required"}), 400
+
+        result = get_long_term_memory_retrieval_payload(query, limit=limit)
+        return jsonify(result), 200
+    except Exception as e:
+        print("[memory retrieve] error:", e, flush=True)
+        return jsonify({"ok": False, "error": f"retrieve failed: {e}"}), 500
 
 
 @memory_bp.route("/api/memory/backup", methods=["POST"])

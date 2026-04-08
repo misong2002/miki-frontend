@@ -1,6 +1,8 @@
 // src/domains/miki_san/memory/memoryApiService.js
 
-const MEMORY_API_BASE = "/api/memory";
+import { buildApiUrl } from "../../../api";
+
+const MEMORY_API_BASE = buildApiUrl("/api/memory");
 
 async function parseJsonResponse(response) {
   let data = null;
@@ -78,4 +80,3 @@ export async function rebuildSystemPromptDigest() {
 
   return parseJsonResponse(response);
 }
-

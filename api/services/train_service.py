@@ -14,6 +14,8 @@ from config import (
     LOSS_FILE_PATH,
     BATTLE_SCRIPT_PATH,
     BATTLE_STOP_SCRIPT_PATH,
+    BATTLE_RECENT_WINDOW_POINTS,
+    BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS,
 )
 
 MIKI_ROOT = Path(MIKI_ROOT).resolve()
@@ -309,8 +311,8 @@ def stop_training():
 
 def downsample_loss_data(
     data: list[dict[str, float]],
-    keep_recent: int = 200,
-    max_history_samples: int = 1000,
+    keep_recent: int = BATTLE_RECENT_WINDOW_POINTS,
+    max_history_samples: int = BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS,
 ) -> list[dict[str, float]]:
     n = len(data)
 
@@ -384,8 +386,8 @@ def read_training_loss():
 
         sampled_data = downsample_loss_data(
             raw_data,
-            keep_recent=200,
-            max_history_samples=1000,
+            keep_recent=BATTLE_RECENT_WINDOW_POINTS,
+            max_history_samples=BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS,
         )
 
         return {

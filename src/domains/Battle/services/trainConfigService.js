@@ -1,5 +1,7 @@
+import { buildApiUrl } from "../../../api";
+
 export async function fetchTrainConfig() {
-  const res = await fetch("/api/train-config", {
+  const res = await fetch(buildApiUrl("/api/train-config"), {
     method: "GET",
   });
 
@@ -12,7 +14,7 @@ export async function fetchTrainConfig() {
 }
 
 export async function saveTrainConfig(config) {
-  const res = await fetch("/api/train-config", {
+  const res = await fetch(buildApiUrl("/api/train-config"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

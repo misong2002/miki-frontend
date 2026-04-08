@@ -1,3 +1,5 @@
+import { APP_CONFIG } from "../../../config";
+
 export function normalizeLossPoint(item, index) {
   if (typeof item === "number") {
     return { step: index, value: item, wallTime: null };
@@ -36,8 +38,13 @@ export function downsampleEvenly(points, maxPoints) {
 
 export function buildLossMemorySnapshot(lossData) {
   const normalized = (lossData ?? []).map(normalizeLossPoint);
-  const recentDense = normalized.slice(-200);
-  const globalSparse = downsampleEvenly(normalized, 800);
+  const recentDense = normalized.slice(
+    -APP_CONFIG.battleCharts.recentWindowPoints
+  );
+  const globalSparse = downsampleEvenly(
+    normalized,
+    APP_CONFIG.battleCharts.globalSnapshotMaxPoints
+  );
 
   return {
     recentDense,

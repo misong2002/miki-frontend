@@ -28,6 +28,7 @@ def create_empty_long_term_db() -> Dict[str, Any]:
         "session_summaries": [],
         "user_facts": [],
         "idea_memories": [],
+        "idea_tag_catalog": [],
         "project_states": [],
         "memory_digests": [],
     }

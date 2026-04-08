@@ -1,6 +1,4 @@
-const RAW_API_BASE =
-  import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:5000";
-const API_BASE = RAW_API_BASE.replace(/\/+$/, "");
+import { buildApiUrl } from "../../../api";
 
 async function readJsonResponse(response) {
   const text = await response.text();
@@ -37,7 +35,7 @@ async function requestJson(url, options = {}) {
 }
 
 export async function fetchHistorySessions() {
-  const result = await requestJson(`${API_BASE}/api/history/sessions`, {
+  const result = await requestJson(buildApiUrl("/api/history/sessions"), {
     method: "GET",
   });
 
@@ -45,7 +43,7 @@ export async function fetchHistorySessions() {
 }
 
 export async function runHistoryInitialize(sessionId) {
-  return requestJson(`${API_BASE}/api/history/initialize`, {
+  return requestJson(buildApiUrl("/api/history/initialize"), {
     method: "POST",
     body: JSON.stringify({
       session_id: sessionId,
@@ -54,7 +52,7 @@ export async function runHistoryInitialize(sessionId) {
 }
 
 export async function runHistoryPlot(sessionId) {
-  return requestJson(`${API_BASE}/api/history/plot`, {
+  return requestJson(buildApiUrl("/api/history/plot"), {
     method: "POST",
     body: JSON.stringify({
       session_id: sessionId,

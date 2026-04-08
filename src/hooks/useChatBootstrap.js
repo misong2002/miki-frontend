@@ -20,6 +20,7 @@ export function useChatBootstrap({
   const [initialChatMessages, setInitialChatMessages] = useState([]);
   const [bootPhase, setBootPhase] = useState("idle");
   const [hintIndex, setHintIndex] = useState(0);
+  const [hasDeferredRemindRun, setHasDeferredRemindRun] = useState(false);
   const isSummarizingPhase =
       bootPhase === "archiving" || bootPhase === "compacting";
   /**
@@ -67,6 +68,7 @@ export function useChatBootstrap({
          * 如果旧版 start 不接这个参数，也不会有问题。
          */
         await appAgent?.start?.({
+          deferRemind: true,
           onBootPhaseChange: ({ phase } = {}) => {
             if (cancelled) return;
             if (!phase) return;
@@ -84,6 +86,7 @@ export function useChatBootstrap({
         if (cancelled) return;
         setInitialChatMessages(restoredMessages);
         setBootPhase("ready");
+        setHasDeferredRemindRun(false);
       } catch (err) {
         console.warn("[useChatBootstrap] bootstrapChat failed:", err);
 
@@ -106,6 +109,80 @@ export function useChatBootstrap({
   useEffect(() => {
     let cancelled = false;
 
+    function appendDeferredRemindMessage(prevMessages, remindResult) {
+      if (!Array.isArray(prevMessages)) return prevMessages;
+
+      const text = remindResult?.text?.trim?.() ?? "";
+      const messageId = remindResult?.messageId ?? null;
+
+      if (!text) return prevMessages;
+
+      if (messageId && prevMessages.some((msg) => msg?.id === messageId)) {
+        return prevMessages;
+      }
+
+      return [
+        ...prevMessages,
+        {
+          id: messageId ?? `boot-remind-${Date.now()}`,
+          role: "assistant",
+          content: text,
+          createdAt: Date.now(),
+          status: "done",
+          meta: {
+            ...(remindResult?.meta ?? {}),
+          },
+        },
+      ];
+    }
+
+    async function runDeferredRemind() {
+      if (mode !== chatModeValue) return;
+      if (!chatBootReady) return;
+      if (bootPhase !== "ready") return;
+      if (hasDeferredRemindRun) return;
+      if (!chatAgent?.remind) return;
+
+      setHasDeferredRemindRun(true);
+      setBootPhase("reminding");
+
+      try {
+        const remindResult = await chatAgent.remind();
+
+        if (cancelled) return;
+
+        setInitialChatMessages((prev) =>
+          appendDeferredRemindMessage(prev, remindResult)
+        );
+
+        const restoredMessages =
+          (await chatAgent?.getBootstrapMessages?.()) ?? [];
+
+        if (cancelled) return;
+        setInitialChatMessages(restoredMessages);
+        setBootPhase("ready");
+      } catch (err) {
+        console.warn("[useChatBootstrap] deferred remind failed:", err);
+        if (cancelled) return;
+        setBootPhase("ready");
+      }
+    }
+
+    runDeferredRemind();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    mode,
+    chatModeValue,
+    chatBootReady,
+    chatAgent,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function refreshWhenBackToChat() {
       /**
        * 只有：
@@ -114,6 +191,8 @@ export function useChatBootstrap({
        * 才刷新聊天消息
        */
       if (mode !== chatModeValue || !chatBootReady) return;
+      if (!hasDeferredRemindRun) return;
+      if (bootPhase !== "ready") return;
 
       try {
         const restoredMessages =
@@ -131,17 +210,24 @@ export function useChatBootstrap({
     return () => {
       cancelled = true;
     };
-  }, [mode, chatBootReady, chatModeValue, chatAgent]);
+  }, [
+    mode,
+    chatBootReady,
+    chatModeValue,
+    chatAgent,
+    hasDeferredRemindRun,
+    bootPhase,
+  ]);
 
   const bootLoadingText = useMemo(() => {
+    if (bootPhase === "reminding") {
+      return "美树同学正在回想…";
+    }
+
     if (chatBootReady) return "";
 
     if (isSummarizingPhase) {
       return SUMMARIZING_HINTS[hintIndex] ?? SUMMARIZING_HINTS[0];
-    }
-
-    if (bootPhase === "reminding") {
-      return "美树同学正在回想…";
     }
 
     if (bootPhase === "error") {
@@ -159,9 +245,10 @@ export function useChatBootstrap({
    * 所以这里只在 summarizing 隐藏模型。
    */
   const hideStageModel = isSummarizingPhase && !chatBootReady;
+  const chatBootReadyForUI = chatBootReady && bootPhase !== "reminding";
 
   return {
-    chatBootReady,
+    chatBootReady: chatBootReadyForUI,
     initialChatMessages,
     bootPhase,
     bootLoadingText,
