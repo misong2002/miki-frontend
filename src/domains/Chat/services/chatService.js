@@ -40,11 +40,11 @@ export async function sendChatStream(message, onToken, signal) {
       const data = JSON.parse(line)
 
       if (data.debug_retrieval) {
-        console.log("[memory retrieve]", data.debug_retrieval)
-        console.log(
-          "[memory injected block]",
-          data.debug_retrieval.injected_memory_block || "(none)"
-        )
+        // console.log("[memory retrieve]", data.debug_retrieval)
+        // console.log(
+        //   "[memory injected block]",
+        //   data.debug_retrieval.injected_memory_block || "(none)"
+        // )
       }
 
       if (data.token) {

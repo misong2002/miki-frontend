@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request, send_from_directory
 
 from memory.memory_runtime import (
     archive_wake_cycle,
@@ -15,6 +17,7 @@ from memory.memory_runtime import (
 from services.chat_service import get_long_term_memory_retrieval_payload
 
 memory_bp = Blueprint("memory", __name__)
+MEMORY_STORAGE_DIR = (Path(__file__).resolve().parent.parent / "memory" / "storage").resolve()
 
 
 @memory_bp.route("/api/memory/archive", methods=["POST"])
@@ -100,3 +103,17 @@ def backup_memory_route():
     except Exception as e:
         print("[memory backup] error:", e, flush=True)
         return jsonify({"ok": False, "error": f"backup failed: {e}"}), 500
+
+
+@memory_bp.route("/api/memory/storage/<path:filename>", methods=["GET"])
+def memory_storage_file_route(filename: str):
+    try:
+        target = (MEMORY_STORAGE_DIR / filename).resolve()
+
+        if target.parent != MEMORY_STORAGE_DIR or not target.is_file():
+            return jsonify({"ok": False, "error": "file not found"}), 404
+
+        return send_from_directory(MEMORY_STORAGE_DIR, filename, mimetype="application/json")
+    except Exception as e:
+        print("[memory storage] error:", e, flush=True)
+        return jsonify({"ok": False, "error": f"read failed: {e}"}), 500

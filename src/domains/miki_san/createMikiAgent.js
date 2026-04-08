@@ -83,6 +83,17 @@ async function collectRecentMessagesForRemind(memory, wakeCycleCount = 3) {
   return messages.filter((msg) => !isBootRemindMessage(msg));
 }
 
+async function getLatestStoredMessage(memory, wakeCycleCount = 3) {
+  const messages =
+    (await safeCall(
+      () => memory?.listRecentMessagesAcrossWakeCycles?.(wakeCycleCount, 30),
+      [],
+      "memory.listRecentMessagesAcrossWakeCycles(getLatestStoredMessage)"
+    )) ?? [];
+
+  return [...messages].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)).at(-1) ?? null;
+}
+
 export function createMikiAgent({
   onStageChange = null,
   initialStageProps = DEFAULT_STAGE_PROPS,
@@ -243,6 +254,7 @@ export function createMikiAgent({
     handlers = {},
     assistantMeta = {},
     assistantRecordLabel = "memory.recordAssistantMessage",
+    shouldRecordAssistantMessage = true,
     shouldTouchMemory = true,
     languageOptions = {},
   }) {
@@ -262,7 +274,7 @@ export function createMikiAgent({
 
     const assistantText = turn?.assistantText ?? "";
 
-    if (assistantText.trim()) {
+    if (shouldRecordAssistantMessage && assistantText.trim()) {
       await safeCall(
         () =>
           memory?.recordAssistantMessage?.(assistantText, {
@@ -282,8 +294,11 @@ export function createMikiAgent({
   async function remind(handlers = {}) {
     await ensureMemoryBooted();
 
+    const latestStoredMessage = await getLatestStoredMessage(memory, 3);
+    const shouldDiscardReply = isBootRemindMessage(latestStoredMessage);
+
     const messages = await collectRecentMessagesForRemind(memory, 3);
-    console.log("[MikiAgent.remind] collected messages for remind =", messages);
+    // console.log("[MikiAgent.remind] collected messages for remind =", messages);
 
     if (messages.length === 0) {
       return {
@@ -307,7 +322,7 @@ export function createMikiAgent({
       console.warn("[remind] fetchLongTermSystemPromptMemory failed:", err);
     }
 
-    console.log("[remind] loaded longTermMemory =", longTermMemory);
+    // console.log("[remind] loaded longTermMemory =", longTermMemory);
 
     const prompt = buildRemindPrompt(messages, longTermMemory);
 
@@ -324,7 +339,7 @@ export function createMikiAgent({
     }
 
     const messageId = createMessageId("miki-remind");
-    console.log("[MikiAgent.remind] running remind with prompt:", { prompt });
+    // console.log("[MikiAgent.remind] running remind with prompt:", { prompt });
 
     const turnResult = await runAgentTurn({
       inputText: prompt,
@@ -334,21 +349,23 @@ export function createMikiAgent({
         source: "boot_remind",
       },
       assistantRecordLabel: "memory.recordAssistantMessage(remind)",
+      shouldRecordAssistantMessage: !shouldDiscardReply,
       shouldTouchMemory: true,
       languageOptions: {
         awaitDisplayDrain: false,
       },
     });
 
-    console.log("[MikiAgent.remind] finished reminding");
+    // console.log("[MikiAgent.remind] finished reminding");
 
     return {
       status: turnResult?.result?.status ?? "done",
-      text: turnResult?.assistantText ?? "",
+      text: shouldDiscardReply ? "" : turnResult?.assistantText ?? "",
       error: turnResult?.errorObj ?? null,
-      messageId,
+      messageId: shouldDiscardReply ? null : messageId,
       meta: {
         source: "boot_remind",
+        discarded: shouldDiscardReply,
       },
     };
   }
@@ -428,7 +445,7 @@ export function createMikiAgent({
   }
 
   async function start(handlers = {}) {
-    console.log("[MikiAgent.start] called with handlers:", handlers);
+    // console.log("[MikiAgent.start] called with handlers:", handlers);
     const deferRemind = Boolean(handlers?.deferRemind);
 
     if (hasStarted) {
@@ -460,17 +477,17 @@ export function createMikiAgent({
       const recoverableMessages = await collectRecentMessagesForRemind(memory, 3);
       const hasRecoverableContext = recoverableMessages.length > 0;
 
-      console.log(
-        "[MikiAgent.start]",
-        "recoverableMessages =",
-        recoverableMessages.length,
-        "| action =",
-        hasRecoverableContext
-          ? deferRemind
-            ? "defer_remind"
-            : "boot_remind"
-          : "skip_remind"
-      );
+      // console.log(
+      //   "[MikiAgent.start]",
+      //   "recoverableMessages =",
+      //   recoverableMessages.length,
+      //   "| action =",
+      //   hasRecoverableContext
+      //     ? deferRemind
+      //       ? "defer_remind"
+      //       : "boot_remind"
+      //     : "skip_remind"
+      // );
 
       let remindResult = {
         status: "idle",
@@ -572,6 +589,7 @@ export function createMikiAgent({
 
       touchMemory: (source = "debug") => touchMemory(source),
       clearLocalMemory: async () => memory?.clearLocalMemory?.(),
+      importLocalMemory: async (nextDB) => memory?.importLocalMemory?.(nextDB),
       compactLocalMemory: async () => memory?.compactLocalMemory?.(),
       dumpMemory: async () => memory?.dump?.(),
 
@@ -617,6 +635,7 @@ export function createMikiAgent({
         notifyUserActivity: setUserActive,
         notifyUserIdle: setUserIdle,
         clearLocalMemory: () => memory?.clearLocalMemory?.(),
+        importLocalMemory: (nextDB) => memory?.importLocalMemory?.(nextDB),
         compactLocalMemory: () => memory?.compactLocalMemory?.(),
       },
 

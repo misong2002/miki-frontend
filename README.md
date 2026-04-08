@@ -1,4 +1,4 @@
-# MIKI Frontend v2.0 — Saber
+# MIKI Frontend v2.0.5 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,14 +6,17 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v2.0 — Saber
+## What's New in v2.0.5 — Saber
 
 - 🧠 **Memory retrieval is now query-aware**: Miki no longer injects long-term memory as a static summary only. The backend now classifies the user's question by level and retrieves different memory bundles for profile questions, project-status questions, session recall, idea lookup, and targeted entity recall.
 - 🏷️ **Idea tags are now first-class retrieval signals**: all `idea_memories.tags` are collected into an `idea_tag_catalog`, maintained during wake-cycle archival, and used as direct retrieval keywords.
 - 💬 **Chat prompting is cleaner and more focused**: normal chat turns now primarily use the current user question plus the retrieved long-term memory block, instead of repeatedly stuffing the full short-term transcript into every turn.
 - 🔄 **Boot remind now runs after entering chat mode**: startup summarization and memory maintenance complete first, then Miki performs the wake-up recall once chat mode is ready, making the boot flow cleaner and less blocking.
 - 📊 **Battle chart sampling is now unified**: the recent-window limit and sparse-history sampling are shared between frontend and backend through one config source.
-- 🧪 **Retrieval visibility is easier to inspect**: retrieval debug information and the final injected memory block are now visible in the browser console for inspection and tuning.
+- 🛠️ **Server startup is more predictable**: frontend preview and backend now use fixed non-default ports, the launcher avoids killing unknown processes on shared servers, and startup checks/log handling are more robust.
+- 💾 **Short-term memory import and migration are safer**: browser-side local memory can now be imported without being overwritten by stale in-memory cache, and a backend route is available to fetch exported memory snapshots for migration.
+- 🔁 **Repeated boot remind output is now suppressed**: remind still gets the injected recall context, but if the latest stored message is already a boot remind, the new remind reply is discarded instead of being written into chat history or rendered in the dialog.
+- 🧪 **Retrieval debug spam is reduced**: high-volume memory and remind console logging has been disabled to avoid browser slowdowns during long sessions.
 
 ---
 
@@ -172,6 +175,7 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
+| v2.0.5 | Saber | Fixed shared-server startup behavior, added safe local-memory import/migration support, suppressed repeated boot-remind replies, reduced high-volume memory debug logging |
 | v2.0 | Saber | Query-level long-term memory routing, idea tag catalog maintenance, focused prompt injection, deferred remind after chat-mode entry, unified battle chart sampling |
 | v1.8 | Extinguisher | Plotting, improved history saving logic, initialization from history, bug fixes |
 | v1.5 | Extinguisher | Improved local context management and memory retrieval, smoother server-side running |

@@ -744,6 +744,21 @@ export function createMemoryRuntime(options = {}) {
     };
   }
 
+  function importLocalMemory(nextDB = {}) {
+    replaceMemoryDB(nextDB);
+    currentWakeCycle = getLatestWakeCycle();
+    currentTrainingRunId = null;
+    cachedSystemPromptMemory = null;
+
+    return {
+      ok: true,
+      wakeCycles: (nextDB?.wakeCycles ?? []).length,
+      chatMessages: (nextDB?.chatMessages ?? []).length,
+      trainingRuns: (nextDB?.trainingRuns ?? []).length,
+      trainingObservations: (nextDB?.trainingObservations ?? []).length,
+    };
+  }
+
   function dump() {
     return getMemoryDB();
   }
@@ -780,6 +795,7 @@ export function createMemoryRuntime(options = {}) {
 
     compactLocalMemory,
     clearLocalMemory,
+    importLocalMemory,
 
     closeConflictingActiveTrainingRuns,
     reconcileTrainingRunsWithBackend,
