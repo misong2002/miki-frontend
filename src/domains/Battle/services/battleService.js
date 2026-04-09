@@ -47,3 +47,13 @@ export async function fetchBattleStatus() {
 
   return await response.json();
 }
+
+export async function fetchTrainingLossSummaryPrompt() {
+  const response = await fetch(buildApiUrl("/api/battle/loss-summary-prompt"));
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch training loss summary prompt: ${response.status}`);
+  }
+
+  return await response.json();
+}

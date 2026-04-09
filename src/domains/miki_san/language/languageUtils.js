@@ -59,3 +59,103 @@ export function appendIfPresent(base, extra) {
 export function isAbortError(err) {
   return err?.name === "AbortError";
 }
+
+export function createMarkdownSpeechState() {
+  return {
+    inFencedCodeBlock: false,
+    lineStart: true,
+    fenceTickCount: 0,
+    fenceHeaderPending: false,
+  };
+}
+
+function hasSpeakableText(text) {
+  return /[^\s`]/.test(text);
+}
+
+export function inspectSpeechChunk(chunk = "", state = createMarkdownSpeechState()) {
+  const nextState = {
+    inFencedCodeBlock: !!state.inFencedCodeBlock,
+    lineStart: state.lineStart !== false,
+    fenceTickCount: state.fenceTickCount ?? 0,
+    fenceHeaderPending: !!state.fenceHeaderPending,
+  };
+
+  let shouldSpeak = false;
+
+  function consumeOutsideCode(text) {
+    if (!text) return;
+    if (hasSpeakableText(text)) {
+      shouldSpeak = true;
+    }
+  }
+
+  for (let i = 0; i < chunk.length; i += 1) {
+    const ch = chunk[i];
+
+    if (nextState.fenceHeaderPending) {
+      if (ch === "\n") {
+        nextState.fenceHeaderPending = false;
+        nextState.lineStart = true;
+      } else {
+        nextState.lineStart = false;
+      }
+      continue;
+    }
+
+    if (nextState.inFencedCodeBlock) {
+      if (nextState.lineStart) {
+        if (ch === "`") {
+          nextState.fenceTickCount += 1;
+          if (nextState.fenceTickCount >= 3) {
+            nextState.fenceHeaderPending = true;
+            nextState.inFencedCodeBlock = false;
+            nextState.fenceTickCount = 0;
+          }
+          continue;
+        }
+
+        nextState.fenceTickCount = 0;
+      }
+
+      if (ch === "\n") {
+        nextState.lineStart = true;
+        nextState.fenceTickCount = 0;
+      } else {
+        nextState.lineStart = false;
+      }
+      continue;
+    }
+
+    if (nextState.lineStart) {
+      if (ch === "`") {
+        nextState.fenceTickCount += 1;
+        if (nextState.fenceTickCount >= 3) {
+          nextState.fenceHeaderPending = true;
+          nextState.inFencedCodeBlock = true;
+          nextState.fenceTickCount = 0;
+        }
+        continue;
+      }
+
+      if (nextState.fenceTickCount > 0) {
+        consumeOutsideCode("`".repeat(nextState.fenceTickCount));
+        nextState.fenceTickCount = 0;
+      }
+    }
+
+    consumeOutsideCode(ch);
+
+    if (ch === "\n") {
+      nextState.lineStart = true;
+      nextState.fenceTickCount = 0;
+    } else {
+      nextState.lineStart = false;
+    }
+  }
+
+  return {
+    shouldSpeak,
+    state: nextState,
+  };
+}

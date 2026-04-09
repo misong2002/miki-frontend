@@ -1,4 +1,4 @@
-import { createDeferred } from "./languageUtils";
+import { createDeferred, createMarkdownSpeechState } from "./languageUtils";
 
 export function createLanguageRun({
   inputText,
@@ -26,7 +26,10 @@ export function createLanguageRun({
     finalized: false,
     chatBegun: false,
     speakingStarted: false,
+    speechActive: false,
+    phaseSpeakingEmitted: false,
     characterEnded: false,
+    markdownSpeechState: createMarkdownSpeechState(),
 
     finalStatus: "done",
     finalError: null,

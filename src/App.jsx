@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ChatPanel from "./domains/Chat/components/ChatPanel";
 import HyperParamPanel from "./domains/Battle/components/HyperParamPanel";
 import TransitionOverlay from "./domains/Shared/TransitionOverlay";
@@ -32,22 +32,7 @@ const MAGICAL_STAGE_PROPS = {
   scale: 1.0,
 };
 
-/**
- * 仅作为 App 顶层的“模式未决”占位值：
- * - 不改底层 AppMode 枚举
- * - 但避免把“还没判定”误写成 CHAT
- */
-const MODE_PENDING = "__APP_MODE_PENDING__";
-
-/**
- * 给 battle 恢复逻辑一个很短的首屏 settle 窗口：
- * - 若这段时间里底层把 mode 切成 BATTLE，就不会先闪 Chat
- * - 若没有切走，则回落到 CHAT
- *
- * 这不是最终最完美方案；最终最好由底层显式暴露“初始模式已解析”信号。
- * 但在“不改底层接口”的约束下，这是顶层最稳的修法。
- */
-const INITIAL_MODE_SETTLE_MS = 200;
+const MODE_LOADING = "__APP_MODE_LOADING__";
 
 const IS_DEV =
   typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
@@ -157,11 +142,12 @@ function BattleModeView({
 }
 
 export default function App() {
-  const [mode, setMode] = useState(MODE_PENDING);
-  const [initialModeSettled, setInitialModeSettled] = useState(false);
+  const [mode, setMode] = useState(MODE_LOADING);
   const [params, setParams] = useState(initialHyperParams);
   const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
   const [stageHydratedFromAgent, setStageHydratedFromAgent] = useState(false);
+  const [whiteTransitionPhase, setWhiteTransitionPhase] = useState("idle");
+  const lastStableModeRef = useRef(MODE_LOADING);
 
   const handleStageChange = useCallback((nextStageProps) => {
     if (!nextStageProps) return;
@@ -172,50 +158,56 @@ export default function App() {
     onStageChange: handleStageChange,
   });
 
-  /**
-   * 只在首次拿到 agent 初始舞台时回填一次。
-   * 后续舞台切换仍然以 onStageChange 为准，避免反复覆盖。
-   */
+
   useEffect(() => {
     if (stageHydratedFromAgent) return;
     if (!initialStageProps) return;
 
+    console.log("[App] hydrating initial stage props:", initialStageProps);
     setStageProps(initialStageProps);
     setStageHydratedFromAgent(true);
   }, [initialStageProps, stageHydratedFromAgent]);
 
-  /**
-   * 首屏模式 settle：
-   * - 先不给 CHAT/BATTLE 正式 UI 出场
-   * - 给底层 battle 恢复逻辑一个短窗口改写 mode
-   * - 若窗口结束仍未改写，则默认进入 CHAT
-   */
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      setMode((prev) => (prev === MODE_PENDING ? AppMode.CHAT : prev));
-      setInitialModeSettled(true);
+
+  useLayoutEffect(() => {
+    if (mode === MODE_LOADING) return;
+
+    const previousMode = lastStableModeRef.current;
+    lastStableModeRef.current = mode;
+
+    if (previousMode === MODE_LOADING || previousMode === mode) {
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setMode((prev) => (prev === MODE_PENDING ? AppMode.CHAT : prev));
-      setInitialModeSettled(true);
-    }, INITIAL_MODE_SETTLE_MS);
+    let cancelled = false;
+    let frame1 = 0;
+    let frame2 = 0;
+    let timeoutId = 0;
+
+    setWhiteTransitionPhase("visible");
+
+    frame1 = window.requestAnimationFrame(() => {
+      frame2 = window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        timeoutId = window.setTimeout(() => {
+          if (cancelled) return;
+          setWhiteTransitionPhase("fading");
+          timeoutId = window.setTimeout(() => {
+            if (!cancelled) {
+              setWhiteTransitionPhase("idle");
+            }
+          }, 1000);
+        }, 240);
+      });
+    });
 
     return () => {
-      window.clearTimeout(timer);
+      cancelled = true;
+      window.cancelAnimationFrame(frame1);
+      window.cancelAnimationFrame(frame2);
+      window.clearTimeout(timeoutId);
     };
-  }, []);
-
-  /**
-   * 如果底层更早把 mode 切成了 CHAT / TRANSFORMING / BATTLE，
-   * 那么可以直接认为首屏模式已经落定，不必再等 settle 计时器。
-   */
-  useEffect(() => {
-    if (mode !== MODE_PENDING && !initialModeSettled) {
-      setInitialModeSettled(true);
-    }
-  }, [mode, initialModeSettled]);
+  }, [mode]);
 
   const {
     chatBootReady,
@@ -235,6 +227,7 @@ export default function App() {
     battleExiting,
     handleEnterBattleMode,
     handleForceExitBattle,
+    battleBootstrapResolved,
   } = useBattleController({
     battleAgent: agent.battle,
     appAgent: agent.app,
@@ -250,6 +243,15 @@ export default function App() {
   useUserActivityTouch({
     appAgent: agent.app,
   });
+
+  useEffect(() => {
+    console.log("[App] startup state:", {
+      mode,
+      battleBootstrapResolved,
+      chatBootReady,
+      bootPhase,
+    });
+  }, [mode, battleBootstrapResolved, chatBootReady, bootPhase]);
 
   useEffect(() => {
     if (!IS_DEV) return;
@@ -281,7 +283,7 @@ export default function App() {
     };
   }, [agent]);
 
-  const isModePending = mode === MODE_PENDING;
+  const isModeLoading = mode === MODE_LOADING;
   const isTransforming = mode === AppMode.TRANSFORMING;
 
   /**
@@ -301,14 +303,15 @@ export default function App() {
   const shouldHideStageInChatShell =
     mode === AppMode.CHAT && Boolean(hideStageModel);
 
-  const rootModeClass = isModePending ? "booting" : mode;
+  const rootModeClass = isModeLoading ? "booting" : mode;
 
   return (
     <div className={`app-root mode-${rootModeClass}`}>
       <TransitionOverlay visible={isTransforming} />
+      <div className={`app-mode-whiteout phase-${whiteTransitionPhase}`} />
 
-      {!initialModeSettled || isModePending ? (
-        <BootShell text={bootLoadingText || "正在同步状态……"} />
+      {!battleBootstrapResolved || isModeLoading ? (
+        <BootShell text="正在同步状态……" />
       ) : showChatShell ? (
         <ChatModeView
           params={params}

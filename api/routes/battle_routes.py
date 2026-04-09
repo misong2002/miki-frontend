@@ -7,6 +7,7 @@ from services.train_service import (
     start_training,
     stop_training,
     read_training_loss,
+    read_training_loss_summary_prompt,
 )
 
 battle_bp = Blueprint("battle", __name__)
@@ -34,6 +35,12 @@ def battle_status_route():
 @battle_bp.route("/api/battle/loss", methods=["GET"])
 def battle_loss_route():
     result, status_code = read_training_loss()
+    return jsonify(result), status_code
+
+
+@battle_bp.route("/api/battle/loss-summary-prompt", methods=["GET"])
+def battle_loss_summary_prompt_route():
+    result, status_code = read_training_loss_summary_prompt()
     return jsonify(result), status_code
 
 

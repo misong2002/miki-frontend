@@ -6,12 +6,73 @@ import {
   stopBattle,
   fetchLossData,
   fetchBattleStatus,
+  fetchTrainingLossSummaryPrompt,
 } from "../domains/Battle/services/battleService";
 import {
   makeContactMessage,
   normalizeContactMessages,
 } from "../domains/Battle/utils/contactMessageUtils";
 import { saveTrainingHistory } from "../domains/Battle/services/historyService";
+
+const INITIAL_BATTLE_STATUS_TIMEOUT_MS = 5000;
+const BATTLE_CONTACT_CACHE_KEY = "miki.battle.contactCache.v1";
+
+function loadCachedBattleContacts() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(BATTLE_CONTACT_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    return {
+      sessionKey:
+        typeof parsed.sessionKey === "string" ? parsed.sessionKey : null,
+      messages: normalizeContactMessages(parsed.messages),
+    };
+  } catch (err) {
+    console.warn("[battle/cache] failed to load contact cache:", err);
+    return null;
+  }
+}
+
+function saveCachedBattleContacts(sessionKey, messages) {
+  if (
+    !sessionKey ||
+    typeof window === "undefined" ||
+    !window.localStorage
+  ) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      BATTLE_CONTACT_CACHE_KEY,
+      JSON.stringify({
+        sessionKey,
+        messages: normalizeContactMessages(messages).slice(-100),
+      })
+    );
+  } catch (err) {
+    console.warn("[battle/cache] failed to save contact cache:", err);
+  }
+}
+
+function clearCachedBattleContacts() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(BATTLE_CONTACT_CACHE_KEY);
+  } catch (err) {
+    console.warn("[battle/cache] failed to clear contact cache:", err);
+  }
+}
 
 async function trySaveTrainingHistory() {
   try {
@@ -21,6 +82,16 @@ async function trySaveTrainingHistory() {
   } catch (err) {
     console.error("[battle] save history failed:", err);
     return false;
+  }
+}
+
+async function tryBuildTrainingSummaryPrompt() {
+  try {
+    const result = await fetchTrainingLossSummaryPrompt();
+    return result?.has_prompt ? result.prompt ?? "" : "";
+  } catch (err) {
+    console.error("[battle] build training summary prompt failed:", err);
+    return "";
   }
 }
 
@@ -61,6 +132,7 @@ export function useBattleController({
   }));
 
   const [battleExiting, setBattleExiting] = useState(false);
+  const [battleBootstrapResolved, setBattleBootstrapResolved] = useState(false);
 
   const pollTimerRef = useRef(null);
   const pollingRef = useRef(false);
@@ -94,12 +166,14 @@ export function useBattleController({
 
   function markSessionRunning(session) {
     const nextKey = getSessionKey(session);
-    if (!nextKey) return;
+    if (!nextKey) return nextKey;
 
     if (activeSessionKeyRef.current !== nextKey) {
       activeSessionKeyRef.current = nextKey;
       savedClosedSessionKeyRef.current = null;
     }
+
+    return nextKey;
   }
 
   async function saveHistoryOnSessionClosedOnce(sessionKey = null) {
@@ -116,6 +190,14 @@ export function useBattleController({
     }
 
     return ok;
+  }
+
+  async function queueTrainingSummaryPromptIfAvailable() {
+    const prompt = await tryBuildTrainingSummaryPrompt();
+    if (!prompt) return false;
+
+    appAgent?.queueTrainingSummaryPrompt?.(prompt);
+    return true;
   }
 
   async function loadBattleLoss() {
@@ -167,6 +249,7 @@ export function useBattleController({
 
     stageAgent?.setStageProps?.(defaultStageProps);
 
+    clearCachedBattleContacts();
     setBattle(resetBattleState());
     activeSessionKeyRef.current = null;
     setBattleExiting(false);
@@ -197,6 +280,7 @@ export function useBattleController({
        * 不再把 save_history 绑定到 AppMode 切换本身。
        */
       await saveHistoryOnSessionClosedOnce();
+      await queueTrainingSummaryPromptIfAvailable();
       await handleBattleFinishedExit();
       return false;
     } catch (err) {
@@ -243,10 +327,18 @@ export function useBattleController({
       return;
     }
 
-    markSessionRunning({
-      job_id: startResult?.result?.job_id ?? null,
-      pid: startResult?.result?.pid ?? startResult?.pid ?? null,
-    });
+    const startedSessionKey = markSessionRunning(
+      startResult?.session ?? {
+        mode: startResult?.result?.job_id != null ? "cluster" : "local",
+        job_id: startResult?.result?.job_id ?? null,
+        pid: startResult?.result?.pid ?? startResult?.pid ?? null,
+      }
+    );
+
+    if (startedSessionKey) {
+      clearCachedBattleContacts();
+      console.log("[battle/cache] cleared cached contact messages for new session:", startedSessionKey);
+    }
 
     await delay(150);
     stageAgent?.setStageProps?.(magicalStageProps);
@@ -317,9 +409,11 @@ export function useBattleController({
      * 这里同样按“检测到关闭后保存一次”的语义处理。
      */
     await saveHistoryOnSessionClosedOnce();
+    await queueTrainingSummaryPromptIfAvailable();
 
     stageAgent?.setStageProps?.(defaultStageProps);
 
+    clearCachedBattleContacts();
     setBattle(resetBattleState());
     activeSessionKeyRef.current = null;
     appAgent?.setMode?.(appModeEnum.CHAT);
@@ -331,12 +425,23 @@ export function useBattleController({
     let cancelled = false;
 
     async function bootstrapBattleState() {
+      console.log("[battle/bootstrap] begin status sync");
       try {
-        const status = await fetchBattleStatus();
+        const status = await Promise.race([
+          fetchBattleStatus(),
+          new Promise((_, reject) => {
+            window.setTimeout(() => {
+              reject(new Error("battle status bootstrap timed out"));
+            }, INITIAL_BATTLE_STATUS_TIMEOUT_MS);
+          }),
+        ]);
         if (cancelled) return;
 
+        console.log("[battle/bootstrap] status response:", status);
+
         if (status.running) {
-          markSessionRunning(status.session);
+          console.log("[battle/bootstrap] active training session detected, entering battle mode");
+          const sessionKey = markSessionRunning(status.session);
           stageAgent?.setStageProps?.(magicalStageProps);
 
           const introMessages = [
@@ -350,24 +455,45 @@ export function useBattleController({
                   : `当前为本地任务：PID ${status.session?.pid ?? "unknown"}`,
             }),
           ];
+          const cachedContacts = loadCachedBattleContacts();
+          const restoredMessages =
+            cachedContacts?.sessionKey === sessionKey &&
+            cachedContacts.messages.length > 0
+              ? cachedContacts.messages
+              : introMessages;
+
+          if (cachedContacts?.sessionKey === sessionKey) {
+            console.log("[battle/cache] restored cached contact messages:", restoredMessages.length);
+          }
 
           setBattle((prev) => ({
             ...prev,
-            contactMessages: introMessages,
+            contactMessages: restoredMessages,
           }));
 
           appAgent?.setMode?.(appModeEnum.BATTLE);
           setMode(appModeEnum.BATTLE);
         } else {
+          console.log("[battle/bootstrap] no active training session, entering chat mode");
+          clearCachedBattleContacts();
           stageAgent?.setStageProps?.(defaultStageProps);
           appAgent?.setMode?.(appModeEnum.CHAT);
           setMode(appModeEnum.CHAT);
         }
+
+        if (!cancelled) {
+          console.log("[battle/bootstrap] status sync resolved");
+          setBattleBootstrapResolved(true);
+        }
       } catch (err) {
-        console.error("[bootstrap] failed to get battle status:", err);
+        console.error("[battle/bootstrap] failed to get battle status:", err);
         stageAgent?.setStageProps?.(defaultStageProps);
         appAgent?.setMode?.(appModeEnum.CHAT);
         setMode(appModeEnum.CHAT);
+        if (!cancelled) {
+          console.log("[battle/bootstrap] fallback to chat mode after status sync failure");
+          setBattleBootstrapResolved(true);
+        }
       }
     }
 
@@ -384,6 +510,13 @@ export function useBattleController({
     magicalStageProps,
     defaultStageProps,
   ]);
+
+  useEffect(() => {
+    const sessionKey = activeSessionKeyRef.current;
+    if (!sessionKey) return;
+
+    saveCachedBattleContacts(sessionKey, battle.contactMessages);
+  }, [battle.contactMessages]);
 
   useEffect(() => {
     if (!battleAgent?.subscribeContactFeed) return;
@@ -433,6 +566,7 @@ export function useBattleController({
   return {
     battle,
     battleExiting,
+    battleBootstrapResolved,
     handleEnterBattleMode,
     handleForceExitBattle,
   };

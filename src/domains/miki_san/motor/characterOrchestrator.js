@@ -185,6 +185,17 @@ export function reduceState(state, event) {
         },
       };
 
+    case "CHAT_SPEAK_STOP":
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          active: true,
+          speaking: false,
+          lastTokenAt: now,
+        },
+      };
+
     case "CHAT_TOKEN":
       return {
         ...state,

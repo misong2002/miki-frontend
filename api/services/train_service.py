@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 import traceback
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from config import (
     TRAIN_CONFIG_PATH,
     TRAIN_SESSION_PATH,
     LOSS_FILE_PATH,
+    TRAIN_LOG_PATH,
     BATTLE_SCRIPT_PATH,
     BATTLE_STOP_SCRIPT_PATH,
     BATTLE_RECENT_WINDOW_POINTS,
@@ -22,8 +24,47 @@ MIKI_ROOT = Path(MIKI_ROOT).resolve()
 TRAIN_CONFIG_PATH = Path(TRAIN_CONFIG_PATH)
 TRAIN_SESSION_PATH = Path(TRAIN_SESSION_PATH)
 LOSS_FILE_PATH = Path(LOSS_FILE_PATH)
+TRAIN_LOG_PATH = Path(TRAIN_LOG_PATH)
 BATTLE_SCRIPT_PATH = Path(BATTLE_SCRIPT_PATH)
 BATTLE_STOP_PATH = Path(BATTLE_STOP_SCRIPT_PATH)
+PATH_CONFIG_PATH = MIKI_ROOT / "config" / "path.json"
+AVAILABLE_MODELS_PATH = MIKI_ROOT / "config" / "available_models.json"
+sys.path.insert(0, str(MIKI_ROOT))
+
+from scripts.utils.train_config_utils import load_train_config, save_train_config
+
+SECTION_NAMES = [
+    "io_config",
+    "model_config",
+    "optimization_config",
+    "cluster_config",
+    "debug_config",
+]
+
+SECTION_KEYS = {
+    "io_config": ["dataset", "dataset_config", "flux", "output", "loss_file"],
+    "model_config": [
+        "model_name",
+        "layer_sizes",
+        "hidden_features",
+        "hidden_layers",
+        "outermost_linear",
+        "first_omega_0",
+        "hidden_omega_0",
+    ],
+    "optimization_config": [
+        "batch_size",
+        "checkpoint_every",
+        "log_every",
+        "loss_mode",
+        "lr",
+        "rounds",
+        "seed",
+        "val_every",
+    ],
+    "cluster_config": ["queue", "nodes", "walltime"],
+    "debug_config": ["debug_sleep_ms", "debug_steps"],
+}
 
 
 def parse_layer_sizes(layer_sizes_raw: Any) -> list[int]:
@@ -37,49 +78,225 @@ def parse_layer_sizes(layer_sizes_raw: Any) -> list[int]:
     raise ValueError(f"Invalid layerSizes format: {layer_sizes_raw}")
 
 
-def build_train_config(payload):
-    config = {}
+def _load_path_config() -> dict[str, Any]:
+    if not PATH_CONFIG_PATH.exists():
+        return {}
 
-    # 1 先读取旧配置
-    if TRAIN_CONFIG_PATH.exists():
-        with open(TRAIN_CONFIG_PATH, "r", encoding="utf-8") as f:
-            config = json.load(f)
+    try:
+        with open(PATH_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
 
-    # 2 payload 字段映射（前端命名 → 后端命名）
-    key_map = {
-        "modelName": "model_name",
-        "layerSizes": "layer_sizes",
-        "runMode": "run_mode",
+    return data if isinstance(data, dict) else {}
+
+
+def _resolve_runtime_path(path_key: str, fallback: Path) -> Path:
+    path_config = _load_path_config()
+    raw_value = path_config.get(path_key)
+    if not raw_value:
+        return fallback
+
+    ref = Path(str(raw_value))
+    if ref.is_absolute():
+        return ref
+
+    project_root = path_config.get("project_root")
+    if project_root:
+        return Path(project_root).resolve() / ref
+
+    return MIKI_ROOT / ref
+
+
+def _get_loss_file_path() -> Path:
+    return _resolve_runtime_path("loss_file", LOSS_FILE_PATH)
+
+
+def _get_train_log_path() -> Path:
+    return _resolve_runtime_path("log_file", TRAIN_LOG_PATH)
+
+
+LEGACY_MODEL_NAME_MAP = {
+    "hadron_Matrix_siren": "HMsiren",
+}
+
+
+def _normalize_model_name(model_name: Any, default_model: str = "HMsiren") -> str:
+    raw_name = str(model_name or "").strip()
+    if not raw_name:
+        return default_model
+    return LEGACY_MODEL_NAME_MAP.get(raw_name, raw_name)
+
+
+def _load_available_models() -> tuple[str, list[str]]:
+    default_model = "HMsiren"
+    available_models = [default_model]
+
+    if AVAILABLE_MODELS_PATH.exists():
+        try:
+            with open(AVAILABLE_MODELS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            models = []
+            for item in data.get("models", []):
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                if name:
+                    models.append(name)
+            if models:
+                available_models = models
+            configured_default = str(data.get("default_model", "")).strip()
+            if configured_default:
+                default_model = configured_default
+        except Exception:
+            pass
+
+    normalized_models = []
+    for name in available_models:
+        normalized = _normalize_model_name(name, default_model)
+        if normalized not in normalized_models:
+            normalized_models.append(normalized)
+
+    default_model = _normalize_model_name(default_model, normalized_models[0] if normalized_models else "HMsiren")
+    if default_model not in normalized_models:
+        normalized_models.insert(0, default_model)
+
+    return default_model, normalized_models
+
+
+def _extract_training_error_summary(max_lines: int = 40) -> str:
+    log_path = _get_train_log_path()
+    if not log_path.exists():
+        return ""
+
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+
+    tail = [line.rstrip() for line in lines if line.strip()][-max_lines:]
+    if not tail:
+        return ""
+
+    error_markers = (
+        "traceback",
+        "error",
+        "exception",
+        "failed",
+        "interrupted system call",
+        "nan",
+        "inf",
+        "floatingpointerror",
+        "valueerror",
+        "runtimeerror",
+        "typeerror",
+        "assertionerror",
+    )
+
+    has_error = any(marker in line.casefold() for line in tail for marker in error_markers)
+    if not has_error:
+        return ""
+
+    summary_lines = [
+        "我们刚刚完成了一段训练，但训练日志里出现了错误。请优先评论这个错误，不要再分析 loss 曲线：",
+        f"训练日志路径：{log_path}",
+        "```text",
+        *tail,
+        "```",
+    ]
+    return "\n".join(summary_lines)
+
+
+def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
+    remaining = dict(flat_config)
+    grouped_sections: dict[str, dict[str, Any]] = {}
+
+    for section_name in SECTION_NAMES:
+        section = {}
+        for key in SECTION_KEYS.get(section_name, []):
+            if key in remaining:
+                section[key] = remaining.pop(key)
+        grouped_sections[section_name] = section
+
+    default_model, _available_models = _load_available_models()
+
+    model_section = grouped_sections.get("model_config", {})
+    if isinstance(model_section, dict):
+        model_section["model_name"] = _normalize_model_name(
+            model_section.get("model_name", default_model),
+            default_model,
+        )
+
+    return {
+        "run_mode": flat_config.get("run_mode", "local"),
+        "sections": grouped_sections,
     }
 
-    # 3 覆盖更新 payload
-    for key, value in payload.items():
-        mapped_key = key_map.get(key, key)
 
-        if mapped_key == "layer_sizes":
-            value = parse_layer_sizes(value)
+def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        raise ValueError("config must be an object")
 
-        config[mapped_key] = value
+    sections = config.get("sections")
+    if not isinstance(sections, dict):
+        flat = dict(config)
+        if "layer_sizes" in flat:
+            flat["layer_sizes"] = parse_layer_sizes(flat["layer_sizes"])
+        flat.setdefault("run_mode", "local")
+        return flat
 
-    # 4 默认值（只在不存在时补）
+    flat: dict[str, Any] = {
+        "run_mode": config.get("run_mode", "local"),
+    }
+
+    for section_name in SECTION_NAMES:
+        section = sections.get(section_name, {})
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            if key == "layer_sizes":
+                value = parse_layer_sizes(value)
+            flat[key] = value
+
+    return flat
+
+
+def build_train_config(payload):
+    config = {}
+    default_model, _available_models = _load_available_models()
+
+    if TRAIN_CONFIG_PATH.exists():
+        config = load_train_config(TRAIN_CONFIG_PATH)
+        config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
+
+    if payload:
+        incoming = flatten_train_config(payload)
+        incoming["model_name"] = _normalize_model_name(incoming.get("model_name", default_model), default_model)
+        config.update(incoming)
+
     config.setdefault("rounds", 200)
     config.setdefault("lr", 1e-3)
     config.setdefault("layer_sizes", [2, 128, 128, 3])
     config.setdefault("run_mode", "local")
+    config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
 
     return config
 
 
 def read_train_config():
+    default_model, available_models = _load_available_models()
+
     if not TRAIN_CONFIG_PATH.exists():
         return {
             "path": str(TRAIN_CONFIG_PATH),
-            "config": {},
+            "config": group_train_config({"model_name": default_model}),
+            "available_models": available_models,
+            "default_model": default_model,
         }, 200
 
     try:
-        with open(TRAIN_CONFIG_PATH, "r", encoding="utf-8") as f:
-            config = json.load(f)
+        config = load_train_config(TRAIN_CONFIG_PATH)
+        config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
     except Exception as e:
         return {
             "status": "error",
@@ -89,7 +306,9 @@ def read_train_config():
 
     return {
         "path": str(TRAIN_CONFIG_PATH),
-        "config": config,
+        "config": group_train_config(config),
+        "available_models": available_models,
+        "default_model": default_model,
     }, 200
 
 
@@ -102,15 +321,18 @@ def write_train_config(payload):
         }, 400
 
     try:
+        default_model, available_models = _load_available_models()
+        flat_config = flatten_train_config(config)
+        flat_config["model_name"] = _normalize_model_name(flat_config.get("model_name", default_model), default_model)
         TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        saved_config = save_train_config(TRAIN_CONFIG_PATH, flat_config)
 
         return {
             "status": "saved",
             "path": str(TRAIN_CONFIG_PATH),
-            "config": config,
+            "config": group_train_config(saved_config),
+            "available_models": available_models,
+            "default_model": default_model,
         }, 200
 
     except Exception as e:
@@ -130,6 +352,7 @@ def read_training_session():
 
     try:
         with open(TRAIN_SESSION_PATH, "r", encoding="utf-8") as f:
+            import json
             session = json.load(f)
     except Exception as e:
         return {
@@ -146,7 +369,7 @@ def read_training_session():
 
     running = False
 
-    if mode == "local" or mode == 'debug':
+    if mode == "local" or mode == "debug":
         if pgid is not None:
             try:
                 os.killpg(int(pgid), 0)
@@ -169,7 +392,7 @@ def read_training_session():
                     stderr=subprocess.DEVNULL,
                     check=False,
                 )
-                running = (result.returncode == 0)
+                running = result.returncode == 0
             except Exception:
                 running = False
 
@@ -227,8 +450,7 @@ def start_training(payload: dict[str, Any]):
         config = build_train_config(payload)
 
         TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        save_train_config(TRAIN_CONFIG_PATH, config)
 
         clear_loss_file()
 
@@ -251,6 +473,7 @@ def start_training(payload: dict[str, Any]):
         last_line = stdout.splitlines()[-1] if stdout else ""
 
         try:
+            import json
             parsed = json.loads(last_line) if last_line else {}
         except Exception:
             parsed = {
@@ -334,7 +557,6 @@ def downsample_loss_data(
                 idx = len(history) - 1
             sampled_history.append(history[idx])
 
-        # 去重，避免 int 截断导致重复索引
         deduped = []
         last_epoch = None
         for item in sampled_history:
@@ -348,10 +570,128 @@ def downsample_loss_data(
 
 
 
-def read_training_loss():
-    if not LOSS_FILE_PATH.exists():
+def _parse_loss_rows_with_val():
+    rows = []
+
+    loss_file_path = _get_loss_file_path()
+    if not loss_file_path.exists():
+        return rows
+
+    with open(loss_file_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+
+            try:
+                epoch = float(parts[0])
+                train_loss = float(parts[1])
+                val_loss = float(parts[2])
+            except ValueError:
+                continue
+
+            rows.append({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+            })
+
+    return rows
+
+
+
+def _downsample_rows_evenly(rows, max_points=1000):
+    if len(rows) <= max_points:
+        return rows
+
+    step = (len(rows) - 1) / (max_points - 1)
+    sampled = []
+    seen = set()
+
+    for i in range(max_points):
+        idx = int(round(i * step))
+        idx = max(0, min(idx, len(rows) - 1))
+        if idx in seen:
+            continue
+        sampled.append(rows[idx])
+        seen.add(idx)
+
+    if sampled[-1] is not rows[-1]:
+        sampled[-1] = rows[-1]
+
+    return sampled
+
+
+
+def build_training_loss_summary_prompt(max_points=1000):
+    config = {}
+
+    if TRAIN_CONFIG_PATH.exists():
+        try:
+            config = load_train_config(TRAIN_CONFIG_PATH)
+        except Exception:
+            config = {}
+
+    run_mode = str(config.get("run_mode", "local")).strip().lower()
+    if run_mode == "debug":
+        return ""
+
+    error_summary = _extract_training_error_summary()
+    if error_summary:
+        return error_summary
+
+    rows = _parse_loss_rows_with_val()
+    if not rows:
+        return ""
+
+    sampled_rows = _downsample_rows_evenly(rows, max_points=max_points)
+    expected_epochs = config.get("rounds")
+    actual_epochs = rows[-1]["epoch"] if rows else None
+    lines = ["epoch train_loss val_loss"]
+
+    for row in sampled_rows:
+        lines.append(
+            f"{row['epoch']:g} {row['train_loss']:.8g} {row['val_loss']:.8g}"
+        )
+
+    summary_lines = [
+        "我们刚刚完成了一段训练，这是training loss和val loss的曲线：",
+        f"配置里的预期 epoch 数：{expected_epochs if expected_epochs is not None else 'unknown'}",
+        f"loss.txt 最后一行对应的实际 epoch 数：{actual_epochs:g}" if actual_epochs is not None else "loss.txt 最后一行对应的实际 epoch 数：unknown",
+        "```text",
+        *lines,
+        "```",
+    ]
+
+    return "\n".join(summary_lines)
+
+def read_training_loss_summary_prompt():
+    try:
+        prompt = build_training_loss_summary_prompt()
         return {
-            "path": str(LOSS_FILE_PATH),
+            "path": str(_get_loss_file_path()),
+            "prompt": prompt,
+            "has_prompt": bool(prompt.strip()),
+        }, 200
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed to build training loss summary prompt: {e}",
+            "path": str(_get_loss_file_path()),
+            "prompt": "",
+            "has_prompt": False,
+        }, 500
+
+
+def read_training_loss():
+    loss_file_path = _get_loss_file_path()
+    if not loss_file_path.exists():
+        return {
+            "path": str(loss_file_path),
             "data": [],
             "meta": {
                 "total_points": 0,
@@ -363,7 +703,7 @@ def read_training_loss():
     raw_data: list[dict[str, float]] = []
 
     try:
-        with open(LOSS_FILE_PATH, "r", encoding="utf-8") as f:
+        with open(loss_file_path, "r", encoding="utf-8") as f:
             for raw_line in f:
                 line = raw_line.strip()
                 if not line:
@@ -391,7 +731,7 @@ def read_training_loss():
         )
 
         return {
-            "path": str(LOSS_FILE_PATH),
+            "path": str(loss_file_path),
             "data": sampled_data,
             "meta": {
                 "total_points": len(raw_data),
@@ -404,7 +744,7 @@ def read_training_loss():
         return {
             "status": "error",
             "message": f"failed to read loss file: {e}",
-            "path": str(LOSS_FILE_PATH),
+            "path": str(loss_file_path),
             "data": [],
             "meta": {
                 "total_points": 0,

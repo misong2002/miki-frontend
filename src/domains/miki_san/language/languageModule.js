@@ -6,8 +6,8 @@ import { createLanguageRuntime } from "./languageRuntime";
 export function createLanguageModule({
   streamChat = sendChatStream,
   parserFactory = createControlStreamParser,
-  transferIntervalMs = 60,
-  typewriterIntervalMs = 20,
+  transferIntervalMs = 6,
+  typewriterIntervalMs = 2,
   onCharacterEvent = null,
 } = {}) {
   const runtime = createLanguageRuntime({

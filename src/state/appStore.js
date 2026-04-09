@@ -6,7 +6,7 @@ export const AppMode = {
 };
 
 export const initialHyperParams = {
-  modelName: "hadron_Matrix_siren",
+  modelName: "HMsiren",
   dataset: "data/simulation.hdf5",
   flux: "data/flux.dat",
   output: "data/siren_params.npz",

@@ -14,6 +14,8 @@ from services.persona_service import get_system_prompt
 
 MAX_RETRIEVED_LONG_TERM_ITEMS = 6
 MAX_RETRIEVAL_HISTORY_MESSAGES = 4
+MAX_PROMPT_HISTORY_MESSAGES = 20
+MAX_PROMPT_MESSAGE_CHARS = 10000
 GENERIC_QUERY_TERMS = {
     "我们",
     "你们",
@@ -561,6 +563,35 @@ def _build_retrieval_query(
     return "\n".join(lines).strip()
 
 
+def _build_prompt_history(
+    history: list[dict[str, str]],
+    *,
+    limit: int = MAX_PROMPT_HISTORY_MESSAGES,
+    max_chars_per_message: int = MAX_PROMPT_MESSAGE_CHARS,
+) -> list[dict[str, str]]:
+    recent_history = history[-limit:] if limit > 0 else []
+    prompt_history: list[dict[str, str]] = []
+
+    for msg in recent_history:
+        role = str(msg.get("role", "")).strip()
+        if role not in {"user", "assistant", "system"}:
+            continue
+
+        content = _normalize_text(msg.get("content", ""))
+        if not content:
+            continue
+
+        if max_chars_per_message > 0:
+            content = content[:max_chars_per_message]
+
+        prompt_history.append({
+            "role": role,
+            "content": content,
+        })
+
+    return prompt_history
+
+
 def _classify_memory_query_level(
     query_text: str,
     db: dict[str, Any],
@@ -818,6 +849,7 @@ def build_chat_messages(user_message: str) -> tuple[list[dict[str, str]], dict[s
     retrieval_query = _build_retrieval_query(history, user_message)
     context = build_memory_context(retrieval_query)
     retrieved_memory_block = context["memory_block"]
+    prompt_history = _build_prompt_history(history)
 
     messages = [
         {"role": "system", "content": get_system_prompt()}
@@ -829,6 +861,7 @@ def build_chat_messages(user_message: str) -> tuple[list[dict[str, str]], dict[s
             "content": f"（用户的问题让你想起了：\n{retrieved_memory_block}\n）",
         })
 
+    messages.extend(prompt_history)
     messages.append({
         "role": "user",
         "content": user_message,
@@ -837,6 +870,7 @@ def build_chat_messages(user_message: str) -> tuple[list[dict[str, str]], dict[s
     return messages, {
         **context["debug_retrieval"],
         "injected_memory_block": retrieved_memory_block,
+        "injected_short_term_history_count": len(prompt_history),
     }
 
 

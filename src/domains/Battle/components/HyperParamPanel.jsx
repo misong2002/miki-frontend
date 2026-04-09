@@ -9,6 +9,28 @@ import {
   runHistoryPlot,
 } from "../services/historyToolService";
 
+const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
+const SECTION_ORDER = [
+  "io_config",
+  "model_config",
+  "optimization_config",
+  "cluster_config",
+  "debug_config",
+];
+const CONFIG_TABS = [
+  { id: "io_config", label: "io" },
+  { id: "model_config", label: "model" },
+  { id: "optimization_config", label: "optimzt" },
+  { id: "run mode", label: "run mode" },
+];
+const SECTION_TITLES = {
+  io_config: "IO Config",
+  model_config: "Model Config",
+  optimization_config: "Optimization Config",
+  cluster_config: "Cluster Config",
+  debug_config: "Debug Config",
+};
+
 function inferInputKind(value) {
   if (typeof value === "number") return "number";
   if (typeof value === "boolean") return "boolean";
@@ -66,6 +88,27 @@ function toSessionId(item) {
     return item.replace(/^history\//, "");
   }
   return item.session_id ?? "";
+}
+
+function normalizeConfig(config) {
+  const sections = config?.sections && typeof config.sections === "object" ? config.sections : {};
+  const normalizedSections = {};
+
+  for (const sectionName of SECTION_ORDER) {
+    normalizedSections[sectionName] =
+      sections[sectionName] && typeof sections[sectionName] === "object"
+        ? sections[sectionName]
+        : {};
+  }
+
+  return {
+    run_mode: config?.run_mode ?? "local",
+    sections: normalizedSections,
+  };
+}
+
+function cloneConfig(config) {
+  return JSON.parse(JSON.stringify(normalizeConfig(config)));
 }
 
 const rootStyle = {
@@ -130,12 +173,37 @@ const configScrollStyle = {
   flex: 1,
   overflow: "auto",
   paddingRight: 4,
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderTop: 0,
+  background: "rgba(255,255,255,0.02)",
 };
 
 const feedbackSlotStyle = {
   minHeight: 22,
   marginTop: 8,
   flex: "0 0 auto",
+};
+
+const tabRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 0,
+  flex: "0 0 auto",
+};
+
+const sectionBlockStyle = {
+  padding: 12,
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
+};
+
+const sectionTitleStyle = {
+  margin: "0 0 10px 0",
+  fontSize: "0.9rem",
+  opacity: 0.95,
+};
+
+const runModeSelectStyle = {
+  width: "100%",
 };
 
 function FeedbackSlot({ error = "", message = "", loadingText = "" }) {
@@ -167,8 +235,10 @@ function FeedbackSlot({ error = "", message = "", loadingText = "" }) {
 }
 
 export default function HyperParamPanel({ onBattle, disabled }) {
-  const [config, setConfig] = useState({});
-  const [originalConfig, setOriginalConfig] = useState({});
+  const [config, setConfig] = useState(() => normalizeConfig({}));
+  const [originalConfig, setOriginalConfig] = useState(() => normalizeConfig({}));
+  const [availableModels, setAvailableModels] = useState([]);
+  const [activeConfigTab, setActiveConfigTab] = useState("io_config");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshingConfig, setRefreshingConfig] = useState(false);
@@ -197,9 +267,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
     try {
       const result = await fetchTrainConfig();
-      const nextConfig = result?.config ?? {};
+      const nextConfig = normalizeConfig(result?.config ?? {});
+      const nextAvailableModels = Array.isArray(result?.available_models)
+        ? result.available_models
+        : [];
       setConfig(nextConfig);
-      setOriginalConfig(nextConfig);
+      setOriginalConfig(cloneConfig(nextConfig));
+      setAvailableModels(nextAvailableModels);
 
       if (silent) {
         setSaveMessage("reloaded");
@@ -267,28 +341,198 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     };
   }, [loadConfig, loadHistorySessions]);
 
-  const entries = useMemo(() => Object.entries(config), [config]);
-
   const historyBusy = Boolean(historyAction);
   const configBusy = disabled || saving || loading || refreshingConfig;
 
-  function updateField(key, rawValue) {
-    const originalValue = originalConfig[key];
+  function updateRunMode(nextRunMode) {
+    setConfig((prev) => ({
+      ...prev,
+      run_mode: nextRunMode,
+    }));
+    setSaveError("");
+  }
+
+  function updateField(sectionName, key, rawValue) {
+    const originalValue = originalConfig.sections?.[sectionName]?.[key];
 
     try {
       const parsed = parseEditedValue(rawValue, originalValue);
       setConfig((prev) => ({
         ...prev,
-        [key]: parsed,
+        sections: {
+          ...prev.sections,
+          [sectionName]: {
+            ...prev.sections[sectionName],
+            [key]: parsed,
+          },
+        },
       }));
       setSaveError("");
     } catch {
       setConfig((prev) => ({
         ...prev,
-        [key]: rawValue,
+        sections: {
+          ...prev.sections,
+          [sectionName]: {
+            ...prev.sections[sectionName],
+            [key]: rawValue,
+          },
+        },
       }));
     }
   }
+
+  function renderSectionFields(sectionName) {
+    const section = config.sections?.[sectionName] ?? {};
+    const entries = Object.entries(section);
+
+    if (entries.length === 0) {
+      return (
+        <section key={sectionName} style={sectionBlockStyle}>
+          <h3 style={sectionTitleStyle}>{SECTION_TITLES[sectionName] ?? sectionName}</h3>
+          <div className="panel-status">no fields</div>
+        </section>
+      );
+    }
+
+    return (
+      <section key={sectionName} style={sectionBlockStyle}>
+        <h3 style={sectionTitleStyle}>{SECTION_TITLES[sectionName] ?? sectionName}</h3>
+        {entries.map(([key, value]) => {
+          const originalValue = originalConfig.sections?.[sectionName]?.[key];
+          const kind = inferInputKind(originalValue);
+          const displayValue = toDisplayValue(value);
+          const inputId = `cfg-${sectionName}-${key}`;
+
+          if (sectionName === "model_config" && key === "model_name") {
+            const options = availableModels.length > 0 ? availableModels : [displayValue || "HMsiren"];
+            return (
+              <div key={key} className="train-config-item">
+                <label className="train-config-label" htmlFor={inputId}>
+                  {key}
+                </label>
+                <select
+                  id={inputId}
+                  className="train-config-input"
+                  value={String(displayValue)}
+                  onChange={(e) => updateField(sectionName, key, e.target.value)}
+                  disabled={configBusy}
+                >
+                  {options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          }
+
+          if (kind === "boolean") {
+            return (
+              <div key={key} className="train-config-item">
+                <label className="train-config-label" htmlFor={inputId}>
+                  {key}
+                </label>
+                <select
+                  id={inputId}
+                  className="train-config-input"
+                  value={String(displayValue)}
+                  onChange={(e) => updateField(sectionName, key, e.target.value)}
+                  disabled={configBusy}
+                >
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+            );
+          }
+
+          if (kind === "json") {
+            return (
+              <div key={key} className="train-config-item">
+                <label className="train-config-label" htmlFor={inputId}>
+                  {key}
+                </label>
+                <textarea
+                  id={inputId}
+                  className="train-config-input train-config-textarea"
+                  value={displayValue}
+                  onChange={(e) => updateField(sectionName, key, e.target.value)}
+                  disabled={configBusy}
+                  rows={4}
+                />
+              </div>
+            );
+          }
+
+          return (
+            <div key={key} className="train-config-item">
+              <label className="train-config-label" htmlFor={inputId}>
+                {key}
+              </label>
+              <input
+                id={inputId}
+                className="train-config-input"
+                type={kind === "number" ? "number" : "text"}
+                value={displayValue}
+                onChange={(e) => updateField(sectionName, key, e.target.value)}
+                disabled={configBusy}
+              />
+            </div>
+          );
+        })}
+      </section>
+    );
+  }
+
+  const activeConfigContent = useMemo(() => {
+    if (activeConfigTab === "run mode") {
+      const blocks = [
+        <section key="run-mode" style={sectionBlockStyle}>
+          <h3 style={sectionTitleStyle}>Run Mode</h3>
+          <div className="train-config-item">
+            <label className="train-config-label" htmlFor="train-config-run-mode">
+              run_mode
+            </label>
+            <select
+              id="train-config-run-mode"
+              className="train-config-input"
+              value={config.run_mode}
+              onChange={(e) => updateRunMode(e.target.value)}
+              disabled={configBusy}
+              style={runModeSelectStyle}
+            >
+              {RUN_MODE_OPTIONS.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+          </div>
+        </section>,
+      ];
+
+      if (config.run_mode === "cluster") {
+        blocks.push(renderSectionFields("cluster_config"));
+      }
+      if (config.run_mode === "debug") {
+        blocks.push(renderSectionFields("debug_config"));
+      }
+      if (config.run_mode === "local") {
+        blocks.push(
+          <section key="local-info" style={sectionBlockStyle}>
+            <h3 style={sectionTitleStyle}>Local Mode</h3>
+            <div className="panel-status">no extra fields for local mode</div>
+          </section>
+        );
+      }
+
+      return blocks;
+    }
+
+    return [renderSectionFields(activeConfigTab)];
+  }, [activeConfigTab, availableModels, config, configBusy, originalConfig]);
 
   async function handleRefreshConfig() {
     if (disabled || saving || loading || refreshingConfig) return;
@@ -300,41 +544,47 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     await loadHistorySessions({ silent: true });
   }
 
-  async function handleSave() {
+  async function persistConfig(afterSave) {
     setSaving(true);
     setSaveError("");
     setSaveMessage("");
 
     try {
       const result = await saveTrainConfig(config);
-      const nextConfig = result?.config ?? config;
+      const nextConfig = normalizeConfig(result?.config ?? config);
+      const nextAvailableModels = Array.isArray(result?.available_models)
+        ? result.available_models
+        : availableModels;
       setConfig(nextConfig);
-      setOriginalConfig(nextConfig);
-      setSaveMessage("saved");
+      setOriginalConfig(cloneConfig(nextConfig));
+      setAvailableModels(nextAvailableModels);
+      await afterSave?.(nextConfig);
+      return nextConfig;
     } catch (err) {
       setSaveError(err.message || "failed to save train config");
+      return null;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSave() {
+    const saved = await persistConfig();
+    if (saved) {
+      setSaveMessage("saved");
     }
   }
 
   async function handleBattle() {
     if (disabled || saving || loading || refreshingConfig) return;
 
-    setSaveError("");
-    setSaveMessage("");
-
-    try {
-      const result = await saveTrainConfig(config);
-      const nextConfig = result?.config ?? config;
-
-      setConfig(nextConfig);
-      setOriginalConfig(nextConfig);
+    const saved = await persistConfig(async (nextConfig) => {
       setSaveMessage("saved, starting battle...");
-
       await onBattle?.(nextConfig);
-    } catch (err) {
-      setSaveError(err.message || "failed to save config before battle");
+    });
+
+    if (!saved) {
+      setSaveError((prev) => prev || "failed to save config before battle");
     }
   }
 
@@ -478,68 +728,32 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
         {!loading && !loadError && (
           <>
+            <div style={tabRowStyle}>
+              {CONFIG_TABS.map((tab, index) => {
+                const active = activeConfigTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    className="train-config-btn"
+                    onClick={() => setActiveConfigTab(tab.id)}
+                    disabled={configBusy}
+                    style={{
+                      borderRadius: 0,
+                      marginLeft: index === 0 ? 0 : -1,
+                      background: active ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.05)",
+                      borderColor: active ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
+                      position: active ? "relative" : "static",
+                      zIndex: active ? 1 : 0,
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="train-config-scroll" style={configScrollStyle}>
-              <div className="train-config-list">
-                {entries.map(([key, value]) => {
-                  const originalValue = originalConfig[key];
-                  const kind = inferInputKind(originalValue);
-                  const displayValue = toDisplayValue(value);
-
-                  if (kind === "boolean") {
-                    return (
-                      <div key={key} className="train-config-item">
-                        <label className="train-config-label" htmlFor={`cfg-${key}`}>
-                          {key}
-                        </label>
-                        <select
-                          id={`cfg-${key}`}
-                          className="train-config-input"
-                          value={String(displayValue)}
-                          onChange={(e) => updateField(key, e.target.value)}
-                          disabled={disabled || saving || refreshingConfig}
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                      </div>
-                    );
-                  }
-
-                  if (kind === "json") {
-                    return (
-                      <div key={key} className="train-config-item">
-                        <label className="train-config-label" htmlFor={`cfg-${key}`}>
-                          {key}
-                        </label>
-                        <textarea
-                          id={`cfg-${key}`}
-                          className="train-config-input train-config-textarea"
-                          value={displayValue}
-                          onChange={(e) => updateField(key, e.target.value)}
-                          disabled={disabled || saving || refreshingConfig}
-                          rows={4}
-                        />
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={key} className="train-config-item">
-                      <label className="train-config-label" htmlFor={`cfg-${key}`}>
-                        {key}
-                      </label>
-                      <input
-                        id={`cfg-${key}`}
-                        className="train-config-input"
-                        type={kind === "number" ? "number" : "text"}
-                        value={displayValue}
-                        onChange={(e) => updateField(key, e.target.value)}
-                        disabled={disabled || saving || refreshingConfig}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
+              <div className="train-config-list">{activeConfigContent}</div>
             </div>
 
             <FeedbackSlot
@@ -560,7 +774,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
               <button
                 className="train-config-btn"
                 onClick={handleSave}
-                disabled={disabled || saving || loading || refreshingConfig}
+                disabled={configBusy}
               >
                 {saving ? "saving..." : "save"}
               </button>
@@ -568,7 +782,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
               <button
                 className="train-config-btn train-config-btn-primary"
                 onClick={handleBattle}
-                disabled={disabled || saving || loading || refreshingConfig}
+                disabled={configBusy}
               >
                 start battle
               </button>

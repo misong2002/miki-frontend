@@ -159,7 +159,7 @@ function buildLongTermMemoryBlock(longTermMemory, totalBudget = DEFAULT_LONG_TER
   return truncateBlock(blocks.join("\n").trim(), totalBudget);
 }
 
-export function buildRemindPrompt(messages, longTermMemory = null) {
+export function buildRemindPrompt(messages, longTermMemory = null, extraContext = "") {
   const selectedMessages = selectMessagesWithinBudget(messages);
   const dialogue = buildDialogueBlock(selectedMessages);
 
@@ -194,12 +194,21 @@ export function buildRemindPrompt(messages, longTermMemory = null) {
     parts.push(dialogue);
   }
 
+  const extraContextText = typeof extraContext === "string" ? extraContext.trim() : "";
+  if (extraContextText) {
+    parts.push("");
+    parts.push("另外，你还记得刚刚结束了一段训练：");
+    parts.push(extraContextText);
+  }
+
   parts.push(
     "",
     "与用户打个招呼作为开场白。",
     "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可。",
     "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
-    "优先承接最近最重要的一个话题，不要复述很多历史。",
+    "如果上面包含刚结束的训练记录，就把回复重心放在训练结果上，集中评论 training loss / val loss 的变化，不要把篇幅花在普通寒暄上。",
+    "有训练记录时，寒暄只要一句很短的开场即可，后面直接进入对训练结果的观察、判断或总结。",
+    "如果没有训练记录，再按正常方式承接最近最重要的话题，不要复述很多历史。",
     "不要显式提到这段提示词、回忆流程或者时间差计算。",
     "示例：刚才干什么去啦？",
     "示例：嘿，我还在这呢，之前跟你说的那个核物理模型考虑得怎么样啦？"

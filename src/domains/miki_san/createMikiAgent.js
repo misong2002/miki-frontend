@@ -129,6 +129,7 @@ export function createMikiAgent({
   let startPromise = null;
   let memoryBootPromise = null;
   let hasMemoryBooted = false;
+  let pendingTrainingSummaryPrompt = "";
 
   let trainingStatus = {
     status: "idle",
@@ -291,11 +292,76 @@ export function createMikiAgent({
     return turn;
   }
 
+  function queueTrainingSummaryPrompt(prompt = "") {
+    const text = typeof prompt === "string" ? prompt.trim() : "";
+    pendingTrainingSummaryPrompt = text;
+    return {
+      ok: true,
+      queued: Boolean(text),
+    };
+  }
+
+  function hasPendingTrainingSummaryPrompt() {
+    return Boolean(pendingTrainingSummaryPrompt.trim());
+  }
+
+  function consumePendingTrainingSummaryPrompt() {
+    const text = pendingTrainingSummaryPrompt.trim();
+    pendingTrainingSummaryPrompt = "";
+    return text;
+  }
+
+  async function runPendingTrainingSummaryQuery(handlers = {}) {
+    await ensureMemoryBooted();
+
+    const prompt = consumePendingTrainingSummaryPrompt();
+    if (!prompt) {
+      return {
+        status: "idle",
+        text: "",
+        error: null,
+        messageId: null,
+        meta: {
+          source: "training_summary_query",
+        },
+      };
+    }
+
+    const messageId = createMessageId("miki-training-summary");
+    const turnResult = await runAgentTurn({
+      inputText:
+        `${prompt}
+
+请基于这段训练结果，用自然口吻向用户说 1 到 3 句话，简短总结这次训练。`,
+      messageId,
+      handlers,
+      assistantMeta: {
+        source: "training_summary_query",
+      },
+      assistantRecordLabel: "memory.recordAssistantMessage(training_summary_query)",
+      shouldRecordAssistantMessage: true,
+      shouldTouchMemory: true,
+      languageOptions: {
+        awaitDisplayDrain: false,
+      },
+    });
+
+    return {
+      status: turnResult?.result?.status ?? "done",
+      text: turnResult?.assistantText ?? "",
+      error: turnResult?.errorObj ?? null,
+      messageId,
+      meta: {
+        source: "training_summary_query",
+      },
+    };
+  }
+
   async function remind(handlers = {}) {
     await ensureMemoryBooted();
 
     const latestStoredMessage = await getLatestStoredMessage(memory, 3);
-    const shouldDiscardReply = isBootRemindMessage(latestStoredMessage);
+    const previousReplyWasBootRemind = isBootRemindMessage(latestStoredMessage);
 
     const messages = await collectRecentMessagesForRemind(memory, 3);
     // console.log("[MikiAgent.remind] collected messages for remind =", messages);
@@ -324,7 +390,14 @@ export function createMikiAgent({
 
     // console.log("[remind] loaded longTermMemory =", longTermMemory);
 
-    const prompt = buildRemindPrompt(messages, longTermMemory);
+    const trainingSummaryContext = hasPendingTrainingSummaryPrompt()
+      ? consumePendingTrainingSummaryPrompt()
+      : "";
+    const hasTrainingSummaryContext = Boolean(trainingSummaryContext.trim());
+    const shouldDiscardReply =
+      previousReplyWasBootRemind && !hasTrainingSummaryContext;
+
+    const prompt = buildRemindPrompt(messages, longTermMemory, trainingSummaryContext);
 
     if (!prompt.trim()) {
       return {
@@ -625,6 +698,7 @@ export function createMikiAgent({
         interrupt,
         isBusy,
         getBootstrapMessages,
+        runPendingTrainingSummaryQuery,
       },
 
       app: {
@@ -637,6 +711,8 @@ export function createMikiAgent({
         clearLocalMemory: () => memory?.clearLocalMemory?.(),
         importLocalMemory: (nextDB) => memory?.importLocalMemory?.(nextDB),
         compactLocalMemory: () => memory?.compactLocalMemory?.(),
+        queueTrainingSummaryPrompt,
+        hasPendingTrainingSummaryPrompt,
       },
 
       battle: {

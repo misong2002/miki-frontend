@@ -1,4 +1,9 @@
-import { takeNaturalChunk, isAbortError, appendIfPresent } from "./languageUtils";
+import {
+  takeNaturalChunk,
+  isAbortError,
+  appendIfPresent,
+  inspectSpeechChunk,
+} from "./languageUtils";
 import {
   createLanguageRun,
   moveAllPendingTextToDisplayed,
@@ -92,9 +97,10 @@ export function createLanguageRuntime({
   }
 
   function ensureSpeakingStarted(run) {
-    if (run.speakingStarted) return;
+    if (run.speechActive) return;
 
     run.speakingStarted = true;
+    run.speechActive = true;
 
     emit({
       type: "CHAT_SPEAK_START",
@@ -102,7 +108,38 @@ export function createLanguageRuntime({
     });
 
     run.handlers.onSpeakingStart?.();
+
+    if (run.phaseSpeakingEmitted) return;
+    run.phaseSpeakingEmitted = true;
     run.handlers.onPhase?.("speaking");
+  }
+
+  function ensureSpeakingStopped(run) {
+    if (!run.speechActive) return;
+
+    run.speechActive = false;
+
+    emit({
+      type: "CHAT_SPEAK_STOP",
+      messageId: run.messageId,
+    });
+
+    run.handlers.onSpeakingStop?.();
+  }
+
+  function syncSpeechForChunk(run, chunk) {
+    const { shouldSpeak, state } = inspectSpeechChunk(
+      chunk,
+      run.markdownSpeechState
+    );
+
+    run.markdownSpeechState = state;
+
+    if (shouldSpeak) {
+      ensureSpeakingStarted(run);
+    } else {
+      ensureSpeakingStopped(run);
+    }
   }
 
   /**
@@ -113,9 +150,7 @@ export function createLanguageRuntime({
     if (run.contentFinalized) return;
     run.contentFinalized = true;
 
-    if (run.speakingStarted) {
-      run.handlers.onSpeakingStop?.();
-    }
+    ensureSpeakingStopped(run);
 
     endCharacterSpeech(run);
 
@@ -235,7 +270,7 @@ export function createLanguageRuntime({
       run.displayQueue = queue.slice(chunk.length);
       run.displayedText += chunk;
 
-      ensureSpeakingStarted(run);
+      syncSpeechForChunk(run, chunk);
 
       run.handlers.onTextChunk?.(chunk, run.displayedText);
       run.handlers.onTextUpdate?.(
@@ -314,7 +349,6 @@ export function createLanguageRuntime({
        */
       if (!awaitDisplayDrain) {
         const fullText = getFullTextSnapshot(run) || run.displayedText || "……";
-        ensureSpeakingStarted(run);
 
         run.handlers.onTextUpdate?.(fullText, "done");
         finalizeDone(run, fullText);

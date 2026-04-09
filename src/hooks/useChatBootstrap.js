@@ -44,15 +44,18 @@ export function useChatBootstrap({
     let cancelled = false;
 
     async function bootstrapChat() {
+      console.log("[chat/bootstrap] bootstrap requested:", { mode, chatModeValue });
       /**
        * 关键约束：
        * - 只有当前真正处于聊天模式时，才执行 chat bootstrap
        * - 避免 battle 恢复场景下误跑 appAgent.start() / chat restore
        */
       if (mode !== chatModeValue) {
+        console.log("[chat/bootstrap] skipped because app is not in chat mode");
         return;
       }
 
+      console.log("[chat/bootstrap] starting app agent bootstrap");
       setChatBootReady(false);
       setBootPhase("archiving");
       setHintIndex(0);
@@ -84,9 +87,11 @@ export function useChatBootstrap({
           (await chatAgent?.getBootstrapMessages?.()) ?? [];
 
         if (cancelled) return;
+        console.log("[chat/bootstrap] restored bootstrap messages:", restoredMessages.length);
         setInitialChatMessages(restoredMessages);
         setBootPhase("ready");
         setHasDeferredRemindRun(false);
+        console.log("[chat/bootstrap] bootstrap complete");
       } catch (err) {
         console.warn("[useChatBootstrap] bootstrapChat failed:", err);
 
@@ -95,6 +100,7 @@ export function useChatBootstrap({
         setBootPhase("error");
       } finally {
         if (cancelled) return;
+        console.log("[chat/bootstrap] chat boot ready");
         setChatBootReady(true);
       }
     }
@@ -141,29 +147,77 @@ export function useChatBootstrap({
       if (!chatBootReady) return;
       if (bootPhase !== "ready") return;
       if (hasDeferredRemindRun) return;
-      if (!chatAgent?.remind) return;
 
+      console.log("[chat/bootstrap] deferred remind check", {
+        hasRemind: Boolean(chatAgent?.remind),
+        hasPendingTrainingSummary:
+          appAgent?.hasPendingTrainingSummaryPrompt?.() ?? false,
+      });
+
+      const hasPendingTrainingSummary =
+        appAgent?.hasPendingTrainingSummaryPrompt?.() ?? false;
+
+      if (!chatAgent?.remind && !hasPendingTrainingSummary) return;
+
+      console.log("[chat/bootstrap] deferred remind start");
       setHasDeferredRemindRun(true);
       setBootPhase("reminding");
 
       try {
-        const remindResult = await chatAgent.remind();
+        let remindResult = {
+          status: "idle",
+          text: "",
+          error: null,
+          messageId: null,
+          meta: {},
+        };
+
+        if (chatAgent?.remind) {
+          remindResult = await chatAgent.remind();
+        }
 
         if (cancelled) return;
+        console.log("[chat/bootstrap] deferred remind result:", {
+          status: remindResult?.status,
+          hasText: Boolean(remindResult?.text?.trim?.()),
+          messageId: remindResult?.messageId ?? null,
+        });
 
         setInitialChatMessages((prev) =>
           appendDeferredRemindMessage(prev, remindResult)
         );
 
+        if (
+          remindResult?.status === "idle" &&
+          (appAgent?.hasPendingTrainingSummaryPrompt?.() ?? false) &&
+          chatAgent?.runPendingTrainingSummaryQuery
+        ) {
+          const trainingSummaryResult =
+            await chatAgent.runPendingTrainingSummaryQuery();
+
+          if (cancelled) return;
+          console.log("[chat/bootstrap] ran pending training summary query:", {
+            status: trainingSummaryResult?.status,
+            hasText: Boolean(trainingSummaryResult?.text?.trim?.()),
+            messageId: trainingSummaryResult?.messageId ?? null,
+          });
+
+          setInitialChatMessages((prev) =>
+            appendDeferredRemindMessage(prev, trainingSummaryResult)
+          );
+        }
+
         const restoredMessages =
           (await chatAgent?.getBootstrapMessages?.()) ?? [];
 
         if (cancelled) return;
+        console.log("[chat/bootstrap] deferred remind complete, refreshed messages:", restoredMessages.length);
         setInitialChatMessages(restoredMessages);
         setBootPhase("ready");
       } catch (err) {
         console.warn("[useChatBootstrap] deferred remind failed:", err);
         if (cancelled) return;
+        console.log("[chat/bootstrap] deferred remind aborted, restoring ready state");
         setBootPhase("ready");
       }
     }
@@ -178,6 +232,7 @@ export function useChatBootstrap({
     chatModeValue,
     chatBootReady,
     chatAgent,
+    appAgent,
   ]);
 
   useEffect(() => {
