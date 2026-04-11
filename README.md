@@ -1,4 +1,4 @@
-# MIKI Frontend v2.4 — Saber
+# MIKI Frontend v2.5 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,19 +6,17 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v2.4 — Saber
+## What's New in v2.5 — Saber
 
-Compared with **v2.0.5**, this version mainly upgrades the training workflow, battle recovery flow, and post-training chat behavior.
+Compared with **v2.4**, this version focuses on memory storage resilience, chat bootstrap flow, and more controllable battle/history tooling.
 
-- 🧩 **Training config is now structured and mode-aware**: the hyperparameter panel is split into `io`, `model`, `optimization`, and `run mode` tabs, with dedicated sections for `local`, `cluster`, and `debug` runs instead of one long flat form.
-- 🤖 **Model selection is now backend-driven**: available models and the default model are loaded from backend config, legacy model names are normalized to the current `HMsiren` naming, and config read/write now preserves grouped sections more safely.
-- 🚀 **Battle start/save flow is more reliable**: starting battle now reuses the same config persistence path as manual save, so the UI launches training from the exact saved config state.
-- 🔄 **Startup mode restore is cleaner**: the app now waits for battle-status bootstrap before showing chat, which avoids flashing into chat mode when a training session is still active.
-- 💾 **Battle contact messages survive refresh better**: active training session messages are cached in local storage and restored when the same session is detected again.
-- 📈 **Post-training summaries are now automatic**: the backend can build a summary prompt from `train_loss` and `val_loss` curves, or fall back to the tail of the training log when errors occur, and Miki can comment on the finished run after returning to chat.
-- 💬 **Chat prompt context is richer again, but bounded**: normal chat turns now include a capped recent short-term history window in addition to retrieved long-term memory, improving continuity without reopening the full-context prompt problem.
-- 🗣️ **Speech/animation behavior is more natural**: markdown fenced code blocks no longer keep the speaking state active, explicit speech-stop events are emitted, and the streaming/typewriter loop runs much faster.
-- ✨ **Mode transitions are visually smoother**: chat/battle switching now uses a white fade overlay instead of abrupt shell swaps.
+- 🧠 **Long-term memory storage is now split into collection files**: memory data is migrated from a single monolithic JSON file into per-collection files with a manifest, metadata file, legacy backup path, and lock-guarded access.
+- 🔒 **Memory debug storage endpoints are safer**: raw storage browsing is now gated behind `MIKI_EXPOSE_MEMORY_STORAGE`, and memory routes use shared response helpers with stricter path validation.
+- 💬 **Chat boot and remind flow is smoother**: boot phases can be subscribed to, loading hints rotate during archive/compact phases, deferred remind can stream into the chat panel, and the fallback greeting is suppressed until bootstrap is ready.
+- 📈 **Training summaries use richer runtime evidence**: post-training prompts now combine sampled loss rows with `train.log` tail data, preserve rows without validation loss, and ask Miki to describe the finished run in first person.
+- 🛠️ **Backend command responses are more consistent**: history and training routes now share command runner and response helpers, returning bounded stdout/stderr previews instead of raw ad hoc payloads.
+- 💾 **Battle history tooling is easier to trigger mid-run**: the battle panel now has a save-history-and-plot action, and history panel in-progress states use loading styling until the command finishes.
+- ✨ **Boot and transition screens are clearer**: startup gating now waits for both battle and chat shell readiness, with updated boot visuals and slower whiteout timing.
 
 ---
 
@@ -177,6 +175,7 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
+| v2.5 | Saber | Collection-file long-term memory storage, safer memory debug endpoints, streaming chat bootstrap/remind flow, richer training summaries, consistent backend command responses, battle save-history-and-plot tooling |
 | v2.4 | Saber | Sectioned training config UI, backend-driven model selection, safer battle bootstrap recovery, cached battle contact restore, automatic post-training summaries, improved chat history prompting and speech runtime |
 | v2.0.5 | Saber | Fixed shared-server startup behavior, added safe local-memory import/migration support, suppressed repeated boot-remind replies, reduced high-volume memory debug logging |
 | v2.0 | Saber | Query-level long-term memory routing, idea tag catalog maintenance, focused prompt injection, deferred remind after chat-mode entry, unified battle chart sampling |
@@ -189,6 +188,18 @@ Possible future extensions include:
 ---
 
 ## Archived Release Notes
+
+### v2.4 — Saber
+
+- 🧩 **Training config is now structured and mode-aware**: the hyperparameter panel is split into `io`, `model`, `optimization`, and `run mode` tabs, with dedicated sections for `local`, `cluster`, and `debug` runs instead of one long flat form.
+- 🤖 **Model selection is now backend-driven**: available models and the default model are loaded from backend config, legacy model names are normalized to the current `HMsiren` naming, and config read/write now preserves grouped sections more safely.
+- 🚀 **Battle start/save flow is more reliable**: starting battle now reuses the same config persistence path as manual save, so the UI launches training from the exact saved config state.
+- 🔄 **Startup mode restore is cleaner**: the app now waits for battle-status bootstrap before showing chat, which avoids flashing into chat mode when a training session is still active.
+- 💾 **Battle contact messages survive refresh better**: active training session messages are cached in local storage and restored when the same session is detected again.
+- 📈 **Post-training summaries are now automatic**: the backend can build a summary prompt from `train_loss` and `val_loss` curves, or fall back to the tail of the training log when errors occur, and Miki can comment on the finished run after returning to chat.
+- 💬 **Chat prompt context is richer again, but bounded**: normal chat turns now include a capped recent short-term history window in addition to retrieved long-term memory, improving continuity without reopening the full-context prompt problem.
+- 🗣️ **Speech/animation behavior is more natural**: markdown fenced code blocks no longer keep the speaking state active, explicit speech-stop events are emitted, and the streaming/typewriter loop runs much faster.
+- ✨ **Mode transitions are visually smoother**: chat/battle switching now uses a white fade overlay instead of abrupt shell swaps.
 
 ### v2.0.5 — Saber
 

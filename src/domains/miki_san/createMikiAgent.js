@@ -23,6 +23,14 @@ function createMessageId(prefix = "miki") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createTrainingSummaryTask(prompt) {
+  return {
+    id: createMessageId("training-summary-task"),
+    prompt,
+    createdAt: Date.now(),
+  };
+}
+
 async function safeCall(fn, fallback = null, label = "safeCall") {
   try {
     if (typeof fn !== "function") return fallback;
@@ -33,12 +41,9 @@ async function safeCall(fn, fallback = null, label = "safeCall") {
   }
 }
 
-function emitBootPhase(handlers, phase, extra = {}) {
+function emitBootPhaseToHandlers(handlers, payload) {
   try {
-    handlers?.onBootPhaseChange?.({
-      phase,
-      ...extra,
-    });
+    handlers?.onBootPhaseChange?.(payload);
   } catch (err) {
     console.warn("[MikiAgent] onBootPhaseChange failed:", err);
   }
@@ -129,7 +134,11 @@ export function createMikiAgent({
   let startPromise = null;
   let memoryBootPromise = null;
   let hasMemoryBooted = false;
-  let pendingTrainingSummaryPrompt = "";
+  let pendingTrainingSummaryTask = null;
+  let bootPhaseState = {
+    phase: "idle",
+  };
+  const bootPhaseListeners = new Set();
 
   let trainingStatus = {
     status: "idle",
@@ -158,6 +167,48 @@ export function createMikiAgent({
 
   function subscribeContactFeed(listener) {
     return externality?.subscribeContactFeed?.(listener) ?? (() => {});
+  }
+
+  function emitBootPhase(phase, extra = {}, handlers = null) {
+    const payload = {
+      phase,
+      ...extra,
+    };
+
+    bootPhaseState = payload;
+
+    bootPhaseListeners.forEach((listener) => {
+      try {
+        listener(payload);
+      } catch (err) {
+        console.warn("[MikiAgent] boot phase listener failed:", err);
+      }
+    });
+
+    emitBootPhaseToHandlers(handlers, payload);
+    return payload;
+  }
+
+  function subscribeBootPhase(listener, { emitCurrent = true } = {}) {
+    if (typeof listener !== "function") return () => {};
+
+    bootPhaseListeners.add(listener);
+
+    if (emitCurrent && bootPhaseState) {
+      try {
+        listener(bootPhaseState);
+      } catch (err) {
+        console.warn("[MikiAgent] boot phase listener failed:", err);
+      }
+    }
+
+    return () => {
+      bootPhaseListeners.delete(listener);
+    };
+  }
+
+  function getBootPhase() {
+    return bootPhaseState;
   }
 
   function getCurrentWakeCycleIdSafe() {
@@ -294,28 +345,52 @@ export function createMikiAgent({
 
   function queueTrainingSummaryPrompt(prompt = "") {
     const text = typeof prompt === "string" ? prompt.trim() : "";
-    pendingTrainingSummaryPrompt = text;
+
+    if (!text) {
+      return {
+        ok: true,
+        queued: false,
+      };
+    }
+
+    pendingTrainingSummaryTask = createTrainingSummaryTask(text);
+
     return {
       ok: true,
-      queued: Boolean(text),
+      queued: true,
+      pendingCount: pendingTrainingSummaryTask ? 1 : 0,
     };
   }
 
   function hasPendingTrainingSummaryPrompt() {
-    return Boolean(pendingTrainingSummaryPrompt.trim());
+    return Boolean(pendingTrainingSummaryTask);
   }
 
-  function consumePendingTrainingSummaryPrompt() {
-    const text = pendingTrainingSummaryPrompt.trim();
-    pendingTrainingSummaryPrompt = "";
-    return text;
+  function consumePendingTrainingSummaryTask(consumer = "unknown") {
+    const nextTask = pendingTrainingSummaryTask;
+
+    if (!nextTask) {
+      return null;
+    }
+
+    pendingTrainingSummaryTask = null;
+
+    return {
+      ...nextTask,
+      consumer,
+    };
   }
 
   async function runPendingTrainingSummaryQuery(handlers = {}) {
+    const startedAt = Date.now();
+    console.log("[MikiAgent.trainingSummary] start");
     await ensureMemoryBooted();
 
-    const prompt = consumePendingTrainingSummaryPrompt();
+    const task = consumePendingTrainingSummaryTask("training_summary_query");
+    const prompt = task?.prompt ?? "";
+
     if (!prompt) {
+      console.log("[MikiAgent.trainingSummary] skipped: no prompt", { durationMs: Date.now() - startedAt });
       return {
         status: "idle",
         text: "",
@@ -332,6 +407,9 @@ export function createMikiAgent({
       inputText:
         `${prompt}
 
+请把这次训练当成你自己刚刚亲身打完的一场战斗来回顾，用第一人称说话。
+不要用“Miki 她……”或者“她刚刚……”这种第三者视角。
+请直接用“我刚刚……”“我这次……”这样的说法。
 请基于这段训练结果，用自然口吻向用户说 1 到 3 句话，简短总结这次训练。`,
       messageId,
       handlers,
@@ -346,6 +424,14 @@ export function createMikiAgent({
       },
     });
 
+    console.log("[MikiAgent.trainingSummary] complete", {
+      durationMs: Date.now() - startedAt,
+      status: turnResult?.result?.status ?? "done",
+      hasText: Boolean(turnResult?.assistantText ?? ""),
+      messageId,
+      taskId: task?.id ?? null,
+    });
+
     return {
       status: turnResult?.result?.status ?? "done",
       text: turnResult?.assistantText ?? "",
@@ -358,6 +444,8 @@ export function createMikiAgent({
   }
 
   async function remind(handlers = {}) {
+    const startedAt = Date.now();
+    console.log("[MikiAgent.remind] start");
     await ensureMemoryBooted();
 
     const latestStoredMessage = await getLatestStoredMessage(memory, 3);
@@ -367,6 +455,7 @@ export function createMikiAgent({
     // console.log("[MikiAgent.remind] collected messages for remind =", messages);
 
     if (messages.length === 0) {
+      console.log("[MikiAgent.remind] skipped: no messages", { durationMs: Date.now() - startedAt });
       return {
         status: "idle",
         text: "",
@@ -381,18 +470,22 @@ export function createMikiAgent({
     let longTermMemory = null;
 
     try {
+      console.log("[MikiAgent.remind] fetching long-term memory");
       if (memory?.fetchLongTermSystemPromptMemory) {
         longTermMemory = await memory.fetchLongTermSystemPromptMemory();
       }
+      console.log("[MikiAgent.remind] fetched long-term memory", {
+        durationMs: Date.now() - startedAt,
+        hasLongTermMemory: Boolean(longTermMemory),
+      });
     } catch (err) {
       console.warn("[remind] fetchLongTermSystemPromptMemory failed:", err);
     }
 
     // console.log("[remind] loaded longTermMemory =", longTermMemory);
 
-    const trainingSummaryContext = hasPendingTrainingSummaryPrompt()
-      ? consumePendingTrainingSummaryPrompt()
-      : "";
+    const trainingSummaryTask = consumePendingTrainingSummaryTask("boot_remind");
+    const trainingSummaryContext = trainingSummaryTask?.prompt ?? "";
     const hasTrainingSummaryContext = Boolean(trainingSummaryContext.trim());
     const shouldDiscardReply =
       previousReplyWasBootRemind && !hasTrainingSummaryContext;
@@ -400,6 +493,7 @@ export function createMikiAgent({
     const prompt = buildRemindPrompt(messages, longTermMemory, trainingSummaryContext);
 
     if (!prompt.trim()) {
+      console.log("[MikiAgent.remind] skipped: empty prompt", { durationMs: Date.now() - startedAt });
       return {
         status: "idle",
         text: "",
@@ -412,12 +506,36 @@ export function createMikiAgent({
     }
 
     const messageId = createMessageId("miki-remind");
+    console.log("[MikiAgent.remind] running language turn", {
+      durationMs: Date.now() - startedAt,
+      messageId,
+      shouldDiscardReply,
+      hasTrainingSummaryContext,
+    });
     // console.log("[MikiAgent.remind] running remind with prompt:", { prompt });
+
+    const effectiveHandlers = shouldDiscardReply
+      ? {
+          ...handlers,
+          onTextUpdate: () => {},
+          onDone: () => {
+            handlers.onTextUpdate?.("……");
+            handlers.onDone?.("……");
+          },
+          onInterrupted: () => {
+            handlers.onTextUpdate?.("……");
+            handlers.onInterrupted?.("……");
+          },
+          onError: (err) => {
+            handlers.onError?.(err, "……");
+          },
+        }
+      : handlers;
 
     const turnResult = await runAgentTurn({
       inputText: prompt,
       messageId,
-      handlers,
+      handlers: effectiveHandlers,
       assistantMeta: {
         source: "boot_remind",
       },
@@ -429,7 +547,13 @@ export function createMikiAgent({
       },
     });
 
-    // console.log("[MikiAgent.remind] finished reminding");
+    console.log("[MikiAgent.remind] complete", {
+      durationMs: Date.now() - startedAt,
+      status: turnResult?.result?.status ?? "done",
+      hasText: Boolean(turnResult?.assistantText ?? ""),
+      messageId: shouldDiscardReply ? null : messageId,
+      discarded: shouldDiscardReply,
+    });
 
     return {
       status: turnResult?.result?.status ?? "done",
@@ -522,14 +646,14 @@ export function createMikiAgent({
     const deferRemind = Boolean(handlers?.deferRemind);
 
     if (hasStarted) {
-      emitBootPhase(handlers, "ready");
+      emitBootPhase("ready", {}, handlers);
       return;
     }
 
     if (startPromise) return startPromise;
 
     startPromise = (async () => {
-      emitBootPhase(handlers, "archiving");
+      emitBootPhase("archiving", {}, handlers);
 
       await ensureMemoryBooted();
 
@@ -539,7 +663,7 @@ export function createMikiAgent({
         "memory.archiveStaleWakeCyclesIfNeeded"
       );
 
-      emitBootPhase(handlers, "compacting");
+      emitBootPhase("compacting", {}, handlers);
 
       await safeCall(
         () => memory?.compactLocalMemory?.(),
@@ -569,7 +693,7 @@ export function createMikiAgent({
       };
 
       if (hasRecoverableContext && !deferRemind) {
-        emitBootPhase(handlers, "reminding");
+        emitBootPhase("reminding", {}, handlers);
         remindResult = await remind(handlers);
       }
 
@@ -581,11 +705,11 @@ export function createMikiAgent({
 
       if (bootSucceeded) {
         hasStarted = true;
-        emitBootPhase(handlers, "ready");
+        emitBootPhase("ready", {}, handlers);
       } else {
-        emitBootPhase(handlers, "error", {
+        emitBootPhase("error", {
           error: remindResult.error ?? null,
-        });
+        }, handlers);
       }
 
       return remindResult;
@@ -669,6 +793,8 @@ export function createMikiAgent({
       archiveStaleWakeCyclesIfNeeded: async () =>
         memory?.archiveStaleWakeCyclesIfNeeded?.(),
 
+      subscribeBootPhase,
+      getBootPhase,
       perceptionGateState: () => perceptionGate?.getState?.(),
       trainingStatus: () => trainingStatus,
 
@@ -713,6 +839,8 @@ export function createMikiAgent({
         compactLocalMemory: () => memory?.compactLocalMemory?.(),
         queueTrainingSummaryPrompt,
         hasPendingTrainingSummaryPrompt,
+        subscribeBootPhase,
+        getBootPhase,
       },
 
       battle: {

@@ -4,12 +4,13 @@ from typing import Any, Generator
 
 from config import OPENAI_MODEL, PROFILE_BUNDLE_MAX_FACTS
 from memory.memory_store import get_long_term_db, list_idea_tag_catalog
-from services.llm_service import client
+from services.llm_service import get_llm_client
 from services.memory_service import (
     append_message,
     get_recent_messages,
 )
 from services.persona_service import get_system_prompt
+from services.response_service import error_payload
 
 
 MAX_RETRIEVED_LONG_TERM_ITEMS = 6
@@ -844,8 +845,11 @@ def get_long_term_memory_retrieval_payload(
     }
 
 
-def build_chat_messages(user_message: str) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    history = get_recent_messages(limit=12)
+def build_chat_messages(
+    user_message: str,
+    session_id: str | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    history = get_recent_messages(limit=12, session_id=session_id)
     retrieval_query = _build_retrieval_query(history, user_message)
     context = build_memory_context(retrieval_query)
     retrieved_memory_block = context["memory_block"]
@@ -878,14 +882,18 @@ def create_chat_stream_response(
     data: dict[str, Any],
 ) -> Generator[str, None, None] | tuple[dict[str, Any], int]:
     user_message = data.get("message", "").strip()
+    session_id = str(data.get("session_id") or "").strip() or None
 
     if not user_message:
-        return {"error": "empty message"}, 400
+        return error_payload("empty message"), 400
 
-    messages, debug_retrieval = build_chat_messages(user_message)
+    messages, debug_retrieval = build_chat_messages(
+        user_message,
+        session_id=session_id,
+    )
 
     try:
-        stream = client.chat.completions.create(
+        stream = get_llm_client().chat.completions.create(
             model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
@@ -894,7 +902,7 @@ def create_chat_stream_response(
         )
     except Exception as e:
         print("LLM stream init error:", e, flush=True)
-        return {"error": f"LLM stream init failed: {e}"}, 500
+        return error_payload(f"LLM stream init failed: {e}"), 500
 
     def generate() -> Generator[str, None, None]:
         full_reply = ""
@@ -918,8 +926,8 @@ def create_chat_stream_response(
                 full_reply += token
                 yield json.dumps({"token": token}, ensure_ascii=False) + "\n"
 
-            append_message("user", user_message)
-            append_message("assistant", full_reply)
+            append_message("user", user_message, session_id=session_id)
+            append_message("assistant", full_reply, session_id=session_id)
 
         except Exception as e:
             print("LLM stream runtime error:", e, flush=True)

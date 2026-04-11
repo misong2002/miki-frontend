@@ -10,6 +10,7 @@ from .memory_store import (
     create_session_summary,
     get_long_term_db,
     get_memory_digest_by_type,
+    get_storage_manifest,
     list_idea_memories,
     list_idea_tag_catalog,
     list_memory_digests,
@@ -194,7 +195,7 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     digest = None
     if force_rebuild_digest:
-      digest = rebuild_system_prompt_digest()
+        digest = rebuild_system_prompt_digest()
 
     return {
         "ok": True,
@@ -216,6 +217,15 @@ def get_long_term_memory_overview() -> Dict[str, Any]:
     db = get_long_term_db()
     return {
         "ok": True,
+        "storage": get_storage_manifest(),
+        "counts": {
+            "session_summaries": len(db.get("session_summaries", [])),
+            "user_facts": len(db.get("user_facts", [])),
+            "idea_memories": len(db.get("idea_memories", [])),
+            "idea_tag_catalog": len(db.get("idea_tag_catalog", [])),
+            "project_states": len(db.get("project_states", [])),
+            "memory_digests": len(db.get("memory_digests", [])),
+        },
         "data": db,
     }
 
@@ -227,6 +237,7 @@ def get_system_prompt_memory() -> Dict[str, Any]:
 
     return {
         "ok": True,
+        "storage": get_storage_manifest(),
         "digest": digest,
         "facts": facts,
         "projects": projects,
@@ -239,6 +250,7 @@ def get_recent_memory_snapshot(
 ) -> Dict[str, Any]:
     return {
         "ok": True,
+        "storage": get_storage_manifest(),
         "session_summaries": list_session_summaries(limit=summary_limit),
         "user_facts": list_user_facts(),
         "idea_memories": list_idea_memories()[:idea_limit],
@@ -253,4 +265,5 @@ def create_backup() -> Dict[str, Any]:
     return {
         "ok": True,
         "backup_path": path,
+        "storage": get_storage_manifest(),
     }

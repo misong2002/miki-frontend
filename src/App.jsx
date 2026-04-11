@@ -72,6 +72,7 @@ function ChatModeView({
   onBattle,
   panelDisabled,
   chatBootReady,
+  chatShellReady,
   initialChatMessages,
   bootLoadingText,
   hideStageModel,
@@ -99,8 +100,9 @@ function ChatModeView({
       <aside className="chat-column">
         <ChatPanel
           disabled={panelDisabled || !chatBootReady}
-          bootLoading={!chatBootReady}
+          bootLoading={!chatShellReady}
           bootLoadingText={bootLoadingText}
+          suppressFallbackGreeting={!chatBootReady}
           chatAgent={chatAgent}
           initialMessages={initialChatMessages}
         />
@@ -196,8 +198,8 @@ export default function App() {
             if (!cancelled) {
               setWhiteTransitionPhase("idle");
             }
-          }, 1000);
-        }, 240);
+          }, 2000);
+        }, 1000);
       });
     });
 
@@ -211,6 +213,7 @@ export default function App() {
 
   const {
     chatBootReady,
+    chatShellReady,
     initialChatMessages,
     bootPhase,
     bootLoadingText,
@@ -249,9 +252,10 @@ export default function App() {
       mode,
       battleBootstrapResolved,
       chatBootReady,
+      chatShellReady,
       bootPhase,
     });
-  }, [mode, battleBootstrapResolved, chatBootReady, bootPhase]);
+  }, [mode, battleBootstrapResolved, chatBootReady, chatShellReady, bootPhase]);
 
   useEffect(() => {
     if (!IS_DEV) return;
@@ -303,15 +307,30 @@ export default function App() {
   const shouldHideStageInChatShell =
     mode === AppMode.CHAT && Boolean(hideStageModel);
 
-  const rootModeClass = isModeLoading ? "booting" : mode;
+  const showGlobalBootShell =
+    isModeLoading ||
+    !battleBootstrapResolved ||
+    (mode === AppMode.CHAT && !chatShellReady);
+
+  const rootModeClass = showGlobalBootShell ? "booting" : mode;
+
+  useEffect(() => {
+    console.log("[App] loading gate", {
+      showGlobalBootShell,
+      mode,
+      battleBootstrapResolved,
+      chatBootReady,
+      bootPhase,
+    });
+  }, [showGlobalBootShell, mode, battleBootstrapResolved, chatBootReady, chatShellReady, bootPhase]);
 
   return (
     <div className={`app-root mode-${rootModeClass}`}>
       <TransitionOverlay visible={isTransforming} />
       <div className={`app-mode-whiteout phase-${whiteTransitionPhase}`} />
 
-      {!battleBootstrapResolved || isModeLoading ? (
-        <BootShell text="正在同步状态……" />
+      {showGlobalBootShell ? (
+        <BootShell text={bootLoadingText || "正在同步状态……"} />
       ) : showChatShell ? (
         <ChatModeView
           params={params}
@@ -319,6 +338,7 @@ export default function App() {
           onBattle={handleEnterBattleMode}
           panelDisabled={isTransforming}
           chatBootReady={chatBootReady}
+          chatShellReady={chatShellReady}
           initialChatMessages={initialChatMessages}
           bootLoadingText={bootLoadingText}
           hideStageModel={shouldHideStageInChatShell}

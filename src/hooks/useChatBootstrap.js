@@ -2,13 +2,38 @@
 import { useEffect, useMemo, useState } from "react";
 
 const SUMMARIZING_HINTS = [
-  "正在收拾房间……",
   "正在净化灵魂宝石……",
-  "正在殴打白色孽畜……",
-  "正在泡茶……",
-  "正在指挥交响乐团……",
-  '正在被圆环之理救赎……',
+  "正在射杀白色孽畜……",
+  "正在检查悲叹之种库存……",
+  "正在向圆环之理提交祈愿……",
+  "正在整理见泷原结界作战记录……",
+  "正在确认今天没有人乱签契约……",
 ];
+
+function upsertMessage(messages, nextMessage) {
+  const list = Array.isArray(messages) ? messages : [];
+  const index = list.findIndex((item) => item?.id === nextMessage.id);
+
+  if (index === -1) {
+    return [...list, nextMessage];
+  }
+
+  const next = [...list];
+  next[index] = {
+    ...next[index],
+    ...nextMessage,
+    meta: {
+      ...(next[index]?.meta ?? {}),
+      ...(nextMessage?.meta ?? {}),
+    },
+  };
+  return next;
+}
+
+function removeMessage(messages, messageId) {
+  if (!Array.isArray(messages) || !messageId) return messages;
+  return messages.filter((item) => item?.id !== messageId);
+}
 
 export function useChatBootstrap({
   chatAgent,
@@ -21,35 +46,53 @@ export function useChatBootstrap({
   const [bootPhase, setBootPhase] = useState("idle");
   const [hintIndex, setHintIndex] = useState(0);
   const [hasDeferredRemindRun, setHasDeferredRemindRun] = useState(false);
+  const [isDeferredRemindActive, setIsDeferredRemindActive] = useState(false);
+
+  function setBootPhaseWithLog(nextPhase, reason = "") {
+    console.log("[chat/bootstrap] boot phase ->", nextPhase, { reason });
+    setBootPhase(nextPhase);
+  }
+
   const isSummarizingPhase =
-      bootPhase === "archiving" || bootPhase === "compacting";
-  /**
-   * 在“摘要/整理”阶段轮播提示语
-   */
+    bootPhase === "archiving" || bootPhase === "compacting";
+  const shouldRotateLoadingHints =
+    !chatBootReady && !isDeferredRemindActive && bootPhase !== "error";
+
   useEffect(() => {
-
-
-    if (!isSummarizingPhase) return;
+    if (!shouldRotateLoadingHints) return;
 
     const timer = window.setInterval(() => {
-      setHintIndex((prev) => (prev + 1) % SUMMARIZING_HINTS.length);
+      setHintIndex((prev) => {
+        if (SUMMARIZING_HINTS.length <= 1) return 0;
+
+        let next = prev;
+        while (next === prev) {
+          next = Math.floor(Math.random() * SUMMARIZING_HINTS.length);
+        }
+
+        return next;
+      });
     }, 1600);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [bootPhase]);
+  }, [shouldRotateLoadingHints]);
+
+  useEffect(() => {
+    if (!appAgent?.subscribeBootPhase) return undefined;
+
+    return appAgent.subscribeBootPhase(({ phase } = {}) => {
+      if (!phase) return;
+      setBootPhaseWithLog(phase, "app_agent.subscribeBootPhase");
+    });
+  }, [appAgent]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrapChat() {
       console.log("[chat/bootstrap] bootstrap requested:", { mode, chatModeValue });
-      /**
-       * 关键约束：
-       * - 只有当前真正处于聊天模式时，才执行 chat bootstrap
-       * - 避免 battle 恢复场景下误跑 appAgent.start() / chat restore
-       */
       if (mode !== chatModeValue) {
         console.log("[chat/bootstrap] skipped because app is not in chat mode");
         return;
@@ -57,39 +100,23 @@ export function useChatBootstrap({
 
       console.log("[chat/bootstrap] starting app agent bootstrap");
       setChatBootReady(false);
-      setBootPhase("archiving");
+      console.log("[chat/bootstrap] chat boot ready -> false", { reason: "bootstrap_start" });
+      setBootPhaseWithLog("archiving", "bootstrap_start");
       setHintIndex(0);
 
       try {
-        /**
-         * 先启动 app agent。
-         * 这里约定 appAgent.start 可接收一个 handlers 对象：
-         * {
-         *   onBootPhaseChange: ({ phase }) => {}
-         * }
-         *
-         * 如果旧版 start 不接这个参数，也不会有问题。
-         */
         await appAgent?.start?.({
           deferRemind: true,
-          onBootPhaseChange: ({ phase } = {}) => {
-            if (cancelled) return;
-            if (!phase) return;
-            setBootPhase(phase);
-          },
         });
 
-        /**
-         * start 完成后，再恢复 chat 消息。
-         * 这样能保证 remind 后落盘/恢复状态更一致。
-         */
         const restoredMessages =
           (await chatAgent?.getBootstrapMessages?.()) ?? [];
 
         if (cancelled) return;
         console.log("[chat/bootstrap] restored bootstrap messages:", restoredMessages.length);
         setInitialChatMessages(restoredMessages);
-        setBootPhase("ready");
+        console.log("[chat/bootstrap] bootstrap restored initial messages", { count: restoredMessages.length });
+        setBootPhaseWithLog("ready", "bootstrap_complete");
         setHasDeferredRemindRun(false);
         console.log("[chat/bootstrap] bootstrap complete");
       } catch (err) {
@@ -97,10 +124,10 @@ export function useChatBootstrap({
 
         if (cancelled) return;
         setInitialChatMessages([]);
-        setBootPhase("error");
+        setBootPhaseWithLog("error", "bootstrap_failed");
       } finally {
         if (cancelled) return;
-        console.log("[chat/bootstrap] chat boot ready");
+        console.log("[chat/bootstrap] chat boot ready -> true", { reason: "bootstrap_finally" });
         setChatBootReady(true);
       }
     }
@@ -143,6 +170,7 @@ export function useChatBootstrap({
     }
 
     async function runDeferredRemind() {
+      const startedAt = Date.now();
       if (mode !== chatModeValue) return;
       if (!chatBootReady) return;
       if (bootPhase !== "ready") return;
@@ -159,9 +187,29 @@ export function useChatBootstrap({
 
       if (!chatAgent?.remind && !hasPendingTrainingSummary) return;
 
-      console.log("[chat/bootstrap] deferred remind start");
+      console.log("[chat/bootstrap] deferred remind start", { startedAt });
       setHasDeferredRemindRun(true);
-      setBootPhase("reminding");
+      setIsDeferredRemindActive(true);
+      setBootPhaseWithLog("reminding", "deferred_remind_start");
+
+      const streamingMessageId = `boot-remind-stream-${Date.now()}`;
+      const createdAt = Date.now();
+      const patchStreamingMessage = (content = "", status = "pending", meta = {}) => {
+        setInitialChatMessages((prev) =>
+          upsertMessage(prev, {
+            id: streamingMessageId,
+            role: "assistant",
+            content,
+            createdAt,
+            status,
+            meta: {
+              source: "boot_remind",
+              bootStreaming: true,
+              ...meta,
+            },
+          })
+        );
+      };
 
       try {
         let remindResult = {
@@ -173,30 +221,64 @@ export function useChatBootstrap({
         };
 
         if (chatAgent?.remind) {
-          remindResult = await chatAgent.remind();
+          remindResult = await chatAgent.remind({
+            onThinkingStart: () => {
+              if (cancelled) return;
+              patchStreamingMessage("", "pending", { thinking: true });
+            },
+            onTextUpdate: (fullText) => {
+              if (cancelled) return;
+              patchStreamingMessage(fullText || "", "pending");
+            },
+            onDone: (finalText) => {
+              if (cancelled) return;
+              patchStreamingMessage(finalText || "……", "done");
+            },
+            onInterrupted: (partialText) => {
+              if (cancelled) return;
+              patchStreamingMessage(
+                `${partialText || "……"}
+
+[回想被中断]`,
+                "done",
+                { interrupted: true }
+              );
+            },
+            onError: (err, partialText) => {
+              if (cancelled) return;
+              patchStreamingMessage(
+                partialText || `回想失败：${err?.message ?? "unknown error"}`,
+                "error",
+                { error: String(err?.message ?? err ?? "unknown error") }
+              );
+            },
+          });
         }
 
         if (cancelled) return;
         console.log("[chat/bootstrap] deferred remind result:", {
+          durationMs: Date.now() - startedAt,
           status: remindResult?.status,
           hasText: Boolean(remindResult?.text?.trim?.()),
           messageId: remindResult?.messageId ?? null,
         });
 
-        setInitialChatMessages((prev) =>
-          appendDeferredRemindMessage(prev, remindResult)
-        );
+        if (!remindResult?.text?.trim?.()) {
+          setInitialChatMessages((prev) => removeMessage(prev, streamingMessageId));
+        }
 
         if (
           remindResult?.status === "idle" &&
           (appAgent?.hasPendingTrainingSummaryPrompt?.() ?? false) &&
           chatAgent?.runPendingTrainingSummaryQuery
         ) {
+          console.log("[chat/bootstrap] pending training summary query start", { durationMs: Date.now() - startedAt });
           const trainingSummaryResult =
             await chatAgent.runPendingTrainingSummaryQuery();
 
           if (cancelled) return;
           console.log("[chat/bootstrap] ran pending training summary query:", {
+            durationMs: Date.now() - startedAt,
             status: trainingSummaryResult?.status,
             hasText: Boolean(trainingSummaryResult?.text?.trim?.()),
             messageId: trainingSummaryResult?.messageId ?? null,
@@ -207,18 +289,25 @@ export function useChatBootstrap({
           );
         }
 
+        setIsDeferredRemindActive(false);
+        setBootPhaseWithLog("ready", "deferred_remind_complete");
+        console.log("[chat/bootstrap] deferred remind ui released", {
+          durationMs: Date.now() - startedAt,
+        });
+
         const restoredMessages =
           (await chatAgent?.getBootstrapMessages?.()) ?? [];
 
         if (cancelled) return;
-        console.log("[chat/bootstrap] deferred remind complete, refreshed messages:", restoredMessages.length);
+        console.log("[chat/bootstrap] deferred remind complete, refreshed messages:", restoredMessages.length, { durationMs: Date.now() - startedAt });
         setInitialChatMessages(restoredMessages);
-        setBootPhase("ready");
+        console.log("[chat/bootstrap] deferred remind restored messages", { count: restoredMessages.length });
       } catch (err) {
-        console.warn("[useChatBootstrap] deferred remind failed:", err);
+        console.warn("[useChatBootstrap] deferred remind failed:", err, { durationMs: Date.now() - startedAt });
         if (cancelled) return;
         console.log("[chat/bootstrap] deferred remind aborted, restoring ready state");
-        setBootPhase("ready");
+        setIsDeferredRemindActive(false);
+        setBootPhaseWithLog("ready", "deferred_remind_failed");
       }
     }
 
@@ -235,53 +324,14 @@ export function useChatBootstrap({
     appAgent,
   ]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function refreshWhenBackToChat() {
-      /**
-       * 只有：
-       * - 当前已经回到聊天模式
-       * - 并且首轮 chat bootstrap 已经完成
-       * 才刷新聊天消息
-       */
-      if (mode !== chatModeValue || !chatBootReady) return;
-      if (!hasDeferredRemindRun) return;
-      if (bootPhase !== "ready") return;
-
-      try {
-        const restoredMessages =
-          (await chatAgent?.getBootstrapMessages?.()) ?? [];
-
-        if (cancelled) return;
-        setInitialChatMessages(restoredMessages);
-      } catch (err) {
-        console.warn("[useChatBootstrap] refreshWhenBackToChat failed:", err);
-      }
-    }
-
-    refreshWhenBackToChat();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    mode,
-    chatBootReady,
-    chatModeValue,
-    chatAgent,
-    hasDeferredRemindRun,
-    bootPhase,
-  ]);
-
   const bootLoadingText = useMemo(() => {
-    if (bootPhase === "reminding") {
+    if (isDeferredRemindActive) {
       return "美树同学正在回想…";
     }
 
     if (chatBootReady) return "";
 
-    if (isSummarizingPhase) {
+    if (shouldRotateLoadingHints) {
       return SUMMARIZING_HINTS[hintIndex] ?? SUMMARIZING_HINTS[0];
     }
 
@@ -290,20 +340,14 @@ export function useChatBootstrap({
     }
 
     return "正在准备中…";
-  }, [chatBootReady, bootPhase, hintIndex]);
+  }, [chatBootReady, bootPhase, hintIndex, shouldRotateLoadingHints, isDeferredRemindActive]);
 
-  /**
-   * 你的需求是：
-   * - 摘要阶段不显示 Live2D
-   * - remind 阶段再显示“美树同学正在回想”
-   *
-   * 所以这里只在 summarizing 隐藏模型。
-   */
-  const hideStageModel = isSummarizingPhase && !chatBootReady;
-  const chatBootReadyForUI = chatBootReady && bootPhase !== "reminding";
-
+  const chatShellReady = chatBootReady || isDeferredRemindActive;
+  const chatInteractionReady = chatBootReady && !isDeferredRemindActive;
+  const hideStageModel = isSummarizingPhase && !chatShellReady;
   return {
-    chatBootReady: chatBootReadyForUI,
+    chatBootReady: chatInteractionReady,
+    chatShellReady,
     initialChatMessages,
     bootPhase,
     bootLoadingText,

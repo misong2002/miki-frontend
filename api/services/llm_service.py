@@ -1,16 +1,33 @@
 # api/services/llm_service.py
 
+from __future__ import annotations
+
 import os
+from typing import Any
+
 from openai import OpenAI
 
 from config import OPENAI_MODEL
 from services.persona_service import get_system_prompt
 
+_DEFAULT_BASE_URL = "https://api.jiekou.ai/openai"
+_client: OpenAI | None = None
 
-client = OpenAI(
-    api_key=os.getenv("LLM_API_KEY"),
-    base_url="https://api.jiekou.ai/openai",
-)
+
+def get_llm_base_url() -> str:
+    return os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or _DEFAULT_BASE_URL
+
+
+def get_llm_client() -> OpenAI:
+    global _client
+
+    if _client is None:
+        _client = OpenAI(
+            api_key=os.getenv("LLM_API_KEY"),
+            base_url=get_llm_base_url(),
+        )
+
+    return _client
 
 
 def _build_chat_messages(history, user_message: str, system_prompt: str):
@@ -46,7 +63,7 @@ def chat_with_miki(history, user_message: str):
         system_prompt=system_prompt,
     )
 
-    response = client.chat.completions.create(
+    response = get_llm_client().chat.completions.create(
         model=OPENAI_MODEL,
         messages=messages,
         temperature=0.7,
@@ -66,24 +83,12 @@ def generate_json_completion(
     temperature: float = 0.1,
     max_output_tokens: int | None = None,
 ) -> str:
-    """
-    给结构化任务（如长期记忆提炼）使用的非流式 completion。
-
-    参数：
-    - system_prompt: 任务级 system prompt
-    - user_prompt: 输入内容
-    - temperature: 默认较低，保证结构更稳定
-    - max_output_tokens:
-        None 时不显式传 max_tokens，交给模型侧默认行为。
-        传整数时则写入 max_tokens。
-    """
-
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "model": OPENAI_MODEL,
         "messages": messages,
         "temperature": temperature,
@@ -93,7 +98,7 @@ def generate_json_completion(
     if max_output_tokens is not None:
         kwargs["max_tokens"] = max_output_tokens
 
-    response = client.chat.completions.create(**kwargs)
+    response = get_llm_client().chat.completions.create(**kwargs)
 
     text = response.choices[0].message.content or ""
 

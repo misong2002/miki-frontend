@@ -342,6 +342,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   }, [loadConfig, loadHistorySessions]);
 
   const historyBusy = Boolean(historyAction);
+  const historyLoadingText = historyAction
+    ? historyAction === "plot"
+      ? `plotting ${selectedSessionId}...`
+      : `initializing ${selectedSessionId}...`
+    : historyLoading
+      ? "loading history..."
+      : "";
   const configBusy = disabled || saving || loading || refreshingConfig;
 
   function updateRunMode(nextRunMode) {
@@ -679,7 +686,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         <FeedbackSlot
           error={historyError}
           message={historyMessage}
-          loadingText={historyLoading ? "loading history..." : ""}
+          loadingText={historyLoadingText}
         />
 
         <div style={actionRowStyle}>

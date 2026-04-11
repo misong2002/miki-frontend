@@ -46,6 +46,21 @@ function normalizeInitialMessage(msg) {
   });
 }
 
+function buildFallbackMessages({ suppressFallbackGreeting = false } = {}) {
+  if (suppressFallbackGreeting) {
+    return [];
+  }
+
+  return [
+    makeMessage({
+      role: "assistant",
+      content:
+        "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
+      status: "done",
+    }),
+  ];
+}
+
 function formatTime(ts) {
   const d = new Date(ts);
   const now = new Date();
@@ -74,6 +89,7 @@ export default function ChatPanel({
   bootLoadingText = "美樹さん正在回想……",
   initialMessages = [],
   bootLoading = false,
+  suppressFallbackGreeting = false,
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -83,14 +99,7 @@ export default function ChatPanel({
       return initialMessages.map(normalizeInitialMessage);
     }
 
-    return [
-      makeMessage({
-        role: "assistant",
-        content:
-          "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
-        status: "done",
-      }),
-    ];
+    return buildFallbackMessages({ suppressFallbackGreeting });
   });
 
   const historyRef = useRef(null);
@@ -104,15 +113,8 @@ export default function ChatPanel({
       return;
     }
 
-    setMessages([
-      makeMessage({
-        role: "assistant",
-        content:
-          "久等了！这里是正义的魔法少女——美树沙耶香！快开始今天的魔女狩猎吧！",
-        status: "done",
-      }),
-    ]);
-  }, [initialMessages, bootLoading]);
+    setMessages(buildFallbackMessages({ suppressFallbackGreeting }));
+  }, [initialMessages, bootLoading, suppressFallbackGreeting]);
 
   useEffect(() => {
     if (bootLoading) return;
@@ -279,57 +281,59 @@ export default function ChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((msg, index) => {
-            const prev = messages[index - 1];
+          <>
+            {messages.map((msg, index) => {
+              const prev = messages[index - 1];
 
-            const showMeta =
-              index === 0 ||
-              prev?.role !== msg.role ||
-              Math.abs((msg.createdAt ?? 0) - (prev?.createdAt ?? 0)) >
-                5 * 60 * 1000;
+              const showMeta =
+                index === 0 ||
+                prev?.role !== msg.role ||
+                Math.abs((msg.createdAt ?? 0) - (prev?.createdAt ?? 0)) >
+                  5 * 60 * 1000;
 
-            return (
-              <div key={msg.id} className={`chat-row ${msg.role}`}>
-                <div className="chat-message-group">
-                  {showMeta && (
-                    <div className={`chat-meta ${msg.role}`}>
-                      <span className="chat-name">
-                        {msg.role === "user" ? "你" : "美树沙耶香"}
-                      </span>
-                      <span className="chat-time">
-                        {formatTime(msg.createdAt)}
-                      </span>
-                    </div>
-                  )}
-
-                  <div
-                    className={`chat-bubble ${msg.role} ${msg.status || "done"}`}
-                  >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkMath]}
-                      rehypePlugins={[rehypeKatex]}
-                    >
-                      {msg.content ||
-                        (msg.status === "pending" ? "正在思考……" : "")}
-                    </ReactMarkdown>
-                  </div>
-
-                  {Array.isArray(msg.references) && msg.references.length > 0 && (
-                    <div className="chat-references">
-                      {msg.references.map((ref, i) => (
-                        <span
-                          className="chat-ref-chip"
-                          key={`${msg.id}-ref-${i}`}
-                        >
-                          {ref.title || ref.source || "reference"}
+              return (
+                <div key={msg.id} className={`chat-row ${msg.role}`}>
+                  <div className="chat-message-group">
+                    {showMeta && (
+                      <div className={`chat-meta ${msg.role}`}>
+                        <span className="chat-name">
+                          {msg.role === "user" ? "你" : "美树沙耶香"}
                         </span>
-                      ))}
+                        <span className="chat-time">
+                          {formatTime(msg.createdAt)}
+                        </span>
+                      </div>
+                    )}
+
+                    <div
+                      className={`chat-bubble ${msg.role} ${msg.status || "done"}`}
+                    >
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {msg.content ||
+                          (msg.status === "pending" ? "正在回想……" : "")}
+                      </ReactMarkdown>
                     </div>
-                  )}
+
+                    {Array.isArray(msg.references) && msg.references.length > 0 && (
+                      <div className="chat-references">
+                        {msg.references.map((ref, i) => (
+                          <span
+                            className="chat-ref-chip"
+                            key={`${msg.id}-ref-${i}`}
+                          >
+                            {ref.title || ref.source || "reference"}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
       </div>
 

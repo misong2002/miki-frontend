@@ -50,9 +50,9 @@ export function createTrainingCommentaryPipeline({
     );
   }
 
-  if (!perceptionGate?.accept) {
+  if (!perceptionGate?.evaluate || !perceptionGate?.commit) {
     throw new Error(
-      "createTrainingCommentaryPipeline: perceptionGate.accept is required"
+      "createTrainingCommentaryPipeline: perceptionGate.evaluate and perceptionGate.commit are required"
     );
   }
 
@@ -90,7 +90,7 @@ export function createTrainingCommentaryPipeline({
       };
     }
 
-    const gateDecision = perceptionGate.accept({
+    const gateDecision = perceptionGate.evaluate({
       comment,
       feature,
       epoch,
@@ -134,9 +134,11 @@ export function createTrainingCommentaryPipeline({
   }
 
   async function commitCommentaryDecision(decision) {
-    if (!decision?.emit || !decision.payload) {
+    if (!decision?.emit || !decision.payload || !decision.gateDecision) {
       return null;
     }
+
+    perceptionGate.commit(decision.gateDecision);
 
     const { now, epoch, feature, comment, payload } = decision;
 

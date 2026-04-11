@@ -425,7 +425,7 @@ export function useBattleController({
     let cancelled = false;
 
     async function bootstrapBattleState() {
-      console.log("[battle/bootstrap] begin status sync");
+      console.log("[battle/bootstrap] begin status sync", { modeAtBoot: modeRef.current });
       try {
         const status = await Promise.race([
           fetchBattleStatus(),
@@ -441,6 +441,7 @@ export function useBattleController({
 
         if (status.running) {
           console.log("[battle/bootstrap] active training session detected, entering battle mode");
+          console.log("[battle/bootstrap] app mode -> BATTLE", { reason: "startup_active_session" });
           const sessionKey = markSessionRunning(status.session);
           stageAgent?.setStageProps?.(magicalStageProps);
 
@@ -475,6 +476,17 @@ export function useBattleController({
           setMode(appModeEnum.BATTLE);
         } else {
           console.log("[battle/bootstrap] no active training session, entering chat mode");
+          console.log("[battle/bootstrap] app mode -> CHAT", { reason: "startup_no_active_session" });
+          const cachedContacts = loadCachedBattleContacts();
+
+          if (cachedContacts?.sessionKey) {
+            console.log("[battle/bootstrap] cached battle session ended while away:", {
+              sessionKey: cachedContacts.sessionKey,
+            });
+            await saveHistoryOnSessionClosedOnce(cachedContacts.sessionKey);
+            await queueTrainingSummaryPromptIfAvailable();
+          }
+
           clearCachedBattleContacts();
           stageAgent?.setStageProps?.(defaultStageProps);
           appAgent?.setMode?.(appModeEnum.CHAT);
@@ -483,6 +495,7 @@ export function useBattleController({
 
         if (!cancelled) {
           console.log("[battle/bootstrap] status sync resolved");
+          console.log("[battle/bootstrap] resolved -> true");
           setBattleBootstrapResolved(true);
         }
       } catch (err) {
@@ -492,6 +505,8 @@ export function useBattleController({
         setMode(appModeEnum.CHAT);
         if (!cancelled) {
           console.log("[battle/bootstrap] fallback to chat mode after status sync failure");
+          console.log("[battle/bootstrap] app mode -> CHAT", { reason: "startup_status_sync_failed" });
+          console.log("[battle/bootstrap] resolved -> true");
           setBattleBootstrapResolved(true);
         }
       }

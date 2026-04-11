@@ -2,11 +2,14 @@
 
 import json
 import os
-import subprocess
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from services.command_runner import command_result_payload, run_command
+from services.response_service import error_payload, success_payload
 
 from config import (
     MIKI_ROOT,
@@ -57,6 +60,7 @@ SECTION_KEYS = {
         "checkpoint_every",
         "log_every",
         "loss_mode",
+        "loss_integration_grid",
         "lr",
         "rounds",
         "seed",
@@ -116,6 +120,14 @@ def _get_train_log_path() -> Path:
     return _resolve_runtime_path("log_file", TRAIN_LOG_PATH)
 
 
+def _append_frontend_manual_stop_notice() -> None:
+    log_path = _get_train_log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"INFO:frontend_manual_stop:{timestamp}: training session was stopped by the user from the frontend stop button\n")
+
+
 LEGACY_MODEL_NAME_MAP = {
     "hadron_Matrix_siren": "HMsiren",
 }
@@ -164,47 +176,18 @@ def _load_available_models() -> tuple[str, list[str]]:
     return default_model, normalized_models
 
 
-def _extract_training_error_summary(max_lines: int = 40) -> str:
+def _read_train_log_tail(max_lines: int = 40) -> tuple[Path, list[str]]:
     log_path = _get_train_log_path()
     if not log_path.exists():
-        return ""
+        return log_path, []
 
     try:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
-        return ""
+        return log_path, []
 
     tail = [line.rstrip() for line in lines if line.strip()][-max_lines:]
-    if not tail:
-        return ""
-
-    error_markers = (
-        "traceback",
-        "error",
-        "exception",
-        "failed",
-        "interrupted system call",
-        "nan",
-        "inf",
-        "floatingpointerror",
-        "valueerror",
-        "runtimeerror",
-        "typeerror",
-        "assertionerror",
-    )
-
-    has_error = any(marker in line.casefold() for line in tail for marker in error_markers)
-    if not has_error:
-        return ""
-
-    summary_lines = [
-        "我们刚刚完成了一段训练，但训练日志里出现了错误。请优先评论这个错误，不要再分析 loss 曲线：",
-        f"训练日志路径：{log_path}",
-        "```text",
-        *tail,
-        "```",
-    ]
-    return "\n".join(summary_lines)
+    return log_path, tail
 
 
 def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
@@ -287,38 +270,34 @@ def read_train_config():
     default_model, available_models = _load_available_models()
 
     if not TRAIN_CONFIG_PATH.exists():
-        return {
-            "path": str(TRAIN_CONFIG_PATH),
-            "config": group_train_config({"model_name": default_model}),
-            "available_models": available_models,
-            "default_model": default_model,
-        }, 200
+        return success_payload(
+            path=str(TRAIN_CONFIG_PATH),
+            config=group_train_config({"model_name": default_model}),
+            available_models=available_models,
+            default_model=default_model,
+        ), 200
 
     try:
         config = load_train_config(TRAIN_CONFIG_PATH)
         config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"failed to read train config: {e}",
-            "path": str(TRAIN_CONFIG_PATH),
-        }, 500
+        return error_payload(
+            f"failed to read train config: {e}",
+            path=str(TRAIN_CONFIG_PATH),
+        ), 500
 
-    return {
-        "path": str(TRAIN_CONFIG_PATH),
-        "config": group_train_config(config),
-        "available_models": available_models,
-        "default_model": default_model,
-    }, 200
+    return success_payload(
+        path=str(TRAIN_CONFIG_PATH),
+        config=group_train_config(config),
+        available_models=available_models,
+        default_model=default_model,
+    ), 200
 
 
 def write_train_config(payload):
     config = payload.get("config")
     if not isinstance(config, dict):
-        return {
-            "status": "error",
-            "message": "config must be an object",
-        }, 400
+        return error_payload("config must be an object"), 400
 
     try:
         default_model, available_models = _load_available_models()
@@ -327,40 +306,36 @@ def write_train_config(payload):
         TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         saved_config = save_train_config(TRAIN_CONFIG_PATH, flat_config)
 
-        return {
-            "status": "saved",
-            "path": str(TRAIN_CONFIG_PATH),
-            "config": group_train_config(saved_config),
-            "available_models": available_models,
-            "default_model": default_model,
-        }, 200
+        return success_payload(
+            status="saved",
+            path=str(TRAIN_CONFIG_PATH),
+            config=group_train_config(saved_config),
+            available_models=available_models,
+            default_model=default_model,
+        ), 200
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"failed to write train config: {e}",
-        }, 500
+        return error_payload(f"failed to write train config: {e}"), 500
 
 
 def read_training_session():
     if not TRAIN_SESSION_PATH.exists():
-        return {
-            "exists": False,
-            "running": False,
-            "status": "idle",
-        }, 200
+        return success_payload(
+            exists=False,
+            running=False,
+            status="idle",
+        ), 200
 
     try:
         with open(TRAIN_SESSION_PATH, "r", encoding="utf-8") as f:
             import json
             session = json.load(f)
     except Exception as e:
-        return {
-            "exists": False,
-            "running": False,
-            "status": "error",
-            "message": f"failed to read training_session.json: {e}",
-        }, 500
+        return error_payload(
+            f"failed to read training_session.json: {e}",
+            exists=False,
+            running=False,
+        ), 500
 
     mode = session.get("mode")
     pid = session.get("pid")
@@ -386,24 +361,18 @@ def read_training_session():
     elif mode == "cluster":
         if job_id:
             try:
-                result = subprocess.run(
-                    ["qstat", str(job_id)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
+                result = run_command(["qstat", str(job_id)], cwd=MIKI_ROOT)
                 running = result.returncode == 0
             except Exception:
                 running = False
 
     else:
-        return {
-            "exists": True,
-            "running": False,
-            "status": "error",
-            "message": f"unknown session mode: {mode}",
-            "session": session,
-        }, 500
+        return error_payload(
+            f"unknown session mode: {mode}",
+            exists=True,
+            running=False,
+            session=session,
+        ), 500
 
     if not running:
         try:
@@ -411,18 +380,18 @@ def read_training_session():
         except FileNotFoundError:
             pass
 
-        return {
-            "exists": False,
-            "running": False,
-            "status": "idle",
-        }, 200
+        return success_payload(
+            exists=False,
+            running=False,
+            status="idle",
+        ), 200
 
-    return {
-        "exists": True,
-        "running": True,
-        "status": "running",
-        "session": session,
-    }, 200
+    return success_payload(
+        exists=True,
+        running=True,
+        status="running",
+        session=session,
+    ), 200
 
 
 def clear_loss_file() -> None:
@@ -435,17 +404,14 @@ def start_training(payload: dict[str, Any]):
     try:
         status_result, status_code = read_training_session()
         if status_code == 200 and status_result.get("running"):
-            return {
-                "status": "already_running",
-                "message": "training session already running",
-                "session": status_result.get("session"),
-            }, 200
+            return success_payload(
+                status="already_running",
+                message="training session already running",
+                session=status_result.get("session"),
+            ), 200
 
         if not BATTLE_SCRIPT_PATH.exists():
-            return {
-                "status": "error",
-                "message": f"train script not found: {BATTLE_SCRIPT_PATH}",
-            }, 500
+            return error_payload(f"train script not found: {BATTLE_SCRIPT_PATH}"), 500
 
         config = build_train_config(payload)
 
@@ -454,20 +420,16 @@ def start_training(payload: dict[str, Any]):
 
         clear_loss_file()
 
-        result = subprocess.run(
+        result = run_command(
             ["bash", str(BATTLE_SCRIPT_PATH), str(TRAIN_CONFIG_PATH)],
-            capture_output=True,
-            text=True,
-            cwd=str(MIKI_ROOT),
+            cwd=MIKI_ROOT,
         )
 
         if result.returncode != 0:
-            return {
-                "status": "error",
-                "message": "train.sh failed",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }, 500
+            return error_payload(
+                "train.sh failed",
+                **command_result_payload(result),
+            ), 500
 
         stdout = result.stdout.strip()
         last_line = stdout.splitlines()[-1] if stdout else ""
@@ -483,53 +445,37 @@ def start_training(payload: dict[str, Any]):
 
         session_result, _ = read_training_session()
 
-        return {
-            "status": "ok",
-            "message": "training started",
-            "result": parsed,
-            "session": session_result.get("session") if isinstance(session_result, dict) else None,
-        }, 200
+        return success_payload(
+            status="ok",
+            message="training started",
+            result=parsed,
+            session=session_result.get("session") if isinstance(session_result, dict) else None,
+        ), 200
 
     except Exception as e:
         traceback.print_exc()
-        return {
-            "status": "error",
-            "message": str(e),
-        }, 500
+        return error_payload(str(e)), 500
 
 
 def stop_training():
     try:
         if not BATTLE_STOP_PATH.exists():
-            return {
-                "status": "error",
-                "message": f"stop script not found: {BATTLE_STOP_PATH}",
-            }, 500
+            return error_payload(f"stop script not found: {BATTLE_STOP_PATH}"), 500
 
-        result = subprocess.run(
+        result = run_command(
             ["bash", str(BATTLE_STOP_PATH)],
-            capture_output=True,
-            text=True,
-            cwd=str(MIKI_ROOT),
+            cwd=MIKI_ROOT,
         )
 
         if result.returncode != 0:
-            return {
-                "status": "error",
-                "message": result.stderr or result.stdout,
-            }, 500
+            return error_payload(result.stderr or result.stdout or "stop script failed"), 500
 
-        return {
-            "status": "ok",
-            "message": result.stdout.strip(),
-        }, 200
+        _append_frontend_manual_stop_notice()
+        return success_payload(status="ok", message=result.stdout.strip()), 200
 
     except Exception as e:
         traceback.print_exc()
-        return {
-            "status": "error",
-            "message": str(e),
-        }, 500
+        return error_payload(str(e)), 500
 
 
 def downsample_loss_data(
@@ -570,7 +516,7 @@ def downsample_loss_data(
 
 
 
-def _parse_loss_rows_with_val():
+def _parse_loss_rows():
     rows = []
 
     loss_file_path = _get_loss_file_path()
@@ -584,13 +530,13 @@ def _parse_loss_rows_with_val():
                 continue
 
             parts = line.split()
-            if len(parts) < 3:
+            if len(parts) < 2:
                 continue
 
             try:
                 epoch = float(parts[0])
                 train_loss = float(parts[1])
-                val_loss = float(parts[2])
+                val_loss = float(parts[2]) if len(parts) >= 3 else None
             except ValueError:
                 continue
 
@@ -606,7 +552,7 @@ def _parse_loss_rows_with_val():
 
 def _downsample_rows_evenly(rows, max_points=1000):
     if len(rows) <= max_points:
-        return rows
+        return list(rows)
 
     step = (len(rows) - 1) / (max_points - 1)
     sampled = []
@@ -620,19 +566,40 @@ def _downsample_rows_evenly(rows, max_points=1000):
         sampled.append(rows[idx])
         seen.add(idx)
 
-    if sampled[-1] is not rows[-1]:
+    if sampled and sampled[-1] is not rows[-1]:
         sampled[-1] = rows[-1]
 
     return sampled
 
 
 
+def _sample_loss_rows_for_summary(rows, max_points=1000):
+    if len(rows) <= max_points:
+        return sorted(rows, key=lambda row: row["epoch"])
+
+    val_rows = [row for row in rows if row["val_loss"] is not None]
+    if len(val_rows) >= max_points:
+        return sorted(_downsample_rows_evenly(val_rows, max_points=max_points), key=lambda row: row["epoch"])
+
+    selected = {id(row): row for row in val_rows}
+    remaining_slots = max_points - len(selected)
+    train_only_rows = [row for row in rows if row["val_loss"] is None]
+    sampled_train_only = _downsample_rows_evenly(train_only_rows, max_points=remaining_slots)
+    for row in sampled_train_only:
+        selected[id(row)] = row
+
+    combined = list(selected.values())
+    return sorted(combined, key=lambda row: row["epoch"])
+
+
+
 def build_training_loss_summary_prompt(max_points=1000):
     config = {}
+    config_path = TRAIN_CONFIG_PATH
 
-    if TRAIN_CONFIG_PATH.exists():
+    if config_path.exists():
         try:
-            config = load_train_config(TRAIN_CONFIG_PATH)
+            config = load_train_config(config_path)
         except Exception:
             config = {}
 
@@ -640,30 +607,49 @@ def build_training_loss_summary_prompt(max_points=1000):
     if run_mode == "debug":
         return ""
 
-    error_summary = _extract_training_error_summary()
-    if error_summary:
-        return error_summary
+    rows = _parse_loss_rows()
+    loss_file_path = _get_loss_file_path()
+    train_log_path, train_log_tail = _read_train_log_tail()
 
-    rows = _parse_loss_rows_with_val()
-    if not rows:
-        return ""
+    try:
+        loss_mtime = loss_file_path.stat().st_mtime
+    except Exception:
+        loss_mtime = None
 
-    sampled_rows = _downsample_rows_evenly(rows, max_points=max_points)
+    try:
+        log_mtime = train_log_path.stat().st_mtime
+    except Exception:
+        log_mtime = None
+
+    sampled_rows = _sample_loss_rows_for_summary(rows, max_points=max_points) if rows else []
     expected_epochs = config.get("rounds")
     actual_epochs = rows[-1]["epoch"] if rows else None
-    lines = ["epoch train_loss val_loss"]
+    loss_lines = ["epoch train_loss val_loss"]
 
     for row in sampled_rows:
-        lines.append(
-            f"{row['epoch']:g} {row['train_loss']:.8g} {row['val_loss']:.8g}"
+        val_loss = row["val_loss"]
+        val_text = f"{val_loss:.8g}" if val_loss is not None else "none"
+        loss_lines.append(
+            f"{row['epoch']:g} {row['train_loss']:.8g} {val_text}"
         )
 
     summary_lines = [
-        "我们刚刚完成了一段训练，这是training loss和val loss的曲线：",
+        "这是我刚刚结束的一次战斗训练记录。请把它当成我亲身经历的训练结果，不要用第三者口吻评论我。",
+        "请综合下面两部分信息一起评论我的训练结果，不要因为日志里有报错关键词就忽略 loss 曲线。",
+        f"信息来源 1：downsample 后的 loss 曲线，来自当前运行时的 loss.txt：{loss_file_path}",
+        f"loss.txt 最后修改时间：{loss_mtime:g}" if loss_mtime is not None else "loss.txt 最后修改时间：unknown",
+        f"信息来源 2：训练日志最后几行，来自当前运行时的 train.log：{train_log_path}",
+        f"train.log 最后修改时间：{log_mtime:g}" if log_mtime is not None else "train.log 最后修改时间：unknown",
+        f"当前读取的 train_config 路径：{config_path}",
         f"配置里的预期 epoch 数：{expected_epochs if expected_epochs is not None else 'unknown'}",
         f"loss.txt 最后一行对应的实际 epoch 数：{actual_epochs:g}" if actual_epochs is not None else "loss.txt 最后一行对应的实际 epoch 数：unknown",
+        "loss.txt 摘要：",
         "```text",
-        *lines,
+        *(loss_lines if len(loss_lines) > 1 else ["loss.txt 不存在或没有可解析的 loss 行"]),
+        "```",
+        "train.log 尾部：",
+        "```text",
+        *(train_log_tail if train_log_tail else ["train.log 不存在或尾部为空"]),
         "```",
     ]
 
@@ -672,33 +658,32 @@ def build_training_loss_summary_prompt(max_points=1000):
 def read_training_loss_summary_prompt():
     try:
         prompt = build_training_loss_summary_prompt()
-        return {
-            "path": str(_get_loss_file_path()),
-            "prompt": prompt,
-            "has_prompt": bool(prompt.strip()),
-        }, 200
+        return success_payload(
+            path=str(_get_loss_file_path()),
+            prompt=prompt,
+            has_prompt=bool(prompt.strip()),
+        ), 200
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"failed to build training loss summary prompt: {e}",
-            "path": str(_get_loss_file_path()),
-            "prompt": "",
-            "has_prompt": False,
-        }, 500
+        return error_payload(
+            f"failed to build training loss summary prompt: {e}",
+            path=str(_get_loss_file_path()),
+            prompt="",
+            has_prompt=False,
+        ), 500
 
 
 def read_training_loss():
     loss_file_path = _get_loss_file_path()
     if not loss_file_path.exists():
-        return {
-            "path": str(loss_file_path),
-            "data": [],
-            "meta": {
+        return success_payload(
+            path=str(loss_file_path),
+            data=[],
+            meta={
                 "total_points": 0,
                 "returned_points": 0,
                 "downsampled": False,
             },
-        }, 200
+        ), 200
 
     raw_data: list[dict[str, float]] = []
 
@@ -730,25 +715,24 @@ def read_training_loss():
             max_history_samples=BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS,
         )
 
-        return {
-            "path": str(loss_file_path),
-            "data": sampled_data,
-            "meta": {
+        return success_payload(
+            path=str(loss_file_path),
+            data=sampled_data,
+            meta={
                 "total_points": len(raw_data),
                 "returned_points": len(sampled_data),
                 "downsampled": len(sampled_data) < len(raw_data),
             },
-        }, 200
+        ), 200
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"failed to read loss file: {e}",
-            "path": str(loss_file_path),
-            "data": [],
-            "meta": {
+        return error_payload(
+            f"failed to read loss file: {e}",
+            path=str(loss_file_path),
+            data=[],
+            meta={
                 "total_points": 0,
                 "returned_points": 0,
                 "downsampled": False,
             },
-        }, 500
+        ), 500

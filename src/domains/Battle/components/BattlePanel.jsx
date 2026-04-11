@@ -7,12 +7,57 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { useState } from "react";
 import { APP_CONFIG } from "../../../config";
+import { saveTrainingHistory } from "../services/historyService";
+import { runHistoryPlot } from "../services/historyToolService";
 
 export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
+  const [historyAction, setHistoryAction] = useState("");
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const recentData = lossData.slice(
     -APP_CONFIG.battleCharts.recentWindowPoints
   );
+
+  function extractHistorySessionId(result) {
+    const text = [
+      result?.session_id,
+      result?.history_session,
+      result?.stdout_preview,
+      result?.message,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const matches = [...text.matchAll(/\b(\d{8}_\d{6})\b/g)];
+    return matches.at(-1)?.[1] ?? "";
+  }
+
+  async function handleSaveHistoryAndPlot() {
+    if (historyAction || exiting) return;
+
+    setHistoryAction("save-plot");
+    setHistoryError("");
+    setHistoryMessage("saving history...");
+
+    try {
+      const saveResult = await saveTrainingHistory("config/train_config.json");
+      const sessionId = extractHistorySessionId(saveResult);
+
+      if (!sessionId) {
+        throw new Error("history saved but session_id was not returned");
+      }
+
+      setHistoryMessage(`plotting ${sessionId}...`);
+      const plotResult = await runHistoryPlot(sessionId);
+      setHistoryMessage(plotResult?.message || `plot finished: ${sessionId}`);
+    } catch (err) {
+      setHistoryError(err.message || "failed to save history and plot");
+      setHistoryMessage("");
+    } finally {
+      setHistoryAction("");
+    }
+  }
 
   //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (
@@ -23,14 +68,29 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
           <div className="battle-subtitle">source: {sourcePath}</div>
         </div>
 
-        <button
-          className="battle-exit-btn"
-          onClick={onForceExit}
-          disabled={exiting}
-        >
-          {exiting ? "撤出中..." : "强行撤出战斗"}
-        </button>
+        <div className="battle-header-actions">
+          <button
+            className="battle-exit-btn"
+            onClick={handleSaveHistoryAndPlot}
+            disabled={exiting || Boolean(historyAction)}
+          >
+            {historyAction ? "保存/绘图中..." : "保存历史并绘图"}
+          </button>
+          <button
+            className="battle-exit-btn"
+            onClick={onForceExit}
+            disabled={exiting}
+          >
+            {exiting ? "撤出中..." : "强行撤出战斗"}
+          </button>
+        </div>
       </div>
+
+      {(historyMessage || historyError) && (
+        <div className={historyError ? "battle-tool-status battle-tool-status-error" : "battle-tool-status"}>
+          {historyError || historyMessage}
+        </div>
+      )}
 
       <div className="battle-chart-block">
         <div className="battle-chart-title">魔力波动记录（loss vs epoch）</div>
