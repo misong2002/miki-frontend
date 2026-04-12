@@ -48,7 +48,6 @@ SECTION_KEYS = {
     "io_config": ["dataset", "dataset_config", "flux", "output", "loss_file"],
     "model_config": [
         "model_name",
-        "layer_sizes",
         "hidden_features",
         "hidden_layers",
         "outermost_linear",
@@ -70,16 +69,6 @@ SECTION_KEYS = {
     "debug_config": ["debug_sleep_ms", "debug_steps"],
 }
 
-
-def parse_layer_sizes(layer_sizes_raw: Any) -> list[int]:
-    if isinstance(layer_sizes_raw, list):
-        return [int(x) for x in layer_sizes_raw]
-
-    if isinstance(layer_sizes_raw, str):
-        parts = [x.strip() for x in layer_sizes_raw.split(",") if x.strip()]
-        return [int(x) for x in parts]
-
-    raise ValueError(f"Invalid layerSizes format: {layer_sizes_raw}")
 
 
 def _load_path_config() -> dict[str, Any]:
@@ -223,8 +212,7 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
     sections = config.get("sections")
     if not isinstance(sections, dict):
         flat = dict(config)
-        if "layer_sizes" in flat:
-            flat["layer_sizes"] = parse_layer_sizes(flat["layer_sizes"])
+        flat.pop("layer_sizes", None)
         flat.setdefault("run_mode", "local")
         return flat
 
@@ -238,7 +226,7 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
             continue
         for key, value in section.items():
             if key == "layer_sizes":
-                value = parse_layer_sizes(value)
+                continue
             flat[key] = value
 
     return flat
@@ -257,9 +245,11 @@ def build_train_config(payload):
         incoming["model_name"] = _normalize_model_name(incoming.get("model_name", default_model), default_model)
         config.update(incoming)
 
+    config.pop("layer_sizes", None)
     config.setdefault("rounds", 200)
     config.setdefault("lr", 1e-3)
-    config.setdefault("layer_sizes", [2, 128, 128, 3])
+    config.setdefault("hidden_features", 128)
+    config.setdefault("hidden_layers", 3)
     config.setdefault("run_mode", "local")
     config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
 

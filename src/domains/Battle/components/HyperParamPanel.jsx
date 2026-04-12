@@ -8,6 +8,7 @@ import {
   runHistoryInitialize,
   runHistoryPlot,
 } from "../services/historyToolService";
+import PlotImageBrowser from "./PlotImageBrowser";
 
 const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
 const SECTION_ORDER = [
@@ -253,6 +254,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   const [historyAction, setHistoryAction] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [historyMessage, setHistoryMessage] = useState("");
+  const [historyPlotRefreshKey, setHistoryPlotRefreshKey] = useState(0);
 
   const loadConfig = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -628,6 +630,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     try {
       const result = await runHistoryPlot(selectedSessionId);
       setHistoryMessage(result?.message || `plot finished: ${selectedSessionId}`);
+      setHistoryPlotRefreshKey((prev) => prev + 1);
     } catch (err) {
       setHistoryError(err.message || "failed to plot history");
     } finally {
@@ -640,7 +643,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
       <section style={subPanelStyle}>
         <div style={subHeaderStyle}>
           <h3 className="train-config-title" style={subTitleStyle}>
-            历史工具
+            History Management
           </h3>
           <div className="train-config-subtitle" style={subSubtitleStyle}>
             select a session, then initialize or plot
@@ -648,7 +651,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         </div>
 
         <label className="train-config-label" htmlFor="history-session-select">
-          历史会话
+          History Sessions
         </label>
 
         <div style={historySelectWrapStyle}>
@@ -718,12 +721,20 @@ export default function HyperParamPanel({ onBattle, disabled }) {
             {historyAction === "plot" ? "plotting..." : "plot"}
           </button>
         </div>
+
+        <PlotImageBrowser
+          title="History Plots"
+          mode="session"
+          sessionId={selectedSessionId}
+          refreshKey={historyPlotRefreshKey}
+          overlayClassName="plot-browser-overlay-chat"
+        />
       </section>
 
       <section style={subPanelStyle}>
         <div style={subHeaderStyle}>
           <h2 className="train-config-title" style={subTitleStyle}>
-            战斗计划
+            Training Plan
           </h2>
           <div className="train-config-subtitle" style={subSubtitleStyle}>
             edit and save directly
@@ -791,7 +802,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
                 onClick={handleBattle}
                 disabled={configBusy}
               >
-                start battle
+                start training
               </button>
             </div>
           </>

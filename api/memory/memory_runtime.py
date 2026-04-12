@@ -125,10 +125,12 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
     wake_cycle_ids = _extract_wake_cycle_ids(wake_cycle_id, messages)
     start_at, end_at = _extract_time_bounds(messages)
 
+    existing_memory = get_long_term_db()
     consolidated = consolidate_memory(
         messages=messages,
         observations=observations,
         training_runs=training_runs,
+        existing_memory=existing_memory,
     )
 
     summary_block = consolidated.get("summary") or {}
@@ -158,6 +160,10 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
             pinned=bool(fact.get("pinned", False)),
             source_summary_ids=[summary_obj["id"]],
             source_wake_cycle_ids=wake_cycle_ids,
+            operation=fact.get("operation", "upsert"),
+            target_id=fact.get("target_id"),
+            memory_status=fact.get("memory_status", "active"),
+            supersedes_ids=fact.get("supersedes_ids", []),
         )
         created_or_updated_facts.append(upsert_user_fact(fact_obj))
 
@@ -175,6 +181,10 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
             related_fact_ids=[],
             source_summary_ids=[summary_obj["id"]],
             source_wake_cycle_ids=wake_cycle_ids,
+            operation=idea.get("operation", "upsert"),
+            target_id=idea.get("target_id"),
+            memory_status=idea.get("memory_status", "active"),
+            supersedes_ids=idea.get("supersedes_ids", []),
         )
         created_or_updated_ideas.append(upsert_idea_memory(idea_obj))
 
@@ -188,6 +198,10 @@ def archive_wake_cycle(payload: Dict[str, Any]) -> Dict[str, Any]:
             recent_changes=project.get("recent_changes", []),
             next_steps=project.get("next_steps", []),
             related_summary_ids=[summary_obj["id"]],
+            operation=project.get("operation", "upsert"),
+            target_id=project.get("target_id"),
+            memory_status=project.get("memory_status", "active"),
+            supersedes_ids=project.get("supersedes_ids", []),
         )
         created_or_updated_projects.append(upsert_project_state(project_obj))
 

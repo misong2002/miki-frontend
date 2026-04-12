@@ -48,6 +48,7 @@
   --radius-md: 16px;
   --radius-lg: 22px;
   --radius-xl: 26px;
+  --stage-reserved-right: calc(30vw - 4px);
 }
 
 * {
@@ -154,12 +155,12 @@ select:focus {
 .mode-chat,
 .mode-transforming {
   display: grid;
-  grid-template-columns: 1fr 1.2fr 1.8fr;
+  grid-template-columns: 1fr 1.8fr 1.2fr;
 }
 
 .battle-layout {
   display: grid;
-  grid-template-columns: 1fr 1.2fr 1.8fr;
+  grid-template-columns: 1.8fr 1fr 1.2fr;
 }
 
 .training-stage-layout {
@@ -1215,6 +1216,139 @@ select:focus {
 
 .battle-tool-status-error {
   color: #a33a3a;
+}
+
+.plot-browser {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px 16px 0 16px;
+}
+
+.plot-browser-toggle,
+.plot-browser-small-btn {
+  border: 1px solid rgba(91, 146, 220, 0.38);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(250,253,255,0.98), rgba(230,241,255,0.96));
+  color: var(--deep-blue);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plot-browser-toggle {
+  width: 100%;
+  padding: 9px 12px;
+}
+
+.plot-browser-small-btn {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.plot-browser-overlay {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  right: var(--stage-reserved-right);
+  bottom: 18px;
+  width: auto;
+  min-width: 0;
+  z-index: 1200;
+  pointer-events: auto;
+}
+
+.plot-browser-overlay-chat {
+  right: auto;
+  width: calc(50vw - 27px);
+  max-width: calc(100vw - var(--stage-reserved-right) - 36px);
+}
+
+.plot-browser-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(146, 185, 231, 0.84);
+  border-radius: 8px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(250,253,255,0.98), rgba(239,247,255,0.96));
+  box-shadow: 0 24px 60px rgba(31, 77, 143, 0.24);
+}
+
+.plot-browser-header,
+.plot-browser-toolbar,
+.plot-browser-header-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plot-browser-header {
+  justify-content: space-between;
+}
+
+.plot-browser-header-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.plot-browser-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--deep-blue);
+}
+
+.plot-browser-subtitle,
+.plot-browser-caption {
+  font-size: 12px;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+
+.plot-browser-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid rgba(154, 194, 237, 0.52);
+  border-radius: 8px;
+  padding: 8px 9px;
+  color: var(--text-main);
+  background: rgba(255,255,255,0.94);
+}
+
+.plot-browser-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(187, 212, 238, 0.58);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.78);
+}
+
+.plot-browser-stage img,
+.plot-browser-stage object,
+.plot-browser-stage iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .plot-browser-overlay {
+    left: 18px;
+    right: var(--stage-reserved-right);
+    width: auto;
+    min-width: 0;
+  }
 }
 
 .contact-history {

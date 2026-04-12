@@ -204,6 +204,7 @@ def consolidate_memory_with_rules(
     messages: List[Dict[str, Any]],
     observations: Optional[List[Dict[str, Any]]] = None,
     training_runs: Optional[List[Dict[str, Any]]] = None,
+    existing_memory: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     cleaned_messages = _clean_messages(messages)
 

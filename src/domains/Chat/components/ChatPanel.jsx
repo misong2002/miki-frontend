@@ -267,9 +267,9 @@ export default function ChatPanel({
   return (
     <div className="chat-shell">
       <div className="chat-header">
-        <div className="chat-title">和美樹さん面对面！</div>
+        <div className="chat-title">Talk with 美樹さん！</div>
         <div className="chat-subtitle">
-          （和她交流一下与原子核魔女战斗的情报吧）
+          （Ask her questions about physics and machine learning）
         </div>
       </div>
 
@@ -343,10 +343,10 @@ export default function ChatPanel({
             <div className="chat-textarea loading" />
             <div className="chat-actions">
               <button className="chat-send-btn" disabled>
-                发送
+                Send
               </button>
               <button className="chat-interrupt-btn" disabled>
-                打断
+                Interrupt
               </button>
             </div>
           </div>
@@ -358,7 +358,7 @@ export default function ChatPanel({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder="Enter message, Enter to send, Shift+Enter for new line"
               disabled={disabled || sending}
               rows={1}
             />
@@ -369,7 +369,7 @@ export default function ChatPanel({
                 onClick={handleSend}
                 disabled={disabled || sending || !input.trim()}
               >
-                {sending ? "发送中..." : "发送"}
+                {sending ? "Sending..." : "Send"}
               </button>
 
               <button
@@ -377,7 +377,7 @@ export default function ChatPanel({
                 onClick={handleInterrupt}
                 disabled={!sending}
               >
-                打断
+                Interrupt
               </button>
             </div>
           </>

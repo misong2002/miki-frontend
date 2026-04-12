@@ -90,13 +90,6 @@ function ChatModeView({
         />
       </aside>
 
-      <StageSurface
-        className="stage-column"
-        stageProps={stageProps}
-        hidden={hideStageModel}
-        loadingText={bootLoadingText}
-      />
-
       <aside className="chat-column">
         <ChatPanel
           disabled={panelDisabled || !chatBootReady}
@@ -107,6 +100,13 @@ function ChatModeView({
           initialMessages={initialChatMessages}
         />
       </aside>
+
+      <StageSurface
+        className="stage-column"
+        stageProps={stageProps}
+        hidden={hideStageModel}
+        loadingText={bootLoadingText}
+      />
     </>
   );
 }
@@ -119,6 +119,15 @@ function BattleModeView({
 }) {
   return (
     <main className="battle-layout">
+      <aside className="battle-loss-column">
+        <BattlePanel
+          lossData={battle.lossData}
+          sourcePath={APP_CONFIG.lossFilePath}
+          onForceExit={onForceExitBattle}
+          exiting={battleExiting}
+        />
+      </aside>
+
       <aside className="battle-contact-column">
         <ContactPanel messages={battle.contactMessages} />
       </aside>
@@ -130,15 +139,6 @@ function BattleModeView({
           scale={stageProps.scale}
         />
       </section>
-
-      <aside className="battle-loss-column">
-        <BattlePanel
-          lossData={battle.lossData}
-          sourcePath={APP_CONFIG.lossFilePath}
-          onForceExit={onForceExitBattle}
-          exiting={battleExiting}
-        />
-      </aside>
     </main>
   );
 }

@@ -103,10 +103,71 @@ def _format_json_input(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
+def _prepare_existing_memory_index(
+    existing_memory: Optional[Dict[str, Any]],
+    *,
+    limit_per_collection: int = 40,
+) -> Dict[str, Any]:
+    if not isinstance(existing_memory, dict):
+        return {
+            "facts": [],
+            "ideas": [],
+            "project_updates": [],
+        }
+
+    def is_active(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return str(item.get("memory_status") or "active").strip().lower() == "active"
+
+    facts = [
+        {
+            "id": item.get("id"),
+            "key": item.get("key"),
+            "value": item.get("value"),
+            "category": item.get("category"),
+        }
+        for item in existing_memory.get("user_facts", [])
+        if is_active(item)
+    ][:limit_per_collection]
+
+    ideas = [
+        {
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "content": _truncate_text(str(item.get("content") or ""), 500),
+            "category": item.get("category"),
+            "status": item.get("status"),
+            "tags": item.get("tags", []),
+        }
+        for item in existing_memory.get("idea_memories", [])
+        if is_active(item)
+    ][:limit_per_collection]
+
+    projects = [
+        {
+            "id": item.get("id"),
+            "project_key": item.get("project_key"),
+            "title": item.get("title"),
+            "status": item.get("status"),
+            "summary": _truncate_text(str(item.get("summary") or ""), 500),
+        }
+        for item in existing_memory.get("project_states", [])
+        if is_active(item)
+    ][:limit_per_collection]
+
+    return {
+        "facts": facts,
+        "ideas": ideas,
+        "project_updates": projects,
+    }
+
+
 def build_memory_consolidation_prompt(
     messages: List[Dict[str, Any]],
     observations: Optional[List[Dict[str, Any]]] = None,
     training_runs: Optional[List[Dict[str, Any]]] = None,
+    existing_memory: Optional[Dict[str, Any]] = None,
 ) -> str:
     prepared_messages = _prepare_messages_for_prompt(messages)
 
@@ -114,6 +175,7 @@ def build_memory_consolidation_prompt(
         "messages": prepared_messages,
         "observations": observations or [],
         "training_runs": training_runs or [],
+        "existing_active_memory_index": _prepare_existing_memory_index(existing_memory),
         "required_output_schema": {
             "summary": {
                 "summary": "string",
@@ -128,6 +190,10 @@ def build_memory_consolidation_prompt(
                     "category": "identity | background | major_life_event | research_interest | research_style | preference | long_term_goal | project_context",
                     "confidence": 0.0,
                     "pinned": False,
+                    "operation": "upsert | supersede | archive",
+                    "target_id": "optional existing fact id or key",
+                    "memory_status": "active | archived | superseded",
+                    "supersedes_ids": ["optional existing fact ids"],
                 }
             ],
             "ideas": [
@@ -140,6 +206,10 @@ def build_memory_consolidation_prompt(
                     "importance": 0.0,
                     "tags": ["string"],
                     "open_questions": ["string"],
+                    "operation": "upsert | supersede | archive",
+                    "target_id": "optional existing idea id or exact title",
+                    "memory_status": "active | archived | superseded",
+                    "supersedes_ids": ["optional existing idea ids"],
                 }
             ],
             "project_updates": [
@@ -150,6 +220,10 @@ def build_memory_consolidation_prompt(
                     "summary": "string",
                     "recent_changes": ["string"],
                     "next_steps": ["string"],
+                    "operation": "upsert | supersede | archive",
+                    "target_id": "optional existing project id or project_key",
+                    "memory_status": "active | archived | superseded",
+                    "supersedes_ids": ["optional existing project ids"],
                 }
             ],
         },
@@ -168,6 +242,10 @@ Important:
 - Preserve scientifically meaningful ideas even if they are speculative.
 - If the user discusses an idea in depth, do not reduce it to a vague sentence.
 - If the user reveals significant past experiences or life events, record them as durable facts only when they appear genuinely important and non-trivial.
+- Compare against existing_active_memory_index. If a new item is the same long-term setting with updated details, reuse the existing stable key/project_key/title and use operation "upsert".
+- If the user explicitly corrects, replaces, or says an existing memory is outdated, use operation "supersede" with target_id or supersedes_ids and return the newer active memory.
+- If the user explicitly asks to forget/remove a memory without replacing it, use operation "archive" with target_id or the same stable key/project_key/title.
+- Prefer merging similar settings into one canonical memory instead of creating near-duplicate facts, ideas, or project states.
 - Do not invent facts.
 - Do not include generic filler.
 - Return strict JSON only.
@@ -209,6 +287,29 @@ def _ensure_list_of_strings(value: Any) -> List[str]:
     return result
 
 
+def _normalize_operation(value: Any) -> str:
+    operation = str(value or "upsert").strip().lower()
+    if operation in {"delete", "forget"}:
+        return "archive"
+    if operation in {"upsert", "supersede", "archive"}:
+        return operation
+    return "upsert"
+
+
+def _normalize_memory_status(value: Any, operation: str) -> str:
+    status = str(value or "").strip().lower()
+    if status in {"active", "archived", "superseded"}:
+        return status
+    if operation == "archive":
+        return "archived"
+    return "active"
+
+
+def _optional_string(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         f = float(value)
@@ -242,20 +343,28 @@ def _normalize_facts(data: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
 
-        key = str(item.get("key", "") or "").strip()
+        operation = _normalize_operation(item.get("operation"))
+        target_id = _optional_string(item.get("target_id"))
+        key = str(item.get("key", "") or target_id or "").strip()
         value = str(item.get("value", "") or "").strip()
         category = str(item.get("category", "") or "").strip()
 
-        if not key or not value or not category:
+        if not key or not category:
+            continue
+        if not value and operation != "archive":
             continue
 
         result.append(
             {
                 "key": key,
-                "value": value,
+                "value": value or "归档过时长期事实",
                 "category": category,
                 "confidence": _to_float(item.get("confidence"), 0.8),
                 "pinned": bool(item.get("pinned", False)),
+                "operation": operation,
+                "target_id": target_id,
+                "memory_status": _normalize_memory_status(item.get("memory_status"), operation),
+                "supersedes_ids": _ensure_list_of_strings(item.get("supersedes_ids")),
             }
         )
 
@@ -271,23 +380,31 @@ def _normalize_ideas(data: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
 
-        title = str(item.get("title", "") or "").strip()
+        operation = _normalize_operation(item.get("operation"))
+        target_id = _optional_string(item.get("target_id"))
+        title = str(item.get("title", "") or target_id or "").strip()
         content = str(item.get("content", "") or "").strip()
         category = str(item.get("category", "") or "").strip()
 
-        if not title or not content or not category:
+        if not title or not category:
+            continue
+        if not content and operation != "archive":
             continue
 
         result.append(
             {
                 "title": title,
-                "content": content,
+                "content": content or "归档过时长期想法",
                 "category": category,
                 "status": str(item.get("status", "open") or "open").strip(),
                 "novelty": _to_float(item.get("novelty"), 0.8),
                 "importance": _to_float(item.get("importance"), 0.8),
                 "tags": _ensure_list_of_strings(item.get("tags")),
                 "open_questions": _ensure_list_of_strings(item.get("open_questions")),
+                "operation": operation,
+                "target_id": target_id,
+                "memory_status": _normalize_memory_status(item.get("memory_status"), operation),
+                "supersedes_ids": _ensure_list_of_strings(item.get("supersedes_ids")),
             }
         )
 
@@ -303,8 +420,10 @@ def _normalize_project_updates(data: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
 
-        project_key = str(item.get("project_key", "") or "").strip()
-        title = str(item.get("title", "") or "").strip()
+        operation = _normalize_operation(item.get("operation"))
+        target_id = _optional_string(item.get("target_id"))
+        project_key = str(item.get("project_key", "") or target_id or "").strip()
+        title = str(item.get("title", "") or project_key or "").strip()
         status = str(item.get("status", "") or "").strip()
         summary = str(item.get("summary", "") or "").strip()
 
@@ -316,9 +435,13 @@ def _normalize_project_updates(data: Any) -> List[Dict[str, Any]]:
                 "project_key": project_key,
                 "title": title,
                 "status": status,
-                "summary": summary,
+                "summary": summary or "归档过时项目状态",
                 "recent_changes": _ensure_list_of_strings(item.get("recent_changes")),
                 "next_steps": _ensure_list_of_strings(item.get("next_steps")),
+                "operation": operation,
+                "target_id": target_id,
+                "memory_status": _normalize_memory_status(item.get("memory_status"), operation),
+                "supersedes_ids": _ensure_list_of_strings(item.get("supersedes_ids")),
             }
         )
 
@@ -341,6 +464,7 @@ def consolidate_memory_with_llm(
     messages: List[Dict[str, Any]],
     observations: Optional[List[Dict[str, Any]]] = None,
     training_runs: Optional[List[Dict[str, Any]]] = None,
+    existing_memory: Optional[Dict[str, Any]] = None,
     max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     prepared_messages = _prepare_messages_for_prompt(messages)
@@ -361,6 +485,7 @@ def consolidate_memory_with_llm(
         messages=prepared_messages,
         observations=observations,
         training_runs=training_runs,
+        existing_memory=existing_memory,
     )
 
     raw_text = generate_json_completion(

@@ -2,7 +2,7 @@ import re
 import sys
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_from_directory, url_for
 
 from services.command_runner import command_result_payload, run_command
 from services.response_service import error_payload, success_payload
@@ -26,6 +26,8 @@ PLOT_SCRIPT = Path(PLOT_SCRIPT_PATH).resolve()
 HISTORY_DIR = Path(HISTORY_ROOT).resolve()
 
 _HISTORY_SESSION_RE = re.compile(r"^\d{8}_\d{6}$")
+_PLOT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"}
+
 
 
 def _normalize_session_id(raw_value: str) -> str:
@@ -155,6 +157,52 @@ def _validate_plot_outputs(session_id: str):
     return len(files) > 0, output_dir, files
 
 
+def _is_plot_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in _PLOT_IMAGE_SUFFIXES
+
+
+def _validate_plot_image_filename(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value or Path(value).name != value or value in {".", ".."}:
+        raise ValueError("invalid plot image file")
+
+    if Path(value).suffix.lower() not in _PLOT_IMAGE_SUFFIXES:
+        raise ValueError("unsupported plot image file type")
+
+    return value
+
+
+def _list_plot_image_files(session_id: str):
+    output_dir = _get_plot_output_dir(session_id)
+
+    if not output_dir.exists() or not output_dir.is_dir():
+        return output_dir, []
+
+    files = []
+    for item in sorted(output_dir.iterdir(), key=lambda p: p.name):
+        if not _is_plot_image_file(item):
+            continue
+
+        stat = item.stat()
+        files.append({
+            "name": item.name,
+            "url": url_for(
+                "history.history_plot_file",
+                session_id=session_id,
+                file=item.name,
+            ),
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        })
+
+    return output_dir, files
+
+
+def _latest_history_session_id() -> str:
+    sessions = _list_history_sessions()
+    return sessions[0]["session_id"] if sessions else ""
+
+
 def _run_history_command(command_name: str, session_id: str):
     session_id = _validate_session_id(session_id)
     _get_history_session_dir(session_id)
@@ -233,3 +281,67 @@ def run_plot_from_history():
         return _run_history_command("plot", session_id)
     except Exception as err:
         return jsonify(error_payload(str(err))), 400
+
+
+@history_bp.get("/plots")
+def list_history_plot_images():
+    try:
+        session_id = _validate_session_id(request.args.get("session_id", ""))
+        output_dir, files = _list_plot_image_files(session_id)
+        return jsonify(success_payload(
+            session_id=session_id,
+            output_dir=str(output_dir),
+            files=files,
+            count=len(files),
+        )), 200
+    except FileNotFoundError as err:
+        return jsonify(error_payload(str(err))), 404
+    except ValueError as err:
+        return jsonify(error_payload(str(err))), 400
+    except Exception as err:
+        return jsonify(error_payload(str(err))), 500
+
+
+@history_bp.get("/plots/latest")
+def list_latest_history_plot_images():
+    try:
+        session_id = _latest_history_session_id()
+        if not session_id:
+            return jsonify(success_payload(
+                session_id="",
+                output_dir="",
+                files=[],
+                count=0,
+                message="no history sessions found",
+            )), 200
+
+        output_dir, files = _list_plot_image_files(session_id)
+        return jsonify(success_payload(
+            session_id=session_id,
+            output_dir=str(output_dir),
+            files=files,
+            count=len(files),
+        )), 200
+    except Exception as err:
+        return jsonify(error_payload(str(err))), 500
+
+
+@history_bp.get("/plot-file")
+def history_plot_file():
+    try:
+        session_id = _validate_session_id(request.args.get("session_id", ""))
+        filename = _validate_plot_image_filename(request.args.get("file", ""))
+        output_dir = _get_plot_output_dir(session_id)
+        target = (output_dir / filename).resolve()
+        target.relative_to(output_dir.resolve())
+
+        if not _is_plot_image_file(target):
+            return jsonify(error_payload("plot image not found")), 404
+
+        return send_from_directory(output_dir, filename)
+    except FileNotFoundError as err:
+        return jsonify(error_payload(str(err))), 404
+    except ValueError as err:
+        return jsonify(error_payload(str(err))), 400
+    except Exception as err:
+        return jsonify(error_payload(str(err))), 500

@@ -12,7 +12,8 @@ export const initialHyperParams = {
   output: "data/siren_params.npz",
   rounds: 200,
   lr: 1e-3,
-  layerSizes: "2,128,128,3",
+  hiddenFeatures: 128,
+  hiddenLayers: 3,
 };
 
 export const initialTrainingState = {

@@ -160,6 +160,14 @@ def _normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _is_active_memory(item: dict[str, Any]) -> bool:
+    return str(item.get("memory_status") or "active").strip().lower() == "active"
+
+
+def _active_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if isinstance(item, dict) and _is_active_memory(item)]
+
+
 def _unique_preserve_order(items: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -226,7 +234,7 @@ def _extract_query_keywords(text: str) -> list[str]:
 def _build_fact_category_trigger_terms(db: dict[str, Any]) -> list[str]:
     categories = {
         str(item.get("category") or "").strip()
-        for item in db.get("user_facts", [])
+        for item in _active_items(db.get("user_facts", []))
         if str(item.get("category") or "").strip()
     }
 
@@ -242,7 +250,7 @@ def _build_fact_category_trigger_terms(db: dict[str, Any]) -> list[str]:
 def _build_idea_category_trigger_terms(db: dict[str, Any]) -> list[str]:
     categories = {
         str(item.get("category") or "").strip()
-        for item in db.get("idea_memories", [])
+        for item in _active_items(db.get("idea_memories", []))
         if str(item.get("category") or "").strip()
     }
 
@@ -269,7 +277,7 @@ def _detect_profile_fact_categories(
     query_lower = query_text.lower()
     available_categories = {
         str(item.get("category") or "").strip()
-        for item in db.get("user_facts", [])
+        for item in _active_items(db.get("user_facts", []))
         if str(item.get("category") or "").strip()
     }
 
@@ -647,7 +655,7 @@ def _retrieve_profile_bundle(
     db: dict[str, Any],
     selected_categories: list[str],
 ) -> list[dict[str, Any]]:
-    facts = db.get("user_facts", [])
+    facts = _active_items(db.get("user_facts", []))
     categories = set(selected_categories or PROFILE_FACT_CATEGORIES)
 
     selected = [
@@ -667,10 +675,10 @@ def _retrieve_profile_bundle(
 
 def _retrieve_project_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
     selected = []
-    for project in db.get("project_states", []):
+    for project in _active_items(db.get("project_states", [])):
         selected.append(_make_selected_item("project", project, score=100.0, matched_fields=["project_bundle"]))
 
-    for fact in db.get("user_facts", []):
+    for fact in _active_items(db.get("user_facts", [])):
         if fact.get("category") == "project_context":
             selected.append(_make_selected_item("fact", fact, score=90.0, matched_fields=["project_context"]))
 
@@ -700,7 +708,7 @@ def _retrieve_session_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _retrieve_idea_catalog_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
     ideas = sorted(
-        db.get("idea_memories", []),
+        _active_items(db.get("idea_memories", [])),
         key=lambda item: (
             float(item.get("importance", 0.0)),
             float(item.get("novelty", 0.0)),
@@ -764,9 +772,9 @@ def retrieve_relevant_long_term_memories(
 
     candidates: list[dict[str, Any]] = []
     collections = [
-        ("fact", db.get("user_facts", [])),
-        ("project", db.get("project_states", [])),
-        ("idea", db.get("idea_memories", [])),
+        ("fact", _active_items(db.get("user_facts", []))),
+        ("project", _active_items(db.get("project_states", []))),
+        ("idea", _active_items(db.get("idea_memories", []))),
         ("summary", db.get("session_summaries", [])),
         ("digest", db.get("memory_digests", [])),
     ]
@@ -897,7 +905,7 @@ def create_chat_stream_response(
             model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=8000,
+            max_tokens=16000,
             stream=True,
         )
     except Exception as e:

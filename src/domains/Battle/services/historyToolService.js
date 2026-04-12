@@ -59,3 +59,40 @@ export async function runHistoryPlot(sessionId) {
     }),
   });
 }
+
+function normalizePlotImageFiles(files = []) {
+  if (!Array.isArray(files)) return [];
+
+  return files.map((item) => ({
+    ...item,
+    url: item?.url ? buildApiUrl(item.url) : "",
+  }));
+}
+
+export async function fetchHistoryPlotImages(sessionId) {
+  const params = new URLSearchParams({
+    session_id: sessionId,
+  });
+  const result = await requestJson(
+    buildApiUrl(`/api/history/plots?${params.toString()}`),
+    {
+      method: "GET",
+    }
+  );
+
+  return {
+    ...result,
+    files: normalizePlotImageFiles(result?.files),
+  };
+}
+
+export async function fetchLatestHistoryPlotImages() {
+  const result = await requestJson(buildApiUrl("/api/history/plots/latest"), {
+    method: "GET",
+  });
+
+  return {
+    ...result,
+    files: normalizePlotImageFiles(result?.files),
+  };
+}

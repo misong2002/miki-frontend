@@ -12,12 +12,14 @@ def consolidate_memory(
     messages: List[Dict[str, Any]],
     observations: Optional[List[Dict[str, Any]]] = None,
     training_runs: Optional[List[Dict[str, Any]]] = None,
+    existing_memory: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     try:
         return consolidate_memory_with_llm(
             messages=messages,
             observations=observations,
             training_runs=training_runs,
+            existing_memory=existing_memory,
             max_output_tokens=None,
         )
     except Exception as e:
@@ -26,4 +28,5 @@ def consolidate_memory(
             messages=messages,
             observations=observations,
             training_runs=training_runs,
+            existing_memory=existing_memory,
         )

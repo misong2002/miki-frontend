@@ -11,11 +11,14 @@ import { useState } from "react";
 import { APP_CONFIG } from "../../../config";
 import { saveTrainingHistory } from "../services/historyService";
 import { runHistoryPlot } from "../services/historyToolService";
+import PlotImageBrowser from "./PlotImageBrowser";
 
 export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
   const [historyAction, setHistoryAction] = useState("");
   const [historyMessage, setHistoryMessage] = useState("");
   const [historyError, setHistoryError] = useState("");
+  const [lastPlottedSessionId, setLastPlottedSessionId] = useState("");
+  const [plotRefreshKey, setPlotRefreshKey] = useState(0);
   const recentData = lossData.slice(
     -APP_CONFIG.battleCharts.recentWindowPoints
   );
@@ -50,6 +53,8 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
 
       setHistoryMessage(`plotting ${sessionId}...`);
       const plotResult = await runHistoryPlot(sessionId);
+      setLastPlottedSessionId(sessionId);
+      setPlotRefreshKey((prev) => prev + 1);
       setHistoryMessage(plotResult?.message || `plot finished: ${sessionId}`);
     } catch (err) {
       setHistoryError(err.message || "failed to save history and plot");
@@ -91,6 +96,13 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
           {historyError || historyMessage}
         </div>
       )}
+
+      <PlotImageBrowser
+        title="最新战斗图片"
+        mode={lastPlottedSessionId ? "session" : "latest"}
+        sessionId={lastPlottedSessionId}
+        refreshKey={plotRefreshKey}
+      />
 
       <div className="battle-chart-block">
         <div className="battle-chart-title">魔力波动记录（loss vs epoch）</div>

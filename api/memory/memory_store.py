@@ -39,11 +39,160 @@ def _normalize_tag_value(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_memory_status(value: Any) -> str:
+    status = str(value or "active").strip().lower()
+    return status or "active"
+
+
+def _normalize_memory_operation(value: Any) -> str:
+    operation = str(value or "upsert").strip().lower()
+    if operation in {"delete", "forget"}:
+        return "archive"
+    if operation in {"archive", "supersede", "upsert"}:
+        return operation
+    return "upsert"
+
+
+def _memory_status_matches(item: Dict[str, Any], memory_status: Optional[str]) -> bool:
+    if memory_status is None:
+        return True
+    return _normalize_memory_status(item.get("memory_status")) == memory_status
+
+
+def _is_active_memory(item: Dict[str, Any]) -> bool:
+    return _memory_status_matches(item, "active")
+
+
+def _extend_unique_strings(existing: Any, additions: Any) -> List[str]:
+    result = []
+
+    for source in (existing, additions):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            text = str(item or "").strip()
+            if text and text not in result:
+                result.append(text)
+
+    return result
+
+
+def _resolve_target_index(
+    items: List[Dict[str, Any]],
+    incoming: Dict[str, Any],
+    natural_key_fields: List[str],
+) -> Optional[int]:
+    target_id = str(incoming.get("target_id") or "").strip()
+    if target_id:
+        for i, existing in enumerate(items):
+            candidate_values = [
+                existing.get("id"),
+                *(existing.get(field) for field in natural_key_fields),
+            ]
+            if any(str(value or "").strip() == target_id for value in candidate_values):
+                return i
+
+    for i, existing in enumerate(items):
+        if all(existing.get(field) == incoming.get(field) for field in natural_key_fields):
+            return i
+
+    return None
+
+
+def _mark_memory_status(
+    item: Dict[str, Any],
+    *,
+    memory_status: str,
+    superseded_by: Optional[str] = None,
+    source_item: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    item["memory_status"] = memory_status
+    item["updated_at"] = now_ms()
+
+    if superseded_by is not None:
+        item["superseded_by"] = superseded_by
+
+    if source_item is not None:
+        item["source_summary_ids"] = _extend_unique_strings(
+            item.get("source_summary_ids"),
+            source_item.get("source_summary_ids"),
+        )
+        item["source_wake_cycle_ids"] = _extend_unique_strings(
+            item.get("source_wake_cycle_ids"),
+            source_item.get("source_wake_cycle_ids"),
+        )
+
+    return item
+
+
+def _mark_superseded_targets(
+    items: List[Dict[str, Any]],
+    target_index: Optional[int],
+    incoming: Dict[str, Any],
+) -> List[str]:
+    target_ids = _extend_unique_strings(incoming.get("supersedes_ids"), [])
+    if target_index is not None:
+        target_ids = _extend_unique_strings(
+            target_ids,
+            [items[target_index].get("id")],
+        )
+
+    marked_ids = []
+    for item in items:
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id not in target_ids:
+            continue
+        _mark_memory_status(
+            item,
+            memory_status="superseded",
+            superseded_by=incoming.get("id"),
+            source_item=incoming,
+        )
+        marked_ids.append(item_id)
+
+    return marked_ids
+
+
+def _merge_updated_memory_item(
+    existing: Dict[str, Any],
+    incoming: Dict[str, Any],
+) -> Dict[str, Any]:
+    ts = now_ms()
+    merged = {
+        **incoming,
+        "id": existing.get("id"),
+        "created_at": existing.get("created_at"),
+        "updated_at": ts,
+        "last_seen_at": ts,
+        "memory_status": _normalize_memory_status(incoming.get("memory_status")),
+        "source_summary_ids": _extend_unique_strings(
+            existing.get("source_summary_ids"),
+            incoming.get("source_summary_ids"),
+        ),
+        "source_wake_cycle_ids": _extend_unique_strings(
+            existing.get("source_wake_cycle_ids"),
+            incoming.get("source_wake_cycle_ids"),
+        ),
+        "supersedes_ids": _extend_unique_strings(
+            existing.get("supersedes_ids"),
+            incoming.get("supersedes_ids"),
+        ),
+    }
+
+    if incoming.get("superseded_by") is None and existing.get("superseded_by") is not None:
+        merged["superseded_by"] = existing.get("superseded_by")
+
+    return merged
+
+
 def _derive_idea_tag_catalog_from_db(db: Dict[str, Any]) -> List[str]:
     seen = set()
     catalog = []
 
     for idea in db.get("idea_memories", []):
+        if not _is_active_memory(idea):
+            continue
+
         tags = idea.get("tags") or []
         if not isinstance(tags, list):
             continue
@@ -324,10 +473,14 @@ def create_session_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         return summary
 
 
-def list_user_facts(category: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_user_facts(
+    category: Optional[str] = None,
+    memory_status: Optional[str] = "active",
+) -> List[Dict[str, Any]]:
     with _db_lock:
         db = load_long_term_db()
         facts = db["user_facts"]
+        facts = [x for x in facts if _memory_status_matches(x, memory_status)]
         if category is not None:
             facts = [x for x in facts if x.get("category") == category]
         return sorted(facts, key=lambda x: x.get("updated_at", 0), reverse=True)
@@ -337,7 +490,7 @@ def get_user_fact_by_key(key: str) -> Optional[Dict[str, Any]]:
     with _db_lock:
         db = load_long_term_db()
         for fact in db["user_facts"]:
-            if fact.get("key") == key:
+            if fact.get("key") == key and _is_active_memory(fact):
                 return fact
         return None
 
@@ -345,14 +498,35 @@ def get_user_fact_by_key(key: str) -> Optional[Dict[str, Any]]:
 def upsert_user_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
     with _db_lock:
         db = load_long_term_db()
+        operation = _normalize_memory_operation(fact.get("operation"))
+        target_index = _resolve_target_index(db["user_facts"], fact, ["key"])
+
+        if operation == "archive":
+            if target_index is not None:
+                archived = _mark_memory_status(
+                    db["user_facts"][target_index],
+                    memory_status="archived",
+                    source_item=fact,
+                )
+                save_long_term_db(db)
+                return archived
+
+            fact["memory_status"] = "archived"
+            fact["updated_at"] = now_ms()
+            db["user_facts"].append(fact)
+            save_long_term_db(db)
+            return fact
+
+        if operation == "supersede":
+            marked_ids = _mark_superseded_targets(db["user_facts"], target_index, fact)
+            fact["supersedes_ids"] = _extend_unique_strings(
+                fact.get("supersedes_ids"),
+                marked_ids,
+            )
 
         for i, existing in enumerate(db["user_facts"]):
-            if existing.get("key") == fact.get("key"):
-                preserved_id = existing.get("id")
-                preserved_created_at = existing.get("created_at")
-                fact["id"] = preserved_id
-                fact["created_at"] = preserved_created_at
-                fact["updated_at"] = now_ms()
+            if existing.get("key") == fact.get("key") and _is_active_memory(existing):
+                fact = _merge_updated_memory_item(existing, fact)
                 db["user_facts"][i] = fact
                 save_long_term_db(db)
                 return fact
@@ -362,10 +536,14 @@ def upsert_user_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
         return fact
 
 
-def list_idea_memories(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_idea_memories(
+    status: Optional[str] = None,
+    memory_status: Optional[str] = "active",
+) -> List[Dict[str, Any]]:
     with _db_lock:
         db = load_long_term_db()
         ideas = db["idea_memories"]
+        ideas = [x for x in ideas if _memory_status_matches(x, memory_status)]
         if status is not None:
             ideas = [x for x in ideas if x.get("status") == status]
         return sorted(ideas, key=lambda x: x.get("updated_at", 0), reverse=True)
@@ -391,15 +569,39 @@ def rebuild_idea_tag_catalog() -> List[str]:
 def upsert_idea_memory(idea: Dict[str, Any]) -> Dict[str, Any]:
     with _db_lock:
         db = load_long_term_db()
+        operation = _normalize_memory_operation(idea.get("operation"))
+        target_index = _resolve_target_index(db["idea_memories"], idea, ["title", "category"])
+
+        if operation == "archive":
+            if target_index is not None:
+                archived = _mark_memory_status(
+                    db["idea_memories"][target_index],
+                    memory_status="archived",
+                    source_item=idea,
+                )
+                save_long_term_db(db)
+                return archived
+
+            idea["memory_status"] = "archived"
+            idea["updated_at"] = now_ms()
+            db["idea_memories"].append(idea)
+            save_long_term_db(db)
+            return idea
+
+        if operation == "supersede":
+            marked_ids = _mark_superseded_targets(db["idea_memories"], target_index, idea)
+            idea["supersedes_ids"] = _extend_unique_strings(
+                idea.get("supersedes_ids"),
+                marked_ids,
+            )
 
         for i, existing in enumerate(db["idea_memories"]):
             if (
                 existing.get("title") == idea.get("title")
                 and existing.get("category") == idea.get("category")
+                and _is_active_memory(existing)
             ):
-                idea["id"] = existing.get("id")
-                idea["created_at"] = existing.get("created_at")
-                idea["updated_at"] = now_ms()
+                idea = _merge_updated_memory_item(existing, idea)
                 db["idea_memories"][i] = idea
                 save_long_term_db(db)
                 return idea
@@ -409,10 +611,14 @@ def upsert_idea_memory(idea: Dict[str, Any]) -> Dict[str, Any]:
         return idea
 
 
-def list_project_states(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_project_states(
+    status: Optional[str] = None,
+    memory_status: Optional[str] = "active",
+) -> List[Dict[str, Any]]:
     with _db_lock:
         db = load_long_term_db()
         projects = db["project_states"]
+        projects = [x for x in projects if _memory_status_matches(x, memory_status)]
         if status is not None:
             projects = [x for x in projects if x.get("status") == status]
         return sorted(projects, key=lambda x: x.get("updated_at", 0), reverse=True)
@@ -422,7 +628,7 @@ def get_project_state_by_key(project_key: str) -> Optional[Dict[str, Any]]:
     with _db_lock:
         db = load_long_term_db()
         for project in db["project_states"]:
-            if project.get("project_key") == project_key:
+            if project.get("project_key") == project_key and _is_active_memory(project):
                 return project
         return None
 
@@ -430,12 +636,35 @@ def get_project_state_by_key(project_key: str) -> Optional[Dict[str, Any]]:
 def upsert_project_state(project: Dict[str, Any]) -> Dict[str, Any]:
     with _db_lock:
         db = load_long_term_db()
+        operation = _normalize_memory_operation(project.get("operation"))
+        target_index = _resolve_target_index(db["project_states"], project, ["project_key"])
+
+        if operation == "archive":
+            if target_index is not None:
+                archived = _mark_memory_status(
+                    db["project_states"][target_index],
+                    memory_status="archived",
+                    source_item=project,
+                )
+                save_long_term_db(db)
+                return archived
+
+            project["memory_status"] = "archived"
+            project["updated_at"] = now_ms()
+            db["project_states"].append(project)
+            save_long_term_db(db)
+            return project
+
+        if operation == "supersede":
+            marked_ids = _mark_superseded_targets(db["project_states"], target_index, project)
+            project["supersedes_ids"] = _extend_unique_strings(
+                project.get("supersedes_ids"),
+                marked_ids,
+            )
 
         for i, existing in enumerate(db["project_states"]):
-            if existing.get("project_key") == project.get("project_key"):
-                project["id"] = existing.get("id")
-                project["created_at"] = existing.get("created_at")
-                project["updated_at"] = now_ms()
+            if existing.get("project_key") == project.get("project_key") and _is_active_memory(existing):
+                project = _merge_updated_memory_item(existing, project)
                 db["project_states"][i] = project
                 save_long_term_db(db)
                 return project
