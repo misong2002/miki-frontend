@@ -19,7 +19,12 @@ def get_single_chat_session_id() -> str:
     return SINGLE_CHAT_SESSION_ID
 
 
-def append_message(role: str, content: str, session_id: str | None = None):
+def append_message(
+    role: str,
+    content: str,
+    session_id: str | None = None,
+    message_type: str | None = None,
+):
     resolved_session_id = _normalize_session_id(session_id)
 
     with _session_lock:
@@ -27,6 +32,7 @@ def append_message(role: str, content: str, session_id: str | None = None):
         bucket.append({
             "role": role,
             "content": content,
+            "type": message_type or role,
         })
 
 

@@ -31,7 +31,7 @@ INITIALIZE_SCRIPT_PATH = MIKI_ROOT + "/scripts/training_session/initialize.sh"
 PLOT_SCRIPT_PATH = MIKI_ROOT + "/scripts/plot/plot.py"
 
 # LLM配置
-OPENAI_MODEL = "claude-opus-4-6"
+OPENAI_MODEL = "deepseek-reasoner"
 CHAT_SESSION_MEMORY_LIMIT = 12
 PROFILE_BUNDLE_MAX_FACTS = 20
 

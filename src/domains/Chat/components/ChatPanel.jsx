@@ -1,5 +1,5 @@
 // src/domains/Chat/components/ChatPanel.jsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -90,6 +90,8 @@ export default function ChatPanel({
   initialMessages = [],
   bootLoading = false,
   suppressFallbackGreeting = false,
+  interactionRequest = null,
+  onInteractionRequestHandled = null,
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -104,6 +106,101 @@ export default function ChatPanel({
 
   const historyRef = useRef(null);
   const textareaRef = useRef(null);
+  const scrollStateRef = useRef({
+    autoFollow: false,
+    lastMessageCount: messages.length,
+    lastScrollHeight: 0,
+    programmatic: false,
+    releaseTimer: null,
+  });
+
+  function setProgrammaticScrollTop(top) {
+    const el = historyRef.current;
+    if (!el) return;
+
+    const state = scrollStateRef.current;
+    state.programmatic = true;
+    el.scrollTop = top;
+
+    if (state.releaseTimer) {
+      window.clearTimeout(state.releaseTimer);
+    }
+
+    state.releaseTimer = window.setTimeout(() => {
+      state.programmatic = false;
+      state.releaseTimer = null;
+    }, 80);
+  }
+
+  function disableAutoFollowFromUserScroll(event) {
+    const el = historyRef.current;
+    const state = scrollStateRef.current;
+
+    if (state.programmatic && event?.type === "scroll") return;
+
+    if (state.releaseTimer) {
+      window.clearTimeout(state.releaseTimer);
+      state.releaseTimer = null;
+    }
+
+    state.programmatic = false;
+    state.autoFollow = false;
+    if (el) {
+      state.lastScrollHeight = el.scrollHeight;
+    }
+  }
+
+  function handleHistoryPointerDown(event) {
+    const el = historyRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const scrollbarWidth = Math.max(12, el.offsetWidth - el.clientWidth);
+    if (event.clientX >= rect.right - scrollbarWidth - 2) {
+      disableAutoFollowFromUserScroll(event);
+    }
+  }
+
+  useLayoutEffect(() => {
+    const el = historyRef.current;
+    if (!el) return;
+
+    const state = scrollStateRef.current;
+    const nextScrollHeight = el.scrollHeight;
+    const messageCountDelta = messages.length - state.lastMessageCount;
+    const scrollHeightDelta = nextScrollHeight - state.lastScrollHeight;
+
+    if (bootLoading) {
+      state.lastMessageCount = messages.length;
+      state.lastScrollHeight = nextScrollHeight;
+      return;
+    }
+
+    if (state.autoFollow && messageCountDelta > 0) {
+      setProgrammaticScrollTop(
+        Math.max(0, nextScrollHeight - el.clientHeight)
+      );
+    } else if (state.autoFollow && scrollHeightDelta > 0) {
+      setProgrammaticScrollTop(
+        Math.min(
+          Math.max(0, nextScrollHeight - el.clientHeight),
+          el.scrollTop + scrollHeightDelta / 2
+        )
+      );
+    }
+
+    state.lastMessageCount = messages.length;
+    state.lastScrollHeight = nextScrollHeight;
+  }, [messages, bootLoading]);
+
+  useEffect(() => {
+    return () => {
+      const timer = scrollStateRef.current.releaseTimer;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (bootLoading) return;
@@ -115,18 +212,6 @@ export default function ChatPanel({
 
     setMessages(buildFallbackMessages({ suppressFallbackGreeting }));
   }, [initialMessages, bootLoading, suppressFallbackGreeting]);
-
-  useEffect(() => {
-    if (bootLoading) return;
-
-    const el = historyRef.current;
-    if (!el) return;
-
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages, bootLoading]);
 
   function resetTextareaHeight() {
     const el = textareaRef.current;
@@ -155,22 +240,29 @@ export default function ChatPanel({
     );
   }
 
-  async function handleSend() {
-    const text = input.trim();
+  async function sendMessage({
+    text,
+    messageType = "user",
+    clearInput = false,
+  }) {
+    const trimmed = String(text ?? "").trim();
     if (
-      !text ||
+      !trimmed ||
       sending ||
       disabled ||
       bootLoading ||
       !chatAgent?.sendUserMessage
     ) {
-      return;
+      return false;
     }
 
     const userMessage = makeMessage({
       role: "user",
-      content: text,
+      content: trimmed,
       status: "done",
+      meta: {
+        messageType,
+      },
     });
 
     const pendingAssistant = makeMessage({
@@ -179,15 +271,17 @@ export default function ChatPanel({
       status: "pending",
     });
 
+    scrollStateRef.current.autoFollow = true;
     setMessages((prev) => [...prev, userMessage, pendingAssistant]);
-    setInput("");
+    if (clearInput) setInput("");
     setSending(true);
 
     try {
       await chatAgent.sendUserMessage(
         {
-          text,
+          text: trimmed,
           messageId: pendingAssistant.id,
+          messageType,
         },
         {
           onThinkingStart: () => {
@@ -232,17 +326,38 @@ export default function ChatPanel({
           },
         }
       );
+      return true;
     } catch (err) {
       updateAssistantMessage(
         pendingAssistant.id,
         `请求失败：${err?.message ?? "unknown error"}`,
         "error"
       );
+      return false;
     } finally {
       setSending(false);
       textareaRef.current?.focus?.();
     }
   }
+
+  async function handleSend() {
+    await sendMessage({
+      text: input,
+      messageType: "user",
+      clearInput: true,
+    });
+  }
+
+  useEffect(() => {
+    if (!interactionRequest?.id) return;
+
+    sendMessage({
+      text: interactionRequest.text,
+      messageType: "interaction",
+      clearInput: false,
+    });
+    onInteractionRequestHandled?.(interactionRequest.id);
+  }, [interactionRequest?.id]);
 
   function handleInterrupt() {
     if (bootLoading) return;
@@ -273,7 +388,14 @@ export default function ChatPanel({
         </div>
       </div>
 
-      <div className="chat-history" ref={historyRef}>
+      <div
+        className="chat-history"
+        ref={historyRef}
+        onPointerDown={handleHistoryPointerDown}
+        onScroll={disableAutoFollowFromUserScroll}
+        onTouchMove={disableAutoFollowFromUserScroll}
+        onWheel={disableAutoFollowFromUserScroll}
+      >
         {bootLoading ? (
           <div className="chat-boot-state">
             <div className="chat-boot-state-inner">

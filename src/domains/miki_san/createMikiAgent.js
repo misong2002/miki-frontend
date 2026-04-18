@@ -1,6 +1,9 @@
 // src/domains/miki_san/createMikiAgent.js
 import { createCharacterRuntimeBridge } from "./motor/characterRuntimeBridge";
-import { createCharacterOrchestrator } from "./motor/characterOrchestrator";
+import {
+  createCharacterOrchestrator,
+  defaultPickIdlePresentation,
+} from "./motor/characterOrchestrator";
 import { createLanguageModule } from "./language/languageModule";
 import { emotionEngine } from "./body/bodyModule.js";
 import { emotionMapper } from "./motor/emotionMapper";
@@ -303,6 +306,7 @@ export function createMikiAgent({
   async function runAgentTurn({
     inputText,
     messageId,
+    messageType = "user",
     handlers = {},
     assistantMeta = {},
     assistantRecordLabel = "memory.recordAssistantMessage",
@@ -319,6 +323,7 @@ export function createMikiAgent({
       {
         text: inputText,
         messageId,
+        messageType,
       },
       handlers,
       languageOptions
@@ -573,6 +578,12 @@ export function createMikiAgent({
       typeof input === "string"
         ? createMessageId("miki")
         : input?.messageId ?? createMessageId("miki");
+    const messageType =
+      typeof input === "string"
+        ? "user"
+        : input?.messageType === "interaction" || input?.type === "interaction"
+          ? "interaction"
+          : "user";
 
     const trimmed = userText.trim();
 
@@ -584,11 +595,15 @@ export function createMikiAgent({
       };
     }
 
-    setUserActive("chat_input");
+    setUserActive(messageType === "interaction" ? "interaction" : "chat_input");
     await ensureMemoryBooted();
 
     await safeCall(
-      () => memory?.recordUserMessage?.(trimmed, { messageId }),
+      () => memory?.recordUserMessage?.(trimmed, {
+        messageId,
+        source: messageType === "interaction" ? "interaction" : null,
+        messageType,
+      }),
       null,
       "memory.recordUserMessage"
     );
@@ -596,6 +611,7 @@ export function createMikiAgent({
     const turnResult = await runAgentTurn({
       inputText: trimmed,
       messageId,
+      messageType,
       handlers,
       assistantMeta: {},
       assistantRecordLabel: "memory.recordAssistantMessage",
@@ -606,6 +622,7 @@ export function createMikiAgent({
       () =>
         memory?.rememberTurn?.({
           messageId,
+          messageType,
           user: trimmed,
           assistant: turnResult?.assistantText ?? "",
           interrupted: Boolean(turnResult?.interrupted),
@@ -771,6 +788,35 @@ export function createMikiAgent({
     return memory?.endTrainingRun?.(runId, status) ?? null;
   }
 
+  function triggerIdlePresentation(source = "manual_idle") {
+    const presentation = defaultPickIdlePresentation?.() ?? {};
+    const motionId = presentation.motion ? motionMapper(presentation.motion) : null;
+    const expressionId = presentation.expression
+      ? emotionMapper(presentation.expression)
+      : null;
+
+    const expressionApplied = expressionId
+      ? emotionEngine.setExpressionById(expressionId, {
+          source: "idle",
+          force: true,
+        }) === true
+      : false;
+    const motionApplied = motionId
+      ? emotionEngine.playMotionById(motionId, {
+          source: "idle",
+          force: true,
+        }) === true
+      : false;
+
+    return {
+      ok: expressionApplied || motionApplied,
+      source,
+      presentation,
+      expressionId,
+      motionId,
+    };
+  }
+
   async function handleLossUpdate(lossData) {
     return trainingCommentaryPipeline.handleLossUpdate(lossData);
   }
@@ -807,6 +853,7 @@ export function createMikiAgent({
 
       startTrainingRun,
       endTrainingRun,
+      triggerIdlePresentation,
       handleLossUpdate,
       subscribeContactFeed,
     };
@@ -846,6 +893,7 @@ export function createMikiAgent({
       battle: {
         startTrainingRun,
         endTrainingRun,
+        triggerIdlePresentation,
         handleLossUpdate,
         submitLossData: handleLossUpdate,
         subscribeContactFeed,

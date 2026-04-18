@@ -15,7 +15,7 @@ class SpeechEngine {
     this.listeners = new Set();
     this.mouthTimer = null;
     this.mouthPhase = 0;
-    this.mouthIntervalMs = 16;
+    this.mouthIntervalMs = 36;
 
     this.pattern = [
       0.08, 0.12, 0.16, 0.2, 0.24,

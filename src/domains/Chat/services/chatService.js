@@ -1,6 +1,6 @@
 import { buildApiUrl } from "../../../api";
 
-export async function sendChatStream(message, onToken, signal) {
+export async function sendChatStream(message, onToken, signal, options = {}) {
 
   const response = await fetch(buildApiUrl("/api/chat"), {
     method: "POST",
@@ -8,7 +8,8 @@ export async function sendChatStream(message, onToken, signal) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      message
+      message,
+      message_type: options?.messageType ?? "user"
     }),
     signal
   })

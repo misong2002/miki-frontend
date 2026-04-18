@@ -23,9 +23,19 @@ def create_app() -> Flask:
 
 app = create_app()
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 if __name__ == "__main__":
+    debug = _env_flag("MIKI_BACKEND_DEBUG", default=True)
     app.run(
         host="0.0.0.0",
         port=int(os.environ.get("MIKI_BACKEND_PORT", "38674")),
-        debug=True,
+        debug=debug,
+        use_reloader=_env_flag("MIKI_BACKEND_RELOAD", default=debug),
     )

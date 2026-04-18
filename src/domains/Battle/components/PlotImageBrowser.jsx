@@ -71,7 +71,7 @@ export default function PlotImageBrowser({
         type="button"
         onClick={() => setOpen((prev) => !prev)}
       >
-        {open ? "最小化图片浏览器" : `打开${title}`}
+        {open ? "Minimize" : `Open ${title}`}
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
@@ -99,6 +99,7 @@ export default function PlotImageBrowser({
                   onClick={() => setOpen(false)}
                 >
                   minimize
+                  
                 </button>
               </div>
             </div>

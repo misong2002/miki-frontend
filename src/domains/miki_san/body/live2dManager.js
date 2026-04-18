@@ -10,9 +10,12 @@ const DEFAULT_LAYOUT = {
   scale: 1.0,
 };
 
+const POINTER_FOCUS_PADDING_PX = 120;
+
 export class Live2DManager {
-  constructor(container) {
+  constructor(container, { onInteraction = null } = {}) {
     this.container = container;
+    this.onInteraction = typeof onInteraction === "function" ? onInteraction : null;
     this.app = null;
     this.model = null;
     this.currentModelKey = null;
@@ -20,6 +23,10 @@ export class Live2DManager {
 
     this._tickerBound = false;
     this._loadToken = 0;
+    this._pointerFocusBound = false;
+    this._pointerFocusActive = false;
+    this._pointerPosition = null;
+    this._modelPoint = new PIXI.Point();
 
     this.layoutState = {
       position: { ...DEFAULT_LAYOUT.position },
@@ -52,9 +59,12 @@ export class Live2DManager {
     if (!this._tickerBound) {
       this.app.ticker.add(() => {
         live2dController.applyMouthOverride();
+        this.updatePointerFocus();
       });
       this._tickerBound = true;
     }
+
+    this.bindPointerFocus();
 
     this.initialized = true;
   }
@@ -115,6 +125,7 @@ export class Live2DManager {
 
     this.model = nextModel;
     this.currentModelKey = modelKey;
+    this._pointerFocusActive = false;
 
     this.layout();
     live2dController.applyMouthOverride();
@@ -127,6 +138,162 @@ export class Live2DManager {
       return true;
     }
     return this.loadModel(modelKey);
+  }
+
+  bindPointerFocus() {
+    if (!this.app?.view || this._pointerFocusBound) return;
+
+    this._handlePointerMove = (event) => {
+      const point = this.getRendererPointFromPointerEvent(event);
+      if (!point) return;
+
+      this._pointerPosition = point;
+    };
+
+    this._handlePointerLeave = () => {
+      this._pointerPosition = null;
+      this.resetPointerFocus();
+    };
+
+    this._handlePointerTap = (event) => {
+      const point = this.getRendererPointFromPointerEvent(event);
+      if (!point) return;
+
+      const hitAreaId = this.getHitAreaIdAt(point.x, point.y);
+      const tapTypeByHitArea = {
+        HitAreaHead: "head_tap",
+        HitAreaBody: "body_tap",
+      };
+      const type = tapTypeByHitArea[hitAreaId];
+      if (!type) return;
+
+      this.emitInteraction({
+        type,
+        hitAreaId,
+        x: point.x,
+        y: point.y,
+      });
+    };
+
+    this.app.view.addEventListener("pointermove", this._handlePointerMove);
+    this.app.view.addEventListener("pointerleave", this._handlePointerLeave);
+    this.app.view.addEventListener("pointerup", this._handlePointerTap);
+    this._pointerFocusBound = true;
+  }
+
+  unbindPointerFocus() {
+    if (!this.app?.view || !this._pointerFocusBound) return;
+
+    this.app.view.removeEventListener("pointermove", this._handlePointerMove);
+    this.app.view.removeEventListener("pointerleave", this._handlePointerLeave);
+    this.app.view.removeEventListener("pointerup", this._handlePointerTap);
+
+    this._handlePointerMove = null;
+    this._handlePointerLeave = null;
+    this._handlePointerTap = null;
+    this._pointerPosition = null;
+    this._pointerFocusBound = false;
+    this._pointerFocusActive = false;
+  }
+
+  getRendererPointFromPointerEvent(event) {
+    if (!this.app?.view || !this.app?.renderer) return null;
+
+    const rect = this.app.view.getBoundingClientRect();
+    const width = Math.max(rect.width, 1);
+    const height = Math.max(rect.height, 1);
+
+    return {
+      x: ((event.clientX - rect.left) / width) * this.app.renderer.width,
+      y: ((event.clientY - rect.top) / height) * this.app.renderer.height,
+    };
+  }
+
+  getHitAreaIdAt(x, y) {
+    if (!this.model?.internalModel) return null;
+
+    const internalModel = this.model.internalModel;
+    const settings = internalModel.settings;
+    const hitAreas = settings?.hitAreas || settings?.HitAreas || [];
+
+    if (!Array.isArray(hitAreas) || hitAreas.length === 0) return null;
+
+    this._modelPoint.set(x, y);
+    this.model.toModelPosition(this._modelPoint, this._modelPoint);
+
+    const orderedHitAreas = [...hitAreas].sort((a, b) => {
+      const aId = a?.Id ?? a?.id;
+      const bId = b?.Id ?? b?.id;
+      if (aId === "HitAreaHead") return -1;
+      if (bId === "HitAreaHead") return 1;
+      return 0;
+    });
+
+    for (const area of orderedHitAreas) {
+      const areaId = area?.Id ?? area?.id;
+      if (!areaId) continue;
+
+      const drawableIndex =
+        internalModel.getDrawableIndex?.(areaId) ??
+        internalModel.coreModel?.getDrawableIndex?.(areaId) ??
+        -1;
+
+      if (drawableIndex < 0) continue;
+
+      const bounds = internalModel.getDrawableBounds?.(drawableIndex, {});
+      if (!bounds) continue;
+
+      const inside =
+        bounds.x <= this._modelPoint.x &&
+        this._modelPoint.x <= bounds.x + bounds.width &&
+        bounds.y <= this._modelPoint.y &&
+        this._modelPoint.y <= bounds.y + bounds.height;
+
+      if (inside) return areaId;
+    }
+
+    return null;
+  }
+
+  emitInteraction(payload) {
+    if (!this.onInteraction) return;
+
+    try {
+      this.onInteraction(payload);
+    } catch (err) {
+      console.warn("[Live2DManager] onInteraction failed:", err);
+    }
+  }
+
+  updatePointerFocus() {
+    if (!this.model || !this._pointerPosition) return;
+
+    const bounds = this.model.getBounds();
+    const padding = POINTER_FOCUS_PADDING_PX;
+    const left = bounds.x - padding;
+    const right = bounds.x + bounds.width + padding;
+    const top = bounds.y - padding;
+    const bottom = bounds.y + bounds.height + padding;
+    const { x, y } = this._pointerPosition;
+
+    if (x >= left && x <= right && y >= top && y <= bottom) {
+      this.model.focus(x, y);
+      this._pointerFocusActive = true;
+      return;
+    }
+
+    this.resetPointerFocus();
+  }
+
+  resetPointerFocus() {
+    if (!this._pointerFocusActive) return;
+
+    const focusController = this.model?.internalModel?.focusController;
+    if (focusController?.focus) {
+      focusController.focus(0, 0);
+    }
+
+    this._pointerFocusActive = false;
   }
 
   setLayout({
@@ -190,6 +357,8 @@ export class Live2DManager {
 
   destroy() {
     this._loadToken += 1;
+
+    this.unbindPointerFocus();
 
     if (this.model && this.app) {
       try {

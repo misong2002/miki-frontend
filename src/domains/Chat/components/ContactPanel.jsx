@@ -27,8 +27,8 @@ export default function ContactPanel({ messages = [] }) {
   return (
     <div className="contact-shell">
       <div className="contact-header">
-        <div className="contact-title">美樹さん的联络信息</div>
-        <div className="contact-subtitle">Sayaka communication channel</div>
+        <div className="contact-title"> Massage from 美樹さん</div>
+        <div className="contact-subtitle">Communication channel</div>
       </div>
 
       <div className="contact-history" ref={historyRef}>

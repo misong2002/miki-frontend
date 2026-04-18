@@ -10,8 +10,19 @@ export function createDeferred() {
   return { promise, resolve, reject };
 }
 
+export const LANGUAGE_MESSAGE_TYPES = Object.freeze({
+  USER: "user",
+  INTERACTION: "interaction",
+});
+
 function createLanguageMessageId() {
   return `lang-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeLanguageMessageType(value) {
+  return value === LANGUAGE_MESSAGE_TYPES.INTERACTION
+    ? LANGUAGE_MESSAGE_TYPES.INTERACTION
+    : LANGUAGE_MESSAGE_TYPES.USER;
 }
 
 function getCharsPerTick(queue) {
@@ -42,12 +53,14 @@ export function normalizeHearInput(input) {
     return {
       text: input,
       messageId: createLanguageMessageId(),
+      messageType: LANGUAGE_MESSAGE_TYPES.USER,
     };
   }
 
   return {
     text: input?.text ?? "",
     messageId: input?.messageId ?? createLanguageMessageId(),
+    messageType: normalizeLanguageMessageType(input?.messageType ?? input?.type),
   };
 }
 

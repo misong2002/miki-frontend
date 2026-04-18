@@ -10,7 +10,7 @@ from openai import OpenAI
 from config import OPENAI_MODEL
 from services.persona_service import get_system_prompt
 
-_DEFAULT_BASE_URL = "https://api.jiekou.ai/openai"
+_DEFAULT_BASE_URL = "https://api.deepseek.com"
 _client: OpenAI | None = None
 
 

@@ -13,10 +13,15 @@ from services.persona_service import get_system_prompt
 from services.response_service import error_payload
 
 
-MAX_RETRIEVED_LONG_TERM_ITEMS = 6
-MAX_RETRIEVAL_HISTORY_MESSAGES = 4
-MAX_PROMPT_HISTORY_MESSAGES = 20
+MAX_RETRIEVED_LONG_TERM_ITEMS = 4
+MAX_RETRIEVAL_HISTORY_MESSAGES = 3
+MAX_PROMPT_HISTORY_MESSAGES = 18
 MAX_PROMPT_MESSAGE_CHARS = 10000
+DEFAULT_MAX_COMPLETION_TOKENS = 3000
+EXTENDED_MAX_COMPLETION_TOKENS = 10000
+INTERACTION_PROMPT_HISTORY_MESSAGES = 4
+INTERACTION_PROMPT_MESSAGE_CHARS = 500
+INTERACTION_MAX_COMPLETION_TOKENS = 600
 GENERIC_QUERY_TERMS = {
     "我们",
     "你们",
@@ -722,7 +727,11 @@ def _retrieve_idea_catalog_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def build_memory_context(query_text: str) -> dict[str, Any]:
+def build_memory_context(
+    query_text: str,
+    *,
+    limit: int = MAX_RETRIEVED_LONG_TERM_ITEMS,
+) -> dict[str, Any]:
     db = get_long_term_db()
     keywords = _extract_query_keywords(query_text)
     level, strategy, selected_categories, matched_triggers = _classify_memory_query_level(
@@ -739,7 +748,10 @@ def build_memory_context(query_text: str) -> dict[str, Any]:
     elif level == "idea_catalog":
         retrieved = _retrieve_idea_catalog_bundle(db)
     else:
-        retrieved = retrieve_relevant_long_term_memories(query_text)
+        retrieved = retrieve_relevant_long_term_memories(query_text, limit=limit)
+
+    if limit > 0:
+        retrieved = retrieved[:limit]
 
     return {
         "level": level,
@@ -856,12 +868,44 @@ def get_long_term_memory_retrieval_payload(
 def build_chat_messages(
     user_message: str,
     session_id: str | None = None,
+    *,
+    message_type: str = "user",
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    history = get_recent_messages(limit=12, session_id=session_id)
-    retrieval_query = _build_retrieval_query(history, user_message)
-    context = build_memory_context(retrieval_query)
+    is_interaction = message_type == "interaction"
+    history_limit = (
+        INTERACTION_PROMPT_HISTORY_MESSAGES
+        if is_interaction
+        else MAX_PROMPT_HISTORY_MESSAGES
+    )
+    max_history_chars = (
+        INTERACTION_PROMPT_MESSAGE_CHARS
+        if is_interaction
+        else MAX_PROMPT_MESSAGE_CHARS
+    )
+    history = get_recent_messages(limit=history_limit, session_id=session_id)
+
+    if is_interaction:
+        context = {
+            "memory_block": "",
+            "debug_retrieval": {
+                "level": "interaction",
+                "strategy": "skip_long_term_memory_for_interaction",
+                "query": user_message,
+                "sensed_keywords": [],
+                "matched_triggers": [],
+                "hits": [],
+            },
+        }
+    else:
+        retrieval_query = _build_retrieval_query(history, user_message)
+        context = build_memory_context(retrieval_query)
+
     retrieved_memory_block = context["memory_block"]
-    prompt_history = _build_prompt_history(history)
+    prompt_history = _build_prompt_history(
+        history,
+        limit=history_limit,
+        max_chars_per_message=max_history_chars,
+    )
 
     messages = [
         {"role": "system", "content": get_system_prompt()}
@@ -886,11 +930,48 @@ def build_chat_messages(
     }
 
 
+def choose_max_completion_tokens(user_message: str, message_type: str = "user") -> int:
+    if message_type == "interaction":
+        return INTERACTION_MAX_COMPLETION_TOKENS
+
+    text = _normalize_text(user_message).lower()
+    extended_triggers = [
+        "证明",
+        "推导",
+        "数学",
+        "严格",
+        "详细",
+        "完整",
+        "长一点",
+        "展开",
+        "论证",
+        "derive",
+        "derivation",
+        "proof",
+        "prove",
+        "math",
+        "rigorous",
+        "detailed",
+        "in detail",
+        "step by step",
+        "long",
+        "explain fully",
+    ]
+
+    if any(trigger in text for trigger in extended_triggers):
+        return EXTENDED_MAX_COMPLETION_TOKENS
+
+    return DEFAULT_MAX_COMPLETION_TOKENS
+
+
 def create_chat_stream_response(
     data: dict[str, Any],
 ) -> Generator[str, None, None] | tuple[dict[str, Any], int]:
     user_message = data.get("message", "").strip()
     session_id = str(data.get("session_id") or "").strip() or None
+    message_type = str(data.get("message_type") or "user").strip()
+    if message_type not in {"user", "interaction"}:
+        message_type = "user"
 
     if not user_message:
         return error_payload("empty message"), 400
@@ -898,6 +979,11 @@ def create_chat_stream_response(
     messages, debug_retrieval = build_chat_messages(
         user_message,
         session_id=session_id,
+        message_type=message_type,
+    )
+    max_completion_tokens = choose_max_completion_tokens(
+        user_message,
+        message_type=message_type,
     )
 
     try:
@@ -905,7 +991,7 @@ def create_chat_stream_response(
             model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=16000,
+            max_tokens=max_completion_tokens,
             stream=True,
         )
     except Exception as e:
@@ -934,7 +1020,12 @@ def create_chat_stream_response(
                 full_reply += token
                 yield json.dumps({"token": token}, ensure_ascii=False) + "\n"
 
-            append_message("user", user_message, session_id=session_id)
+            append_message(
+                "user",
+                user_message,
+                session_id=session_id,
+                message_type=message_type,
+            )
             append_message("assistant", full_reply, session_id=session_id)
 
         except Exception as e:

@@ -11,19 +11,24 @@ import {
 import PlotImageBrowser from "./PlotImageBrowser";
 
 const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
-const SECTION_ORDER = [
+const RUN_MODE_TAB_ID = "run_mode";
+const PRIMARY_CONFIG_TABS = ["io_config", "model_config", "optimization_config"];
+const CONFIG_SECTION_ORDER = [
   "io_config",
   "model_config",
   "optimization_config",
   "cluster_config",
   "debug_config",
 ];
-const CONFIG_TABS = [
-  { id: "io_config", label: "io" },
-  { id: "model_config", label: "model" },
-  { id: "optimization_config", label: "optimzt" },
-  { id: "run mode", label: "run mode" },
-];
+const RUN_MODE_SECTION_BY_MODE = {
+  cluster: "cluster_config",
+  debug: "debug_config",
+};
+const SECTION_LABELS = {
+  io_config: "io",
+  model_config: "model",
+  optimization_config: "optimization",
+};
 const SECTION_TITLES = {
   io_config: "IO Config",
   model_config: "Model Config",
@@ -91,15 +96,126 @@ function toSessionId(item) {
   return item.session_id ?? "";
 }
 
+function splitHistorySessionId(sessionId) {
+  const value = String(sessionId || "").replace(/^history\//, "");
+  const [timestamp = "", epoch = ""] = value.split("/");
+  return { timestamp, epoch };
+}
+
+function historyTimestampOf(item) {
+  if (!item) return "";
+  if (typeof item === "object" && item.timestamp) return item.timestamp;
+  return splitHistorySessionId(toSessionId(item)).timestamp;
+}
+
+function historyEpochOf(item) {
+  if (!item) return "";
+  if (typeof item === "object" && item.epoch) return item.epoch;
+  return splitHistorySessionId(toSessionId(item)).epoch;
+}
+
+function groupHistorySessions(sessions) {
+  const groupsByTimestamp = new Map();
+
+  for (const item of sessions) {
+    const sessionId = toSessionId(item);
+    const timestamp = historyTimestampOf(item);
+    if (!sessionId || !timestamp) continue;
+
+    if (!groupsByTimestamp.has(timestamp)) {
+      groupsByTimestamp.set(timestamp, {
+        timestamp,
+        entries: [],
+      });
+    }
+
+    groupsByTimestamp.get(timestamp).entries.push({
+      item,
+      sessionId,
+      epoch: historyEpochOf(item),
+      label: toSessionLabel(item),
+    });
+  }
+
+  const groups = [...groupsByTimestamp.values()];
+  for (const group of groups) {
+    group.entries.sort((a, b) => {
+      const aKey = historyLeafSortKey(a.epoch);
+      const bKey = historyLeafSortKey(b.epoch);
+      return (
+        bKey.lossEpoch - aKey.lossEpoch
+        || bKey.modelEpoch - aKey.modelEpoch
+        || bKey.suffix - aKey.suffix
+        || b.sessionId.localeCompare(a.sessionId)
+      );
+    });
+  }
+
+  groups.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return groups;
+}
+
+function historyLeafSortKey(name) {
+  const text = String(name || "");
+  const match = text.match(/^epoch(\d+)\(model on epoch (\d+)\)(?:_(\d+))?$/);
+  if (match) {
+    return {
+      lossEpoch: Number(match[1]),
+      modelEpoch: Number(match[2]),
+      suffix: Number(match[3] || 0),
+    };
+  }
+  if (/^\d+$/.test(text)) {
+    return {
+      lossEpoch: Number(text),
+      modelEpoch: 0,
+      suffix: 0,
+    };
+  }
+  return {
+    lossEpoch: -1,
+    modelEpoch: -1,
+    suffix: -1,
+  };
+}
+
+function titleFromSectionName(sectionName) {
+  return SECTION_TITLES[sectionName] ?? sectionName.replace(/_/g, " ");
+}
+
+function getOrderedSectionNames(sections) {
+  const sectionNames = sections && typeof sections === "object" ? Object.keys(sections) : [];
+  return [
+    ...CONFIG_SECTION_ORDER.filter((sectionName) => sectionNames.includes(sectionName)),
+    ...sectionNames.filter((sectionName) => !CONFIG_SECTION_ORDER.includes(sectionName)),
+  ];
+}
+
+function getConfigTabs() {
+  return [
+    ...PRIMARY_CONFIG_TABS.map((sectionName) => ({
+      id: sectionName,
+      label: SECTION_LABELS[sectionName] ?? sectionName.replace(/_config$/, "").replace(/_/g, " "),
+    })),
+    { id: RUN_MODE_TAB_ID, label: "run_mode" },
+  ];
+}
+
 function normalizeConfig(config) {
   const sections = config?.sections && typeof config.sections === "object" ? config.sections : {};
   const normalizedSections = {};
 
-  for (const sectionName of SECTION_ORDER) {
+  for (const sectionName of getOrderedSectionNames(sections)) {
     normalizedSections[sectionName] =
       sections[sectionName] && typeof sections[sectionName] === "object"
         ? sections[sectionName]
         : {};
+  }
+
+  for (const sectionName of CONFIG_SECTION_ORDER) {
+    if (!normalizedSections[sectionName]) {
+      normalizedSections[sectionName] = {};
+    }
   }
 
   return {
@@ -131,6 +247,13 @@ const subPanelStyle = {
   overflow: "hidden",
 };
 
+const historyPanelStyle = {
+  ...subPanelStyle,
+  display: "grid",
+  gridTemplateRows: "auto minmax(0, 1fr) auto auto auto",
+  rowGap: 0,
+};
+
 const subHeaderStyle = {
   marginBottom: 10,
   flex: "0 0 auto",
@@ -157,16 +280,95 @@ const actionRowStyle = {
 
 const historySelectWrapStyle = {
   minHeight: 0,
-  flex: 1,
+  flex: "1 1 auto",
   display: "flex",
   flexDirection: "column",
+  overflow: "hidden",
 };
 
-const historySelectStyle = {
+const historyLabelStyle = {
+  flex: "0 0 auto",
+};
+
+const historyTreeStyle = {
   width: "100%",
-  flex: 1,
+  flex: "1 1 auto",
   minHeight: 0,
+  maxHeight: "100%",
+  overflowY: "auto",
+  overflowX: "hidden",
+  display: "block",
+  padding: 2,
   boxSizing: "border-box",
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 8,
+  background: "rgba(255,255,255,0.02)",
+};
+
+const historyGroupStyle = {
+  display: "block",
+  margin: 0,
+  padding: 0,
+};
+
+const historyRowStyle = {
+  width: "100%",
+  height: 32,
+  minHeight: 32,
+  maxHeight: 32,
+  flex: "none",
+  lineHeight: "20px",
+  margin: 0,
+  padding: "6px 8px",
+  border: 0,
+  borderRadius: 4,
+  background: "transparent",
+  color: "inherit",
+  textAlign: "left",
+  cursor: "pointer",
+  boxSizing: "border-box",
+  appearance: "none",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  overflow: "hidden",
+  transform: "none",
+};
+
+const historyRowActiveStyle = {
+  background: "rgba(125, 211, 252, 0.16)",
+  boxShadow: "inset 0 0 0 1px rgba(125, 211, 252, 0.48)",
+};
+
+const historyTimestampButtonActiveStyle = {
+  ...historyRowActiveStyle,
+};
+
+const historyTreeIconStyle = {
+  width: 14,
+  flex: "0 0 14px",
+  opacity: 0.78,
+  textAlign: "center",
+};
+
+const historyEpochButtonStyle = {
+  ...historyRowStyle,
+  paddingLeft: 28,
+  color: "rgba(31, 53, 84, 0.92)",
+};
+
+const historyEpochButtonActiveStyle = {
+  background: "rgba(134, 239, 172, 0.14)",
+  boxShadow: "inset 0 0 0 1px rgba(134, 239, 172, 0.46)",
+};
+
+const historyRowTextStyle = {
+  minWidth: 0,
+  flex: 1,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  lineHeight: "20px",
 };
 
 const configScrollStyle = {
@@ -187,7 +389,6 @@ const feedbackSlotStyle = {
 
 const tabRowStyle = {
   display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
   gap: 0,
   flex: "0 0 auto",
 };
@@ -250,6 +451,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   const [historySessions, setHistorySessions] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyLoadError, setHistoryLoadError] = useState("");
+  const [selectedHistoryTimestamp, setSelectedHistoryTimestamp] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [historyAction, setHistoryAction] = useState("");
   const [historyError, setHistoryError] = useState("");
@@ -273,9 +475,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
       const nextAvailableModels = Array.isArray(result?.available_models)
         ? result.available_models
         : [];
+      const nextTabs = getConfigTabs(nextConfig);
       setConfig(nextConfig);
       setOriginalConfig(cloneConfig(nextConfig));
       setAvailableModels(nextAvailableModels);
+      setActiveConfigTab((prev) =>
+        nextTabs.some((tab) => tab.id === prev) ? prev : nextTabs[0]?.id ?? RUN_MODE_TAB_ID
+      );
 
       if (silent) {
         setSaveMessage("reloaded");
@@ -303,13 +509,6 @@ export default function HyperParamPanel({ onBattle, disabled }) {
       const sessions = await fetchHistorySessions();
       const normalized = Array.isArray(sessions) ? sessions : [];
       setHistorySessions(normalized);
-
-      setSelectedSessionId((prev) => {
-        if (prev && normalized.some((item) => toSessionId(item) === prev)) {
-          return prev;
-        }
-        return normalized.length > 0 ? toSessionId(normalized[0]) : "";
-      });
 
       if (silent) {
         setHistoryMessage("history refreshed");
@@ -343,6 +542,42 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     };
   }, [loadConfig, loadHistorySessions]);
 
+  const historyGroups = useMemo(
+    () => groupHistorySessions(historySessions),
+    [historySessions]
+  );
+  const selectedHistoryGroup = useMemo(
+    () => historyGroups.find((group) => group.timestamp === selectedHistoryTimestamp) ?? null,
+    [historyGroups, selectedHistoryTimestamp]
+  );
+
+  useEffect(() => {
+    if (historyGroups.length === 0) {
+      if (selectedHistoryTimestamp) setSelectedHistoryTimestamp("");
+      if (selectedSessionId) setSelectedSessionId("");
+      return;
+    }
+
+    const hasTimestamp = historyGroups.some(
+      (group) => group.timestamp === selectedHistoryTimestamp
+    );
+    if (!hasTimestamp) {
+      setSelectedHistoryTimestamp("");
+      if (selectedSessionId) setSelectedSessionId("");
+    }
+  }, [historyGroups, selectedHistoryTimestamp, selectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedHistoryGroup) return;
+
+    const hasSession = selectedHistoryGroup.entries.some(
+      (entry) => entry.sessionId === selectedSessionId
+    );
+    if (!hasSession) {
+      setSelectedSessionId(selectedHistoryGroup.entries[0]?.sessionId ?? "");
+    }
+  }, [selectedHistoryGroup, selectedSessionId]);
+
   const historyBusy = Boolean(historyAction);
   const historyLoadingText = historyAction
     ? historyAction === "plot"
@@ -371,7 +606,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         sections: {
           ...prev.sections,
           [sectionName]: {
-            ...prev.sections[sectionName],
+            ...(prev.sections[sectionName] ?? {}),
             [key]: parsed,
           },
         },
@@ -383,7 +618,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         sections: {
           ...prev.sections,
           [sectionName]: {
-            ...prev.sections[sectionName],
+            ...(prev.sections[sectionName] ?? {}),
             [key]: rawValue,
           },
         },
@@ -398,7 +633,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     if (entries.length === 0) {
       return (
         <section key={sectionName} style={sectionBlockStyle}>
-          <h3 style={sectionTitleStyle}>{SECTION_TITLES[sectionName] ?? sectionName}</h3>
+          <h3 style={sectionTitleStyle}>{titleFromSectionName(sectionName)}</h3>
           <div className="panel-status">no fields</div>
         </section>
       );
@@ -406,7 +641,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
     return (
       <section key={sectionName} style={sectionBlockStyle}>
-        <h3 style={sectionTitleStyle}>{SECTION_TITLES[sectionName] ?? sectionName}</h3>
+        <h3 style={sectionTitleStyle}>{titleFromSectionName(sectionName)}</h3>
         {entries.map(([key, value]) => {
           const originalValue = originalConfig.sections?.[sectionName]?.[key];
           const kind = inferInputKind(originalValue);
@@ -496,7 +731,11 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   }
 
   const activeConfigContent = useMemo(() => {
-    if (activeConfigTab === "run mode") {
+    if (activeConfigTab === RUN_MODE_TAB_ID) {
+      const runModeOptions = RUN_MODE_OPTIONS.includes(config.run_mode)
+        ? RUN_MODE_OPTIONS
+        : [config.run_mode, ...RUN_MODE_OPTIONS];
+      const activeRunModeSection = RUN_MODE_SECTION_BY_MODE[config.run_mode];
       const blocks = [
         <section key="run-mode" style={sectionBlockStyle}>
           <h3 style={sectionTitleStyle}>Run Mode</h3>
@@ -512,7 +751,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
               disabled={configBusy}
               style={runModeSelectStyle}
             >
-              {RUN_MODE_OPTIONS.map((mode) => (
+              {runModeOptions.map((mode) => (
                 <option key={mode} value={mode}>
                   {mode}
                 </option>
@@ -522,17 +761,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         </section>,
       ];
 
-      if (config.run_mode === "cluster") {
-        blocks.push(renderSectionFields("cluster_config"));
-      }
-      if (config.run_mode === "debug") {
-        blocks.push(renderSectionFields("debug_config"));
-      }
-      if (config.run_mode === "local") {
+      if (activeRunModeSection) {
+        blocks.push(renderSectionFields(activeRunModeSection));
+      } else {
         blocks.push(
-          <section key="local-info" style={sectionBlockStyle}>
-            <h3 style={sectionTitleStyle}>Local Mode</h3>
-            <div className="panel-status">no extra fields for local mode</div>
+          <section key="local-run-mode" style={sectionBlockStyle}>
+            <h3 style={sectionTitleStyle}>Local Config</h3>
+            <div className="panel-status">local has no dedicated config file</div>
           </section>
         );
       }
@@ -564,9 +799,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
       const nextAvailableModels = Array.isArray(result?.available_models)
         ? result.available_models
         : availableModels;
+      const nextTabs = getConfigTabs(nextConfig);
       setConfig(nextConfig);
       setOriginalConfig(cloneConfig(nextConfig));
       setAvailableModels(nextAvailableModels);
+      setActiveConfigTab((prev) =>
+        nextTabs.some((tab) => tab.id === prev) ? prev : nextTabs[0]?.id ?? RUN_MODE_TAB_ID
+      );
       await afterSave?.(nextConfig);
       return nextConfig;
     } catch (err) {
@@ -640,19 +879,12 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
   return (
     <div className="panel param-panel train-config-panel" style={rootStyle}>
-      <section style={subPanelStyle}>
+      <section style={historyPanelStyle}>
         <div style={subHeaderStyle}>
           <h3 className="train-config-title" style={subTitleStyle}>
             History Management
           </h3>
-          <div className="train-config-subtitle" style={subSubtitleStyle}>
-            select a session, then initialize or plot
-          </div>
         </div>
-
-        <label className="train-config-label" htmlFor="history-session-select">
-          History Sessions
-        </label>
 
         <div style={historySelectWrapStyle}>
           {historyLoadError ? (
@@ -660,29 +892,71 @@ export default function HyperParamPanel({ onBattle, disabled }) {
           ) : historySessions.length === 0 && !historyLoading ? (
             <div className="panel-status">no history sessions found</div>
           ) : (
-            <select
-              id="history-session-select"
-              className="train-config-input"
-              size={6}
-              value={selectedSessionId}
-              onChange={(e) => {
-                setSelectedSessionId(e.target.value);
-                setHistoryError("");
-              }}
-              disabled={disabled || historyBusy || historyLoading}
-              style={historySelectStyle}
-            >
-              {historySessions.map((item) => {
-                const sessionId = toSessionId(item);
-                const label = toSessionLabel(item);
+            <>
+              <div
+                id="history-session-tree"
+                style={historyTreeStyle}
+                role="listbox"
+                aria-label="History Sessions"
+              >
+                {historyGroups.map((group) => {
+                  const selectedTimestamp = group.timestamp === selectedHistoryTimestamp;
 
-                return (
-                  <option key={sessionId} value={sessionId}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
+                  return (
+                    <div key={group.timestamp} style={historyGroupStyle}>
+                      <button
+                        type="button"
+                        style={{
+                          ...historyRowStyle,
+                          ...(selectedTimestamp ? historyTimestampButtonActiveStyle : {}),
+                        }}
+                        onClick={() => {
+                          if (selectedTimestamp) {
+                            setSelectedHistoryTimestamp("");
+                            setSelectedSessionId("");
+                            setHistoryError("");
+                            return;
+                          }
+                          setSelectedHistoryTimestamp(group.timestamp);
+                          setSelectedSessionId(group.entries[0]?.sessionId ?? "");
+                          setHistoryError("");
+                        }}
+                        disabled={disabled || historyBusy || historyLoading}
+                      >
+                        <span style={historyTreeIconStyle}>
+                          {selectedTimestamp ? "▾" : "▸"}
+                        </span>
+                        <span style={historyRowTextStyle}>{group.timestamp}</span>
+                      </button>
+
+                      {selectedTimestamp
+                        ? group.entries.map((entry) => {
+                            const selectedEpoch = entry.sessionId === selectedSessionId;
+                            return (
+                              <button
+                                key={entry.sessionId}
+                                type="button"
+                                style={{
+                                  ...historyEpochButtonStyle,
+                                  ...(selectedEpoch ? historyEpochButtonActiveStyle : {}),
+                                }}
+                                onClick={() => {
+                                  setSelectedSessionId(entry.sessionId);
+                                  setHistoryError("");
+                                }}
+                                disabled={disabled || historyBusy || historyLoading}
+                              >
+                                <span style={historyTreeIconStyle}>└</span>
+                                <span style={historyRowTextStyle}>{entry.epoch || "root"}</span>
+                              </button>
+                            );
+                          })
+                        : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
 
@@ -736,9 +1010,6 @@ export default function HyperParamPanel({ onBattle, disabled }) {
           <h2 className="train-config-title" style={subTitleStyle}>
             Training Plan
           </h2>
-          <div className="train-config-subtitle" style={subSubtitleStyle}>
-            edit and save directly
-          </div>
         </div>
 
         {loading && <div className="panel-status">loading...</div>}
@@ -746,8 +1017,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
         {!loading && !loadError && (
           <>
-            <div style={tabRowStyle}>
-              {CONFIG_TABS.map((tab, index) => {
+            <div
+              style={{
+                ...tabRowStyle,
+                gridTemplateColumns: `repeat(${getConfigTabs(config).length}, minmax(0, 1fr))`,
+              }}
+            >
+              {getConfigTabs(config).map((tab, index) => {
                 const active = activeConfigTab === tab.id;
                 return (
                   <button

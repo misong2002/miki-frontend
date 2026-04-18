@@ -35,6 +35,8 @@
  * @property {boolean} [interrupted]
  * @property {string | null} [messageId]
  * @property {string | null} [error]
+ * @property {string | null} [source]
+ * @property {string | null} [messageType]
  */
 
 /**

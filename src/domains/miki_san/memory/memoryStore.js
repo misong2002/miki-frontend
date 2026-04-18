@@ -263,6 +263,7 @@ export function appendMessage({
       messageId: meta.messageId ?? null,
       error: meta.error ?? null,
       source: meta.source ?? null,
+      messageType: meta.messageType ?? null,
     },
   };
 

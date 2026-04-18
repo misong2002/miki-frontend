@@ -34,6 +34,8 @@ export function detectFeatures(lossData) {
 
   const maxLoss = Math.max(...losses);
   const minLoss = Math.min(...losses);
+  const arg_maxLoss = losses.indexOf(maxLoss);
+  const number_of_points = losses.length;
   const globalRange = Math.max(maxLoss - minLoss, 1e-8);
 
   const earlyValues = head(
@@ -64,7 +66,7 @@ export function detectFeatures(lossData) {
    * rebound:
    * 起点已经很低，但窗口里出现了显著抬升。
    */
-  if (firstLoss < 0.3 * maxLoss && globalRange > firstLoss) {
+  if (firstLoss < 0.3 * maxLoss && globalRange > firstLoss && arg_maxLoss > 0.8 * number_of_points) {
     return "rebound";
   }
 
@@ -74,7 +76,8 @@ export function detectFeatures(lossData) {
    */
   if (
     lastLoss < 0.3 * firstLoss &&
-    firstLoss - lastLoss > 0.2 * globalRange
+    firstLoss - lastLoss > 0.5 * globalRange
+    && arg_maxLoss < 0.3 * number_of_points
   ) {
     return "rapid_drop";
   }

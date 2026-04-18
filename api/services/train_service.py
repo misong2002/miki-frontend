@@ -1,5 +1,7 @@
 # miki-frontend/api/services/training_service.py
 
+from __future__ import annotations
+
 import json
 import os
 import sys
@@ -42,6 +44,7 @@ SECTION_NAMES = [
     "optimization_config",
     "cluster_config",
     "debug_config",
+    "misc_config",
 ]
 
 SECTION_KEYS = {
@@ -53,6 +56,7 @@ SECTION_KEYS = {
         "outermost_linear",
         "first_omega_0",
         "hidden_omega_0",
+        "weight_gaussian_perturbation",
     ],
     "optimization_config": [
         "batch_size",
@@ -67,8 +71,118 @@ SECTION_KEYS = {
     ],
     "cluster_config": ["queue", "nodes", "walltime"],
     "debug_config": ["debug_sleep_ms", "debug_steps"],
+    "misc_config": [],
 }
 
+
+
+CONFIG_SECTION_FILE_MAP = {
+    "io_config": "config/training_config/io.json",
+    "model_config": "config/training_config/model.json",
+    "optimization_config": "config/training_config/optimization.json",
+    "cluster_config": "config/training_config/cluster.json",
+    "debug_config": "config/training_config/debug.json",
+}
+
+
+def _config_root(config_path: str | Path) -> Path:
+    path = Path(config_path).resolve()
+    if path.parent.name == "config":
+        return path.parent.parent
+    return path.parent
+
+
+def _resolve_config_ref(config_path: str | Path, ref: str | Path) -> Path:
+    ref_path = Path(ref)
+    if ref_path.is_absolute():
+        return ref_path
+    return _config_root(config_path) / ref_path
+
+
+def _load_json_object(path: str | Path) -> dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"config must be a JSON object: {path}")
+    return data
+
+
+def _load_train_manifest() -> dict[str, Any]:
+    if not TRAIN_CONFIG_PATH.exists():
+        return {}
+
+    try:
+        return _load_json_object(TRAIN_CONFIG_PATH)
+    except Exception:
+        return {}
+
+
+def _section_ref_from_manifest(
+    manifest: dict[str, Any],
+    section_name: str,
+) -> str:
+    raw_ref = manifest.get(section_name)
+    if isinstance(raw_ref, str) and raw_ref.strip():
+        return raw_ref
+    return CONFIG_SECTION_FILE_MAP[section_name]
+
+
+def _load_config_sections_from_files(
+    manifest: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    sections: dict[str, dict[str, Any]] = {}
+
+    for section_name in CONFIG_SECTION_FILE_MAP:
+        ref = _section_ref_from_manifest(manifest, section_name)
+        section_path = _resolve_config_ref(TRAIN_CONFIG_PATH, ref)
+        if not section_path.exists():
+            sections[section_name] = {}
+            continue
+        sections[section_name] = _load_json_object(section_path)
+
+    return sections
+
+
+def _write_config_sections_to_files(config: dict[str, Any]) -> dict[str, Any]:
+    sections = config.get("sections")
+    if not isinstance(sections, dict):
+        raise ValueError("config.sections must be an object")
+
+    existing_manifest = _load_train_manifest()
+    manifest: dict[str, Any] = {
+        key: value
+        for key, value in existing_manifest.items()
+        if key not in CONFIG_SECTION_FILE_MAP and key != "run_mode"
+    }
+    manifest.setdefault("version", existing_manifest.get("version", 2))
+    manifest["run_mode"] = config.get(
+        "run_mode",
+        existing_manifest.get("run_mode", "local"),
+    )
+
+    TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for section_name in CONFIG_SECTION_FILE_MAP:
+        ref = _section_ref_from_manifest(existing_manifest, section_name)
+        section_data = sections.get(section_name, {})
+        if section_data is None:
+            section_data = {}
+        if not isinstance(section_data, dict):
+            raise ValueError(f"{section_name} must be an object")
+
+        section_path = _resolve_config_ref(TRAIN_CONFIG_PATH, ref)
+        section_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(section_path, "w", encoding="utf-8") as f:
+            json.dump(section_data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+        manifest[section_name] = ref
+
+    with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+    return manifest
 
 
 def _load_path_config() -> dict[str, Any]:
@@ -181,6 +295,7 @@ def _read_train_log_tail(max_lines: int = 40) -> tuple[Path, list[str]]:
 
 def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
     remaining = dict(flat_config)
+    run_mode = remaining.pop("run_mode", "local")
     grouped_sections: dict[str, dict[str, Any]] = {}
 
     for section_name in SECTION_NAMES:
@@ -189,6 +304,8 @@ def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
             if key in remaining:
                 section[key] = remaining.pop(key)
         grouped_sections[section_name] = section
+
+    grouped_sections["misc_config"].update(remaining)
 
     default_model, _available_models = _load_available_models()
 
@@ -200,7 +317,7 @@ def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
         )
 
     return {
-        "run_mode": flat_config.get("run_mode", "local"),
+        "run_mode": run_mode,
         "sections": grouped_sections,
     }
 
@@ -212,7 +329,6 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
     sections = config.get("sections")
     if not isinstance(sections, dict):
         flat = dict(config)
-        flat.pop("layer_sizes", None)
         flat.setdefault("run_mode", "local")
         return flat
 
@@ -220,13 +336,16 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
         "run_mode": config.get("run_mode", "local"),
     }
 
-    for section_name in SECTION_NAMES:
+    ordered_section_names = [
+        *SECTION_NAMES,
+        *[name for name in sections.keys() if name not in SECTION_NAMES],
+    ]
+
+    for section_name in ordered_section_names:
         section = sections.get(section_name, {})
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
-            if key == "layer_sizes":
-                continue
             flat[key] = value
 
     return flat
@@ -262,14 +381,32 @@ def read_train_config():
     if not TRAIN_CONFIG_PATH.exists():
         return success_payload(
             path=str(TRAIN_CONFIG_PATH),
-            config=group_train_config({"model_name": default_model}),
+            config={
+                "run_mode": "local",
+                "sections": {
+                    section_name: {}
+                    for section_name in CONFIG_SECTION_FILE_MAP
+                },
+            },
             available_models=available_models,
             default_model=default_model,
         ), 200
 
     try:
-        config = load_train_config(TRAIN_CONFIG_PATH)
-        config["model_name"] = _normalize_model_name(config.get("model_name", default_model), default_model)
+        manifest = _load_json_object(TRAIN_CONFIG_PATH)
+        has_section_refs = any(
+            isinstance(manifest.get(section_name), str)
+            for section_name in CONFIG_SECTION_FILE_MAP
+        )
+
+        if has_section_refs:
+            sections = _load_config_sections_from_files(manifest)
+            config = {
+                "run_mode": manifest.get("run_mode", "local"),
+                "sections": sections,
+            }
+        else:
+            config = group_train_config(load_train_config(TRAIN_CONFIG_PATH))
     except Exception as e:
         return error_payload(
             f"failed to read train config: {e}",
@@ -278,7 +415,7 @@ def read_train_config():
 
     return success_payload(
         path=str(TRAIN_CONFIG_PATH),
-        config=group_train_config(config),
+        config=config,
         available_models=available_models,
         default_model=default_model,
     ), 200
@@ -291,6 +428,20 @@ def write_train_config(payload):
 
     try:
         default_model, available_models = _load_available_models()
+
+        if isinstance(config.get("sections"), dict):
+            _write_config_sections_to_files(config)
+            read_result, read_status = read_train_config()
+            if read_status != 200:
+                return read_result, read_status
+            return success_payload(
+                status="saved",
+                path=str(TRAIN_CONFIG_PATH),
+                config=read_result.get("config"),
+                available_models=available_models,
+                default_model=default_model,
+            ), 200
+
         flat_config = flatten_train_config(config)
         flat_config["model_name"] = _normalize_model_name(flat_config.get("model_name", default_model), default_model)
         TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -403,10 +554,15 @@ def start_training(payload: dict[str, Any]):
         if not BATTLE_SCRIPT_PATH.exists():
             return error_payload(f"train script not found: {BATTLE_SCRIPT_PATH}"), 500
 
-        config = build_train_config(payload)
-
-        TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        save_train_config(TRAIN_CONFIG_PATH, config)
+        if isinstance(payload.get("sections"), dict):
+            write_result, write_status = write_train_config({"config": payload})
+            if write_status != 200:
+                return write_result, write_status
+            build_train_config({})
+        else:
+            config = build_train_config(payload)
+            TRAIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            save_train_config(TRAIN_CONFIG_PATH, config)
 
         clear_loss_file()
 

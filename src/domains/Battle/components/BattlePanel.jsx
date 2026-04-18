@@ -24,16 +24,31 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
   );
 
   function extractHistorySessionId(result) {
-    const text = [
-      result?.session_id,
-      result?.history_session,
-      result?.stdout_preview,
-      result?.message,
-    ]
+    const directSession = String(
+      result?.history_session || result?.session_id || ""
+    ).trim();
+    if (/^\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+)$/.test(directSession)) {
+      return directSession;
+    }
+
+    const text = [result?.stdout_preview, result?.message]
       .filter(Boolean)
       .join("\n");
-    const matches = [...text.matchAll(/\b(\d{8}_\d{6})\b/g)];
-    return matches.at(-1)?.[1] ?? "";
+    const leafMatches = [
+      ...text.matchAll(
+        /(\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+))/g
+      ),
+    ];
+    if (leafMatches.length > 0) {
+      return leafMatches.at(-1)?.[1] ?? "";
+    }
+
+    if (/^\d{8}_\d{6}$/.test(directSession)) {
+      return directSession;
+    }
+
+    const timestampMatches = [...text.matchAll(/\b(\d{8}_\d{6})\b/g)];
+    return timestampMatches.at(-1)?.[1] ?? "";
   }
 
   async function handleSaveHistoryAndPlot() {
@@ -49,6 +64,15 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
 
       if (!sessionId) {
         throw new Error("history saved but session_id was not returned");
+      }
+
+      if (saveResult?.should_plot === false) {
+        setLastPlottedSessionId(sessionId);
+        setPlotRefreshKey((prev) => prev + 1);
+        setHistoryMessage(
+          `history saved: ${sessionId}; skipped plot because model epoch did not change`
+        );
+        return;
       }
 
       setHistoryMessage(`plotting ${sessionId}...`);
@@ -69,7 +93,7 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
     <div className="battle-shell">
       <div className="battle-header">
         <div>
-          <div className="battle-title">Magic Power Monitoring</div>
+          <div className="battle-title">Loss Monitoring</div>
           <div className="battle-subtitle">source: {sourcePath}</div>
         </div>
 
@@ -79,14 +103,14 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
             onClick={handleSaveHistoryAndPlot}
             disabled={exiting || Boolean(historyAction)}
           >
-            {historyAction ? "保存/绘图中..." : "保存历史并绘图"}
+            {historyAction ? "Saving/Plotting..." : "Save History & Plot"}
           </button>
           <button
             className="battle-exit-btn"
             onClick={onForceExit}
             disabled={exiting}
           >
-            {exiting ? "撤出中..." : "强行撤出战斗"}
+            {exiting ? "Exiting..." : "Force Exit"}
           </button>
         </div>
       </div>
@@ -98,23 +122,24 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
       )}
 
       <PlotImageBrowser
-        title="最新战斗图片"
+        title="Latest Battle Images"
         mode={lastPlottedSessionId ? "session" : "latest"}
         sessionId={lastPlottedSessionId}
         refreshKey={plotRefreshKey}
       />
 
       <div className="battle-chart-block">
-        <div className="battle-chart-title">魔力波动记录（loss vs epoch）</div>
+        <div className="battle-chart-title">Loss History（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={lossData}>
+            <LineChart data={lossData} margin={{ left: 12, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
               <XAxis dataKey="epoch" type="number" domain={["dataMin", "dataMax"]} />
               <YAxis
-              scale='log' 
-              domain={["auto", "auto"]} 
-              tickFormatter={(v) => v.toExponential(1)}
+                width={72}
+                scale="log"
+                domain={["auto", "auto"]}
+                tickFormatter={(v) => v.toExponential(3)}
               />
               <Tooltip  isAnimationActive={false}/>
               <Line
@@ -131,17 +156,21 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
       </div>
 
       <div className="battle-chart-block">
-        <div className="battle-chart-title">最近魔力波动（loss vs epoch）</div>
+        <div className="battle-chart-title">Recent loss（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={recentData}>
+            <LineChart data={recentData} margin={{ left: 12, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,140,180,0.18)" />
               <XAxis
                   dataKey="epoch"
                   type="number"
                   domain={["dataMin", "dataMax"]}
                 />
-              <YAxis domain={["auto", "auto"]} />
+              <YAxis
+                width={72}
+                domain={["auto", "auto"]}
+                tickFormatter={(v) => v.toExponential(3)}
+              />
               <Tooltip  isAnimationActive={false}/>
               <Line
                 type="monotone"

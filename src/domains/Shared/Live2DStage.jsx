@@ -9,6 +9,7 @@ export default function Live2DStage({
   modelKey,
   position = DEFAULT_POSITION,
   scale = DEFAULT_SCALE,
+  onInteraction = null,
 }) {
   const containerRef = useRef(null);
   const managerRef = useRef(null);
@@ -21,7 +22,9 @@ export default function Live2DStage({
       if (!containerRef.current) return;
 
       if (!managerRef.current) {
-        const manager = new Live2DManager(containerRef.current);
+        const manager = new Live2DManager(containerRef.current, {
+          onInteraction,
+        });
         managerRef.current = manager;
 
         initPromiseRef.current = manager.init();
@@ -53,7 +56,7 @@ export default function Live2DStage({
       managerRef.current = null;
       initPromiseRef.current = null;
     };
-  }, []);
+  }, [onInteraction]);
 
   useEffect(() => {
     async function switchModel() {

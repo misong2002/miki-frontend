@@ -1,7 +1,30 @@
 const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export function getApiBase() {
-  return RAW_API_BASE.replace(/\/+$/, "");
+  const base = RAW_API_BASE.replace(/\/+$/, "");
+
+  if (!base || typeof window === "undefined") {
+    return base;
+  }
+
+  try {
+    const apiUrl = new URL(base);
+    const pageHost = window.location.hostname;
+
+    if (
+      pageHost &&
+      pageHost !== "localhost" &&
+      pageHost !== "127.0.0.1" &&
+      (apiUrl.hostname === "localhost" || apiUrl.hostname === "127.0.0.1")
+    ) {
+      apiUrl.hostname = pageHost;
+      return apiUrl.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    return base;
+  }
+
+  return base;
 }
 
 export function buildApiUrl(path = "") {

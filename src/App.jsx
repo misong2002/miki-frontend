@@ -37,6 +37,24 @@ const MODE_LOADING = "__APP_MODE_LOADING__";
 const IS_DEV =
   typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 
+const WITCH_BACKGROUND_MODULES = import.meta.glob(
+  "/public/fig/witch/*.{png,jpg,jpeg,webp,avif,gif}",
+  {
+    eager: true,
+    query: "?url",
+    import: "default",
+  }
+);
+
+const WITCH_BACKGROUNDS = Object.values(WITCH_BACKGROUND_MODULES).map((url) =>
+  String(url).replace(/^\/public/, "")
+);
+
+function randomArrayItem(items) {
+  if (!items.length) return "";
+  return items[Math.floor(Math.random() * items.length)];
+}
+
 function BootShell({ text = "正在同步状态……" }) {
   return (
     <div className="boot-stage-screen">
@@ -50,6 +68,7 @@ function StageSurface({
   stageProps,
   hidden = false,
   loadingText = "",
+  onInteraction = null,
 }) {
   return (
     <main className={className}>
@@ -60,6 +79,7 @@ function StageSurface({
           modelKey={stageProps.modelKey}
           position={stageProps.position}
           scale={stageProps.scale}
+          onInteraction={onInteraction}
         />
       )}
     </main>
@@ -78,6 +98,9 @@ function ChatModeView({
   hideStageModel,
   chatAgent,
   stageProps,
+  interactionRequest,
+  onLive2DInteraction,
+  onInteractionRequestHandled,
 }) {
   return (
     <>
@@ -98,6 +121,8 @@ function ChatModeView({
           suppressFallbackGreeting={!chatBootReady}
           chatAgent={chatAgent}
           initialMessages={initialChatMessages}
+          interactionRequest={interactionRequest}
+          onInteractionRequestHandled={onInteractionRequestHandled}
         />
       </aside>
 
@@ -106,6 +131,7 @@ function ChatModeView({
         stageProps={stageProps}
         hidden={hideStageModel}
         loadingText={bootLoadingText}
+        onInteraction={onLive2DInteraction}
       />
     </>
   );
@@ -116,9 +142,34 @@ function BattleModeView({
   battleExiting,
   onForceExitBattle,
   stageProps,
+  onLive2DInteraction,
 }) {
+  const [battleBackgroundUrl, setBattleBackgroundUrl] = useState(() =>
+    randomArrayItem(WITCH_BACKGROUNDS)
+  );
+
+  useEffect(() => {
+    if (WITCH_BACKGROUNDS.length <= 1) return undefined;
+
+    const timer = window.setInterval(() => {
+      setBattleBackgroundUrl((current) => {
+        const candidates = WITCH_BACKGROUNDS.filter((item) => item !== current);
+        return randomArrayItem(candidates.length ? candidates : WITCH_BACKGROUNDS);
+      });
+    }, 11000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
-    <main className="battle-layout">
+    <main
+      className="battle-layout"
+      style={
+        battleBackgroundUrl
+          ? { "--battle-bg-image": `url("${battleBackgroundUrl}")` }
+          : undefined
+      }
+    >
       <aside className="battle-loss-column">
         <BattlePanel
           lossData={battle.lossData}
@@ -137,6 +188,7 @@ function BattleModeView({
           modelKey={stageProps.modelKey}
           position={stageProps.position}
           scale={stageProps.scale}
+          onInteraction={onLive2DInteraction}
         />
       </section>
     </main>
@@ -149,6 +201,7 @@ export default function App() {
   const [stageProps, setStageProps] = useState(DEFAULT_STAGE_PROPS);
   const [stageHydratedFromAgent, setStageHydratedFromAgent] = useState(false);
   const [whiteTransitionPhase, setWhiteTransitionPhase] = useState("idle");
+  const [chatInteractionRequest, setChatInteractionRequest] = useState(null);
   const lastStableModeRef = useRef(MODE_LOADING);
 
   const handleStageChange = useCallback((nextStageProps) => {
@@ -159,6 +212,32 @@ export default function App() {
   const { agent, initialStageProps } = useMikiAgent({
     onStageChange: handleStageChange,
   });
+
+  const handleLive2DInteraction = useCallback((payload) => {
+    const isHeadTap = payload?.type === "head_tap";
+    const isBodyTap = payload?.type === "body_tap";
+
+    if (mode === AppMode.CHAT) {
+      if (!isHeadTap) return;
+
+      setChatInteractionRequest({
+        id: `live2d-head-tap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        text: "（用户摸了摸你的头）",
+        payload,
+      });
+      return;
+    }
+
+    if (mode === AppMode.BATTLE && (isHeadTap || isBodyTap)) {
+      agent.battle?.triggerIdlePresentation?.("battle_model_tap");
+    }
+  }, [agent.battle, mode]);
+
+  const handleInteractionRequestHandled = useCallback((requestId) => {
+    setChatInteractionRequest((current) =>
+      current?.id === requestId ? null : current
+    );
+  }, []);
 
 
   useEffect(() => {
@@ -344,6 +423,9 @@ export default function App() {
           hideStageModel={shouldHideStageInChatShell}
           chatAgent={agent.chat}
           stageProps={stageProps}
+          interactionRequest={chatInteractionRequest}
+          onLive2DInteraction={handleLive2DInteraction}
+          onInteractionRequestHandled={handleInteractionRequestHandled}
         />
       ) : showBattleShell ? (
         <BattleModeView
@@ -351,6 +433,7 @@ export default function App() {
           battleExiting={battleExiting}
           onForceExitBattle={handleForceExitBattle}
           stageProps={stageProps}
+          onLive2DInteraction={handleLive2DInteraction}
         />
       ) : (
         <BootShell text="正在同步状态……" />

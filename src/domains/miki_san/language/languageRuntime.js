@@ -143,8 +143,7 @@ export function createLanguageRuntime({
   }
 
   /**
-   * 只结束“内容 promise”。
-   * 不会停掉 transfer/typewriter，也不会阻止 UI 继续把剩余文本播完。
+   * 结束当前语言 run，并让调用方收到最终状态。
    */
   function finalizeContent(run, payload = {}) {
     if (run.contentFinalized) return;
@@ -165,6 +164,24 @@ export function createLanguageRuntime({
         clearCurrentRun(run);
       }
     );
+  }
+
+  function discardPendingDisplayText(run) {
+    run.networkBuffer = "";
+    run.displayQueue = "";
+  }
+
+  function interruptRun(run) {
+    if (!run || run.contentFinalized) return false;
+
+    if (!run.streamFinished) {
+      run.abortController.abort();
+    }
+
+    discardPendingDisplayText(run);
+    finalizeInterrupted(run, run.displayedText);
+    finishDisplayDrain(run);
+    return true;
   }
 
   /**
@@ -289,6 +306,7 @@ export function createLanguageRuntime({
 
     const trimmed = String(input?.text ?? "").trim();
     const messageId = input?.messageId;
+    const messageType = input?.messageType;
     const awaitDisplayDrain = options.awaitDisplayDrain ?? true;
 
     if (!trimmed) {
@@ -336,7 +354,8 @@ export function createLanguageRuntime({
         (token) => {
           handleIncomingToken(run, token);
         },
-        run.abortController.signal
+        run.abortController.signal,
+        { messageType }
       );
 
       flushParserRemainder(run);
@@ -355,8 +374,7 @@ export function createLanguageRuntime({
       }
     } catch (err) {
       if (isAbortError(err)) {
-        flushParserRemainder(run);
-        moveAllPendingTextToDisplayed(run);
+        discardPendingDisplayText(run);
         finalizeInterrupted(run, run.displayedText);
         finishDisplayDrain(run);
         return run.deferred.promise;
@@ -389,9 +407,7 @@ export function createLanguageRuntime({
   }
 
   function interrupt() {
-    if (!currentRun) return false;
-    currentRun.abortController.abort();
-    return true;
+    return interruptRun(currentRun);
   }
 
   return {

@@ -1,4 +1,4 @@
-# MIKI Frontend v2.5 — Saber
+# MIKI Frontend v2.6 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,17 +6,17 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v2.5 — Saber
+## What's New in v2.6 — Saber
 
-Compared with **v2.4**, this version focuses on memory storage resilience, chat bootstrap flow, and more controllable battle/history tooling.
+Compared with **v2.5**, this version focuses on a stronger training workspace, richer Live2D interactions, and more reliable shared-server startup.
 
-- 🧠 **Long-term memory storage is now split into collection files**: memory data is migrated from a single monolithic JSON file into per-collection files with a manifest, metadata file, legacy backup path, and lock-guarded access.
-- 🔒 **Memory debug storage endpoints are safer**: raw storage browsing is now gated behind `MIKI_EXPOSE_MEMORY_STORAGE`, and memory routes use shared response helpers with stricter path validation.
-- 💬 **Chat boot and remind flow is smoother**: boot phases can be subscribed to, loading hints rotate during archive/compact phases, deferred remind can stream into the chat panel, and the fallback greeting is suppressed until bootstrap is ready.
-- 📈 **Training summaries use richer runtime evidence**: post-training prompts now combine sampled loss rows with `train.log` tail data, preserve rows without validation loss, and ask Miki to describe the finished run in first person.
-- 🛠️ **Backend command responses are more consistent**: history and training routes now share command runner and response helpers, returning bounded stdout/stderr previews instead of raw ad hoc payloads.
-- 💾 **Battle history tooling is easier to trigger mid-run**: the battle panel now has a save-history-and-plot action, and history panel in-progress states use loading styling until the command finishes.
-- ✨ **Boot and transition screens are clearer**: startup gating now waits for both battle and chat shell readiness, with updated boot visuals and slower whiteout timing.
+- 🧩 **Training config now supports file-backed sections**: the backend can read and write section references such as `io_config`, `model_config`, `optimization_config`, `cluster_config`, and `debug_config`, preserving grouped config files instead of flattening everything into one JSON blob.
+- 🗂️ **History management is easier to navigate**: history sessions are grouped by timestamp and expanded into epoch/model checkpoints, making initialize and plot actions less dependent on scanning a long flat select list.
+- 📉 **Battle monitoring is clearer**: battle charts now use explicit loss-focused labels, better chart margins, scientific tick formatting, and smarter save-history-and-plot handling when a model epoch has not changed.
+- 🖼️ **Chat and battle environments have full-scene backgrounds**: chat uses a classroom backdrop, battle uses rotating witch-space backgrounds, and the shared panel styling has been tightened for a cleaner glass UI.
+- 👆 **Live2D interaction reaches the agent loop**: tapping Miki in chat can send an interaction message, while tapping during battle can trigger battle presentation behavior.
+- 💬 **Chat scrolling behaves more predictably**: new messages auto-follow only when appropriate, while manual scroll, wheel, touch, and scrollbar interactions stop forced scrolling.
+- 🛠️ **Startup and remote access are more robust**: frontend/backend ports can be driven by environment variables, Flask debug/reloader behavior is configurable, and API URLs built with `localhost` can adapt to the page hostname when opened from a remote machine.
 
 ---
 
@@ -175,6 +175,7 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
+| v2.6 | Saber | File-backed training config sections, grouped history checkpoint navigation, refreshed chat/battle visuals, Live2D tap interactions, more stable chat scrolling, remote-safe API URL handling |
 | v2.5 | Saber | Collection-file long-term memory storage, safer memory debug endpoints, streaming chat bootstrap/remind flow, richer training summaries, consistent backend command responses, battle save-history-and-plot tooling |
 | v2.4 | Saber | Sectioned training config UI, backend-driven model selection, safer battle bootstrap recovery, cached battle contact restore, automatic post-training summaries, improved chat history prompting and speech runtime |
 | v2.0.5 | Saber | Fixed shared-server startup behavior, added safe local-memory import/migration support, suppressed repeated boot-remind replies, reduced high-volume memory debug logging |
@@ -188,6 +189,16 @@ Possible future extensions include:
 ---
 
 ## Archived Release Notes
+
+### v2.5 — Saber
+
+- 🧠 **Long-term memory storage is now split into collection files**: memory data is migrated from a single monolithic JSON file into per-collection files with a manifest, metadata file, legacy backup path, and lock-guarded access.
+- 🔒 **Memory debug storage endpoints are safer**: raw storage browsing is now gated behind `MIKI_EXPOSE_MEMORY_STORAGE`, and memory routes use shared response helpers with stricter path validation.
+- 💬 **Chat boot and remind flow is smoother**: boot phases can be subscribed to, loading hints rotate during archive/compact phases, deferred remind can stream into the chat panel, and the fallback greeting is suppressed until bootstrap is ready.
+- 📈 **Training summaries use richer runtime evidence**: post-training prompts now combine sampled loss rows with `train.log` tail data, preserve rows without validation loss, and ask Miki to describe the finished run in first person.
+- 🛠️ **Backend command responses are more consistent**: history and training routes now share command runner and response helpers, returning bounded stdout/stderr previews instead of raw ad hoc payloads.
+- 💾 **Battle history tooling is easier to trigger mid-run**: the battle panel now has a save-history-and-plot action, and history panel in-progress states use loading styling until the command finishes.
+- ✨ **Boot and transition screens are clearer**: startup gating now waits for both battle and chat shell readiness, with updated boot visuals and slower whiteout timing.
 
 ### v2.4 — Saber
 

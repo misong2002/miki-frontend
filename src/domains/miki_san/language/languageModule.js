@@ -7,7 +7,7 @@ export function createLanguageModule({
   streamChat = sendChatStream,
   parserFactory = createControlStreamParser,
   transferIntervalMs = 6,
-  typewriterIntervalMs = 2,
+  typewriterIntervalMs = 1,
   onCharacterEvent = null,
 } = {}) {
   const runtime = createLanguageRuntime({
@@ -34,6 +34,7 @@ export function createLanguageModule({
       {
         text: trimmed,
         messageId: normalized.messageId,
+        messageType: normalized.messageType,
       },
       handlers,
       options
