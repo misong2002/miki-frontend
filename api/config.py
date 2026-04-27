@@ -13,6 +13,7 @@ with SHARED_CONFIG_PATH.open("r", encoding="utf-8") as f:
 # 日志文件路径
 LOSS_FILE_PATH = MIKI_ROOT + "/data/loss.txt"
 TRAIN_LOG_PATH = MIKI_ROOT + "/log/train.log"
+TRAIN_LIVE_LOG_PATH = MIKI_ROOT + "/log/train.live.log"
 TRAIN_SESSION_PATH = MIKI_ROOT + "/data/training_session.json"
 
 # 配置文件
@@ -30,8 +31,11 @@ SAVE_HISTORY_SCRIPT_PATH = MIKI_ROOT + "/scripts/training_session/save_history.s
 INITIALIZE_SCRIPT_PATH = MIKI_ROOT + "/scripts/training_session/initialize.sh"
 PLOT_SCRIPT_PATH = MIKI_ROOT + "/scripts/plot/plot.py"
 
+
 # LLM配置
-OPENAI_MODEL = "deepseek-reasoner"
+OPENAI_FAST_MODEL = "deepseek-v4-flash"
+OPENAI_THINKING_MODEL = "deepseek-v4-pro"
+OPENAI_MODEL = OPENAI_THINKING_MODEL
 CHAT_SESSION_MEMORY_LIMIT = 12
 PROFILE_BUNDLE_MAX_FACTS = 20
 

@@ -7,86 +7,31 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { useState } from "react";
 import { APP_CONFIG } from "../../../config";
-import { saveTrainingHistory } from "../services/historyService";
-import { runHistoryPlot } from "../services/historyToolService";
 import PlotImageBrowser from "./PlotImageBrowser";
 
-export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting }) {
-  const [historyAction, setHistoryAction] = useState("");
-  const [historyMessage, setHistoryMessage] = useState("");
-  const [historyError, setHistoryError] = useState("");
-  const [lastPlottedSessionId, setLastPlottedSessionId] = useState("");
-  const [plotRefreshKey, setPlotRefreshKey] = useState(0);
+export default function BattlePanel({
+  lossData,
+  sourcePath,
+  onForceExit,
+  onSaveHistoryAndPlot,
+  exiting,
+  historyAction,
+  historyMessage,
+  historyError,
+  historyStatusKind,
+  lastPlottedSessionId,
+  plotRefreshKey,
+}) {
   const recentData = lossData.slice(
     -APP_CONFIG.battleCharts.recentWindowPoints
   );
-
-  function extractHistorySessionId(result) {
-    const directSession = String(
-      result?.history_session || result?.session_id || ""
-    ).trim();
-    if (/^\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+)$/.test(directSession)) {
-      return directSession;
-    }
-
-    const text = [result?.stdout_preview, result?.message]
-      .filter(Boolean)
-      .join("\n");
-    const leafMatches = [
-      ...text.matchAll(
-        /(\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+))/g
-      ),
-    ];
-    if (leafMatches.length > 0) {
-      return leafMatches.at(-1)?.[1] ?? "";
-    }
-
-    if (/^\d{8}_\d{6}$/.test(directSession)) {
-      return directSession;
-    }
-
-    const timestampMatches = [...text.matchAll(/\b(\d{8}_\d{6})\b/g)];
-    return timestampMatches.at(-1)?.[1] ?? "";
-  }
-
-  async function handleSaveHistoryAndPlot() {
-    if (historyAction || exiting) return;
-
-    setHistoryAction("save-plot");
-    setHistoryError("");
-    setHistoryMessage("saving history...");
-
-    try {
-      const saveResult = await saveTrainingHistory("config/train_config.json");
-      const sessionId = extractHistorySessionId(saveResult);
-
-      if (!sessionId) {
-        throw new Error("history saved but session_id was not returned");
-      }
-
-      if (saveResult?.should_plot === false) {
-        setLastPlottedSessionId(sessionId);
-        setPlotRefreshKey((prev) => prev + 1);
-        setHistoryMessage(
-          `history saved: ${sessionId}; skipped plot because model epoch did not change`
-        );
-        return;
-      }
-
-      setHistoryMessage(`plotting ${sessionId}...`);
-      const plotResult = await runHistoryPlot(sessionId);
-      setLastPlottedSessionId(sessionId);
-      setPlotRefreshKey((prev) => prev + 1);
-      setHistoryMessage(plotResult?.message || `plot finished: ${sessionId}`);
-    } catch (err) {
-      setHistoryError(err.message || "failed to save history and plot");
-      setHistoryMessage("");
-    } finally {
-      setHistoryAction("");
-    }
-  }
+  const historyBusy = Boolean(historyAction);
+  const historyStatusClass = historyError
+    ? "battle-tool-status battle-tool-status-error"
+    : historyStatusKind === "success"
+      ? "battle-tool-status battle-tool-status-success"
+      : "battle-tool-status";
 
   //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (
@@ -100,15 +45,15 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
         <div className="battle-header-actions">
           <button
             className="battle-exit-btn"
-            onClick={handleSaveHistoryAndPlot}
-            disabled={exiting || Boolean(historyAction)}
+            onClick={onSaveHistoryAndPlot}
+            disabled={exiting || historyBusy}
           >
-            {historyAction ? "Saving/Plotting..." : "Save History & Plot"}
+            {historyBusy ? "Saving/Plotting..." : "Save History & Plot"}
           </button>
           <button
             className="battle-exit-btn"
             onClick={onForceExit}
-            disabled={exiting}
+            disabled={exiting || historyBusy}
           >
             {exiting ? "Exiting..." : "Force Exit"}
           </button>
@@ -116,14 +61,14 @@ export default function BattlePanel({ lossData, sourcePath, onForceExit, exiting
       </div>
 
       {(historyMessage || historyError) && (
-        <div className={historyError ? "battle-tool-status battle-tool-status-error" : "battle-tool-status"}>
+        <div className={historyStatusClass}>
           {historyError || historyMessage}
         </div>
       )}
 
       <PlotImageBrowser
         title="Latest Battle Images"
-        mode={lastPlottedSessionId ? "session" : "latest"}
+        mode="latest"
         sessionId={lastPlottedSessionId}
         refreshKey={plotRefreshKey}
       />

@@ -280,6 +280,13 @@ def _list_plot_image_files(session_id: str):
     return output_dir, files
 
 
+def _has_plot_image_files(session_id: str) -> bool:
+    output_dir = _get_plot_output_dir(session_id)
+    if not output_dir.exists() or not output_dir.is_dir():
+        return False
+    return any(_is_plot_image_file(item) for item in output_dir.iterdir())
+
+
 def _latest_history_session_id() -> str:
     sessions = _list_history_sessions()
     return sessions[0]["session_id"] if sessions else ""
@@ -301,6 +308,70 @@ def _oldest_history_session_id_for_model_epoch(model_epoch: int) -> str:
         return session_id, -1, -1, -1
 
     return sorted(matching, key=sort_key)[0]
+
+
+def _history_leaf_epochs_from_session_id(session_id: str) -> tuple[int, int, int] | None:
+    if not session_id or "/" not in session_id:
+        return None
+
+    leaf_name = session_id.split("/", 1)[1]
+    match = re.fullmatch(
+        r"epoch(?P<loss>\d+)\(model on epoch (?P<model>\d+)\)(?:_(?P<suffix>\d+))?",
+        leaf_name,
+    )
+    if not match:
+        return None
+
+    return (
+        int(match.group("loss")),
+        int(match.group("model")),
+        int(match.group("suffix") or 0),
+    )
+
+
+def _latest_battle_plot_session_id() -> str:
+    candidates = []
+    for item in _list_history_sessions():
+        session_id = item["session_id"]
+        epochs = _history_leaf_epochs_from_session_id(session_id)
+        if epochs is None:
+            continue
+
+        if not _has_plot_image_files(session_id):
+            continue
+
+        loss_epoch, model_epoch, suffix = epochs
+        timestamp = session_id.split("/", 1)[0]
+        candidates.append(
+            {
+                "session_id": session_id,
+                "loss_epoch": loss_epoch,
+                "model_epoch": model_epoch,
+                "suffix": suffix,
+                "timestamp": timestamp,
+            }
+        )
+
+    if not candidates:
+        return ""
+
+    latest_timestamp = max(item["timestamp"] for item in candidates)
+    matching_timestamp = [
+        item for item in candidates if item["timestamp"] == latest_timestamp
+    ]
+    max_model_epoch = max(item["model_epoch"] for item in matching_timestamp)
+    matching_model = [
+        item for item in matching_timestamp if item["model_epoch"] == max_model_epoch
+    ]
+    min_loss_epoch = min(item["loss_epoch"] for item in matching_model)
+    matching_loss = [
+        item for item in matching_model if item["loss_epoch"] == min_loss_epoch
+    ]
+
+    return sorted(
+        matching_loss,
+        key=lambda item: (item["suffix"], item["timestamp"], item["session_id"]),
+    )[-1]["session_id"]
 
 
 def _current_model_epoch() -> int | None:
@@ -460,12 +531,10 @@ def list_history_plot_images():
 @history_bp.get("/plots/latest")
 def list_latest_history_plot_images():
     try:
-        model_epoch = _current_model_epoch()
-        session_id = (
-            _oldest_history_session_id_for_model_epoch(model_epoch)
-            if model_epoch is not None
-            else ""
-        )
+        session_id = _latest_battle_plot_session_id()
+        selected_epochs = _history_leaf_epochs_from_session_id(session_id)
+        loss_epoch = selected_epochs[0] if selected_epochs is not None else None
+        model_epoch = selected_epochs[1] if selected_epochs is not None else None
         if not session_id:
             return jsonify(success_payload(
                 session_id="",
@@ -473,16 +542,13 @@ def list_latest_history_plot_images():
                 files=[],
                 count=0,
                 model_epoch=model_epoch,
-                message=(
-                    "current model epoch not found"
-                    if model_epoch is None
-                    else f"no history plots found for model epoch {model_epoch}"
-                ),
+                message="no history plot images found",
             )), 200
 
         output_dir, files = _list_plot_image_files(session_id)
         return jsonify(success_payload(
             session_id=session_id,
+            loss_epoch=loss_epoch,
             model_epoch=model_epoch,
             output_dir=str(output_dir),
             files=files,

@@ -7,12 +7,14 @@ import {
   fetchLossData,
   fetchBattleStatus,
   fetchTrainingLossSummaryPrompt,
+  fetchTrainingLiveLog,
 } from "../domains/Battle/services/battleService";
 import {
   makeContactMessage,
   normalizeContactMessages,
 } from "../domains/Battle/utils/contactMessageUtils";
 import { saveTrainingHistory } from "../domains/Battle/services/historyService";
+import { runHistoryPlot } from "../domains/Battle/services/historyToolService";
 
 const INITIAL_BATTLE_STATUS_TIMEOUT_MS = 5000;
 const BATTLE_CONTACT_CACHE_KEY = "miki.battle.contactCache.v1";
@@ -74,15 +76,32 @@ function clearCachedBattleContacts() {
   }
 }
 
-async function trySaveTrainingHistory() {
-  try {
-    const result = await saveTrainingHistory("config/train_config.json");
-    console.log("[battle] save history success:", result);
-    return true;
-  } catch (err) {
-    console.error("[battle] save history failed:", err);
-    return false;
+function extractHistorySessionId(result) {
+  const directSession = String(
+    result?.history_session || result?.session_id || ""
+  ).trim();
+  if (/^\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+)$/.test(directSession)) {
+    return directSession;
   }
+
+  const text = [result?.stdout_preview, result?.message]
+    .filter(Boolean)
+    .join("\n");
+  const leafMatches = [
+    ...text.matchAll(
+      /(\d{8}_\d{6}\/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+))/g
+    ),
+  ];
+  if (leafMatches.length > 0) {
+    return leafMatches.at(-1)?.[1] ?? "";
+  }
+
+  if (/^\d{8}_\d{6}$/.test(directSession)) {
+    return directSession;
+  }
+
+  const timestampMatches = [...text.matchAll(/\b(\d{8}_\d{6})\b/g)];
+  return timestampMatches.at(-1)?.[1] ?? "";
 }
 
 async function tryBuildTrainingSummaryPrompt() {
@@ -113,6 +132,16 @@ function getSessionKey(session) {
   return null;
 }
 
+function isTrainLiveLogBoundaryLine(line) {
+  return line.startsWith("[DEBUG]") || line.startsWith("INFO:");
+}
+
+function formatSystemContactMessage(lines) {
+  const message = lines.join("\n").trim();
+  if (!message) return null;
+  return `（战场信息：\n\`\`\`\n${message}\n\`\`\`\n）`;
+}
+
 export function useBattleController({
   battleAgent,
   appAgent,
@@ -133,11 +162,19 @@ export function useBattleController({
 
   const [battleExiting, setBattleExiting] = useState(false);
   const [battleBootstrapResolved, setBattleBootstrapResolved] = useState(false);
+  const [historyAction, setHistoryAction] = useState("");
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [historyStatusKind, setHistoryStatusKind] = useState("idle");
+  const [lastPlottedSessionId, setLastPlottedSessionId] = useState("");
+  const [plotRefreshKey, setPlotRefreshKey] = useState(0);
 
   const pollTimerRef = useRef(null);
   const pollingRef = useRef(false);
   const modeRef = useRef(mode);
   const battleExitingRef = useRef(battleExiting);
+  const trainLiveLogOffsetRef = useRef(null);
+  const trainLiveLogBufferRef = useRef([]);
 
   /**
    * 当前活跃 session 的 key。
@@ -164,6 +201,37 @@ export function useBattleController({
     });
   }, [initialBattleState]);
 
+  function resetHistoryUiState() {
+    setHistoryAction("");
+    setHistoryMessage("");
+    setHistoryError("");
+    setHistoryStatusKind("idle");
+    setLastPlottedSessionId("");
+    setPlotRefreshKey(0);
+  }
+
+  function applyHistoryUiSuccess({
+    sessionId = "",
+    message = "",
+    refreshPlot = false,
+  } = {}) {
+    setHistoryError("");
+    setHistoryStatusKind("success");
+    setHistoryMessage(message);
+    if (sessionId) {
+      setLastPlottedSessionId(sessionId);
+    }
+    if (refreshPlot) {
+      setPlotRefreshKey((prev) => prev + 1);
+    }
+  }
+
+  function applyHistoryUiError(errorMessage) {
+    setHistoryError(errorMessage || "failed to save history and plot");
+    setHistoryMessage("");
+    setHistoryStatusKind("error");
+  }
+
   function markSessionRunning(session) {
     const nextKey = getSessionKey(session);
     if (!nextKey) return nextKey;
@@ -176,6 +244,95 @@ export function useBattleController({
     return nextKey;
   }
 
+  async function executeSaveHistoryAndPlot() {
+    setHistoryAction("save-plot");
+    setHistoryError("");
+    setHistoryStatusKind("loading");
+    setHistoryMessage("saving history...");
+
+    const saveResult = await saveTrainingHistory("config/train_config.json");
+    const sessionId = extractHistorySessionId(saveResult);
+
+    if (!sessionId) {
+      throw new Error("history saved but session_id was not returned");
+    }
+
+    if (saveResult?.should_plot === false) {
+      applyHistoryUiSuccess({
+        sessionId,
+        message: `history saved: ${sessionId}; skipped plot because model epoch did not change`,
+        refreshPlot: false,
+      });
+      return { ok: true, sessionId, plotted: false };
+    }
+
+    setHistoryMessage(`plotting ${sessionId}...`);
+    const plotResult = await runHistoryPlot(sessionId);
+    applyHistoryUiSuccess({
+      sessionId,
+      message: plotResult?.message || `plot finished: ${sessionId}`,
+      refreshPlot: true,
+    });
+    return { ok: true, sessionId, plotted: true };
+  }
+
+  async function runSaveHistoryAndPlot() {
+    if (historyAction) {
+      return { ok: false, skipped: true };
+    }
+
+    try {
+      return await executeSaveHistoryAndPlot();
+    } catch (err) {
+      console.error("[battle] save history / plot failed:", err);
+      applyHistoryUiError(err.message || "failed to save history and plot");
+      return { ok: false, error: err };
+    } finally {
+      setHistoryAction("");
+    }
+  }
+
+  function consumeAutoHistoryResult(autoHistory) {
+    if (!autoHistory || typeof autoHistory !== "object") return;
+
+    const sessionId = extractHistorySessionId(autoHistory);
+    const shouldPlot = autoHistory?.should_plot !== false;
+    const plotOk = autoHistory?.plot?.ok === true;
+    const plotSkipped = autoHistory?.plot?.skipped === true || shouldPlot === false;
+
+    if (autoHistory?.ok !== true) {
+      applyHistoryUiError(autoHistory?.error || "auto save_history failed");
+      return;
+    }
+
+    if (shouldPlot && !plotOk) {
+      applyHistoryUiError(autoHistory?.plot?.error || "auto plot failed");
+      return;
+    }
+
+    if (plotSkipped) {
+      applyHistoryUiSuccess({
+        sessionId,
+        message:
+          autoHistory?.plot?.message ||
+          (sessionId
+            ? `history saved: ${sessionId}; skipped plot because model epoch did not change`
+            : "history saved; skipped plot because model epoch did not change"),
+        refreshPlot: false,
+      });
+      return;
+    }
+
+    applyHistoryUiSuccess({
+      sessionId,
+      message:
+        autoHistory?.plot?.message ||
+        autoHistory?.message ||
+        (sessionId ? `plot finished: ${sessionId}` : "plot finished"),
+      refreshPlot: Boolean(sessionId),
+    });
+  }
+
   async function saveHistoryOnSessionClosedOnce(sessionKey = null) {
     const key = sessionKey ?? activeSessionKeyRef.current ?? "__unknown_session__";
 
@@ -183,7 +340,8 @@ export function useBattleController({
       return false;
     }
 
-    const ok = await trySaveTrainingHistory();
+    const result = await runSaveHistoryAndPlot();
+    const ok = result?.ok === true;
 
     if (ok) {
       savedClosedSessionKeyRef.current = key;
@@ -224,6 +382,55 @@ export function useBattleController({
     }
   }
 
+  function resetTrainingLiveLogState() {
+    trainLiveLogOffsetRef.current = null;
+    trainLiveLogBufferRef.current = [];
+  }
+
+  function flushTrainingLiveLogBuffer() {
+    const comment = formatSystemContactMessage(trainLiveLogBufferRef.current);
+    trainLiveLogBufferRef.current = [];
+
+    if (!comment) return;
+
+    setBattle((prev) => ({
+      ...prev,
+      contactMessages: [
+        ...prev.contactMessages,
+        makeContactMessage({ comment }),
+      ].slice(-100),
+    }));
+  }
+
+  async function pollTrainingLiveLog() {
+    try {
+      const result = await fetchTrainingLiveLog(trainLiveLogOffsetRef.current);
+
+      if (result?.truncated) {
+        trainLiveLogBufferRef.current = [];
+      }
+
+      if (Number.isFinite(result?.next_offset)) {
+        trainLiveLogOffsetRef.current = result.next_offset;
+      }
+
+      consumeAutoHistoryResult(result?.auto_history);
+
+      const lines = Array.isArray(result?.lines) ? result.lines : [];
+
+      for (const line of lines) {
+        if (isTrainLiveLogBoundaryLine(line)) {
+          flushTrainingLiveLogBuffer();
+          continue;
+        }
+
+        trainLiveLogBufferRef.current.push(line);
+      }
+    } catch (err) {
+      console.error("[battle] fetch train live log failed:", err);
+    }
+  }
+
   function stopLossPolling() {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -252,6 +459,7 @@ export function useBattleController({
     clearCachedBattleContacts();
     setBattle(resetBattleState());
     activeSessionKeyRef.current = null;
+    resetTrainingLiveLogState();
     setBattleExiting(false);
 
     appAgent?.setMode?.(appModeEnum.CHAT);
@@ -298,6 +506,7 @@ export function useBattleController({
 
       try {
         const { lossData } = await loadBattleLoss();
+        await pollTrainingLiveLog();
         const stillRunning = await checkBattleStatus();
 
         if (!stillRunning) return;
@@ -312,6 +521,7 @@ export function useBattleController({
   async function handleEnterBattleMode(trainConfig) {
     if (modeRef.current !== appModeEnum.CHAT) return;
 
+    resetHistoryUiState();
     appAgent?.setMode?.(appModeEnum.TRANSFORMING);
     setMode(appModeEnum.TRANSFORMING);
 
@@ -336,6 +546,7 @@ export function useBattleController({
     );
 
     if (startedSessionKey) {
+      resetTrainingLiveLogState();
       clearCachedBattleContacts();
       console.log("[battle/cache] cleared cached contact messages for new session:", startedSessionKey);
     }
@@ -416,9 +627,18 @@ export function useBattleController({
     clearCachedBattleContacts();
     setBattle(resetBattleState());
     activeSessionKeyRef.current = null;
+    resetTrainingLiveLogState();
     appAgent?.setMode?.(appModeEnum.CHAT);
     setMode(appModeEnum.CHAT);
     setBattleExiting(false);
+  }
+
+  async function handleSaveHistoryAndPlot() {
+    if (battleExitingRef.current || historyAction) {
+      return;
+    }
+
+    await runSaveHistoryAndPlot();
   }
 
   useEffect(() => {
@@ -442,7 +662,9 @@ export function useBattleController({
         if (status.running) {
           console.log("[battle/bootstrap] active training session detected, entering battle mode");
           console.log("[battle/bootstrap] app mode -> BATTLE", { reason: "startup_active_session" });
+          resetHistoryUiState();
           const sessionKey = markSessionRunning(status.session);
+          resetTrainingLiveLogState();
           stageAgent?.setStageProps?.(magicalStageProps);
 
           const introMessages = [
@@ -488,6 +710,7 @@ export function useBattleController({
           }
 
           clearCachedBattleContacts();
+          resetTrainingLiveLogState();
           stageAgent?.setStageProps?.(defaultStageProps);
           appAgent?.setMode?.(appModeEnum.CHAT);
           setMode(appModeEnum.CHAT);
@@ -582,7 +805,14 @@ export function useBattleController({
     battle,
     battleExiting,
     battleBootstrapResolved,
+    historyAction,
+    historyMessage,
+    historyError,
+    historyStatusKind,
+    lastPlottedSessionId,
+    plotRefreshKey,
     handleEnterBattleMode,
     handleForceExitBattle,
+    handleSaveHistoryAndPlot,
   };
 }

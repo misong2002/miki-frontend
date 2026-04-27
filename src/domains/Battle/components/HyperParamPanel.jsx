@@ -11,6 +11,11 @@ import {
 import PlotImageBrowser from "./PlotImageBrowser";
 
 const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
+const LOSS_NUMERICAL_INTEGRATION_OPTIONS = [
+  { value: "bin_sum", label: "bin_sum" },
+  { value: "adaptive", label: "adaptive" },
+  { value: "gauss_legendre", label: "gauss-legendre" },
+];
 const RUN_MODE_TAB_ID = "run_mode";
 const PRIMARY_CONFIG_TABS = ["io_config", "model_config", "optimization_config"];
 const CONFIG_SECTION_ORDER = [
@@ -36,6 +41,75 @@ const SECTION_TITLES = {
   cluster_config: "Cluster Config",
   debug_config: "Debug Config",
 };
+const OPTIMIZATION_INTEGRATION_KEYS = new Set([
+  "loss_numerical_integration",
+  "loss_integration_configs",
+]);
+const OPTIMIZATION_INTEGRATION_DEFAULTS = {
+  loss_numerical_integration: "bin_sum",
+};
+const INTEGRATION_MODE_DEFAULTS = {
+  bin_sum: {
+    loss_input1_min: -1,
+    loss_input1_max: 1,
+    loss_input2_min: -1,
+    loss_input2_max: 1,
+    loss_input1_bins: 108,
+    loss_input2_bins: 108,
+    num_E_nu_bins: 50,
+  },
+  adaptive: {
+    loss_input1_min: -1,
+    loss_input1_max: 1,
+    loss_input2_min: -1,
+    loss_input2_max: 1,
+    loss_input1_bins: 108,
+    loss_input2_bins: 108,
+    num_E_nu_bins: 50,
+    adaptive_max_depth: 10,
+    adaptive_min_events: 50,
+  },
+  gauss_legendre: {
+    loss_input1_min: -1,
+    loss_input1_max: 1,
+    loss_input2_min: -1,
+    loss_input2_max: 1,
+    num_E_nu_bins: 50,
+    gauss_legendre_input1_order: 108,
+    gauss_legendre_input2_order: 108,
+  },
+};
+const INTEGRATION_MODE_FIELD_LABELS = {
+  loss_input1_min: "input1_min",
+  loss_input1_max: "input1_max",
+  loss_input2_min: "input2_min",
+  loss_input2_max: "input2_max",
+  loss_input1_bins: "input1_bins",
+  loss_input2_bins: "input2_bins",
+  num_E_nu_bins: "E_nu_bins",
+  adaptive_max_depth: "adaptive_max_depth",
+  adaptive_min_events: "adaptive_min_events",
+  gauss_legendre_input1_order: "input1_order",
+  gauss_legendre_input2_order: "input2_order",
+};
+const LOSS_GRID_COORDINATES = {
+  linear: {
+    input1: { name: "x", unit: "unitless", defaultRange: [0.0, 3.0] },
+    input2: { name: "Q^2", unit: "GeV^2", defaultRange: [0.0, 15.0] },
+  },
+  log: {
+    input1: { name: "x", unit: "unitless", defaultRange: [0.0, 3.0] },
+    input2: { name: "log(Q^2)", unit: "unitless", defaultRange: [-6.0, 2.0] },
+  },
+  sqrt: {
+    input1: { name: "sqrt(x)", unit: "unitless", defaultRange: [0.0, 2.0] },
+    input2: { name: "sqrt(Q^2)", unit: "GeV", defaultRange: [0.0, 4.0] },
+  },
+  v1v2: {
+    input1: { name: "log(sqrt(Q^2 / x))", unit: "unitless", defaultRange: [-2.0, 2.0] },
+    input2: { name: "sqrt(Q^2)", unit: "GeV", defaultRange: [0.0, 4.0] },
+  },
+};
 
 function inferInputKind(value) {
   if (typeof value === "number") return "number";
@@ -52,6 +126,86 @@ function toDisplayValue(value) {
     return value ? "true" : "false";
   }
   return value ?? "";
+}
+
+function valueOrDefault(section, key) {
+  const value = section?.[key];
+  return value === undefined || value === null || value === ""
+    ? OPTIMIZATION_INTEGRATION_DEFAULTS[key]
+    : value;
+}
+
+function normalizeIntegrationMode(value) {
+  return String(value || "bin_sum") === "gauss-legendre"
+    ? "gauss_legendre"
+    : String(value || "bin_sum");
+}
+
+function normalizeLossIntegrationGrid(value) {
+  const grid = String(value || "log").trim().toLowerCase();
+  if (["logarithmic", "logspace", "x_logq2", "x-logq2"].includes(grid)) return "log";
+  if (["lin", "linspace", "xq2", "xq2_linear", "x_q2", "x-q2"].includes(grid)) return "linear";
+  if (["sqrt_x_q2", "sqrt_xq2"].includes(grid)) return "sqrt";
+  if (["v1_v2", "v1-v2"].includes(grid)) return "v1v2";
+  return LOSS_GRID_COORDINATES[grid] ? grid : "log";
+}
+
+function unitSuffix(unit) {
+  return unit && unit !== "unitless" ? ` [${unit}]` : "";
+}
+
+function formatCoordinateSummary(axis, coordinate) {
+  return `${axis}: ${coordinate.name}${unitSuffix(coordinate.unit)}`;
+}
+
+function formatDefaultRange(coordinate) {
+  return `default: ${coordinate.name} ${coordinate.defaultRange[0]} to ${coordinate.defaultRange[1]}${unitSuffix(coordinate.unit)}`;
+}
+
+function integrationFieldLabel(key, coordinates) {
+  const axisMatch = key.match(/(?:loss_|gauss_legendre_)?input([12])_(min|max|bins|order)$/);
+  if (!axisMatch) return INTEGRATION_MODE_FIELD_LABELS[key] ?? key;
+
+  const coordinate = coordinates[`input${axisMatch[1]}`];
+  const suffix = axisMatch[2];
+  return `${coordinate?.name ?? `input${axisMatch[1]}`}_${suffix}`;
+}
+
+function integrationFieldHint(key, coordinates) {
+  if (key === "loss_input1_min" || key === "loss_input1_max") {
+    return formatDefaultRange(coordinates.input1);
+  }
+  if (key === "loss_input2_min" || key === "loss_input2_max") {
+    return formatDefaultRange(coordinates.input2);
+  }
+  return "";
+}
+
+function integrationConfigFor(section, mode) {
+  const normalizedMode = normalizeIntegrationMode(mode);
+  const configs = section?.loss_integration_configs;
+  const modeConfig = configs && typeof configs === "object" ? configs[normalizedMode] : null;
+  return {
+    ...(INTEGRATION_MODE_DEFAULTS[normalizedMode] ?? {}),
+    ...(modeConfig && typeof modeConfig === "object" ? modeConfig : {}),
+  };
+}
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function positiveInteger(value, fallback = 1) {
+  return Math.max(1, Math.floor(finiteNumber(value, fallback)));
+}
+
+function compactNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(number);
 }
 
 function parseEditedValue(rawValue, originalValue) {
@@ -408,6 +562,41 @@ const runModeSelectStyle = {
   width: "100%",
 };
 
+const integrationGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 10,
+};
+
+const integrationEstimatorStyle = {
+  marginTop: 12,
+  padding: "10px 12px",
+  border: "1px solid rgba(154, 194, 237, 0.26)",
+  borderRadius: 8,
+  background: "rgba(255,255,255,0.36)",
+  color: "#365575",
+  fontSize: "0.86rem",
+  lineHeight: 1.45,
+};
+
+const integrationCoordinateStyle = {
+  marginTop: 10,
+  padding: "9px 10px",
+  border: "1px solid rgba(154, 194, 237, 0.22)",
+  borderRadius: 8,
+  background: "rgba(255,255,255,0.28)",
+  color: "#486581",
+  fontSize: "0.82rem",
+  lineHeight: 1.45,
+};
+
+const integrationInputHintStyle = {
+  marginTop: 5,
+  color: "#66819d",
+  fontSize: "0.75rem",
+  lineHeight: 1.25,
+};
+
 function FeedbackSlot({ error = "", message = "", loadingText = "" }) {
   if (error) {
     return (
@@ -626,9 +815,171 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     }
   }
 
+  function updateOptimizationIntegrationMode(nextMode) {
+    const normalizedMode = normalizeIntegrationMode(nextMode);
+    setConfig((prev) => {
+      const section = prev.sections.optimization_config ?? {};
+      const configs =
+        section.loss_integration_configs && typeof section.loss_integration_configs === "object"
+          ? section.loss_integration_configs
+          : {};
+
+      return {
+        ...prev,
+        sections: {
+          ...prev.sections,
+          optimization_config: {
+            ...section,
+            loss_numerical_integration: normalizedMode,
+            loss_integration_configs: {
+              ...configs,
+              [normalizedMode]: {
+                ...(INTEGRATION_MODE_DEFAULTS[normalizedMode] ?? {}),
+                ...(configs[normalizedMode] && typeof configs[normalizedMode] === "object" ? configs[normalizedMode] : {}),
+              },
+            },
+          },
+        },
+      };
+    });
+    setSaveError("");
+  }
+
+  function updateOptimizationIntegrationField(mode, key, rawValue) {
+    const parsedValue = rawValue === "" ? "" : Number(rawValue);
+
+    setConfig((prev) => {
+      const section = prev.sections.optimization_config ?? {};
+      const configs =
+        section.loss_integration_configs && typeof section.loss_integration_configs === "object"
+          ? section.loss_integration_configs
+          : {};
+      const currentModeConfig =
+        configs[mode] && typeof configs[mode] === "object" ? configs[mode] : {};
+
+      return {
+        ...prev,
+        sections: {
+          ...prev.sections,
+          optimization_config: {
+            ...section,
+            loss_integration_configs: {
+              ...configs,
+              [mode]: {
+                ...(INTEGRATION_MODE_DEFAULTS[mode] ?? {}),
+                ...currentModeConfig,
+                [key]: Number.isNaN(parsedValue) ? rawValue : parsedValue,
+              },
+            },
+          },
+        },
+      };
+    });
+    setSaveError("");
+  }
+
+  function renderIntegrationNumberInput(mode, key, modeConfig, coordinates) {
+    const inputId = `cfg-optimization-integration-${mode}-${key}`;
+    const value = modeConfig[key] ?? "";
+    const label = integrationFieldLabel(key, coordinates);
+    const hint = integrationFieldHint(key, coordinates);
+
+    return (
+      <div key={key} className="train-config-item">
+        <label className="train-config-label" htmlFor={inputId}>
+          {label}
+        </label>
+        <input
+          id={inputId}
+          className="train-config-input"
+          type="number"
+          value={value}
+          onChange={(e) => updateOptimizationIntegrationField(mode, key, e.target.value)}
+          disabled={configBusy}
+        />
+        {hint ? <div style={integrationInputHintStyle}>{hint}</div> : null}
+      </div>
+    );
+  }
+
+  function renderOptimizationIntegrationControls(section) {
+    const activeMode = normalizeIntegrationMode(valueOrDefault(section, "loss_numerical_integration"));
+    const lossGrid = normalizeLossIntegrationGrid(section?.loss_integration_grid);
+    const coordinates = LOSS_GRID_COORDINATES[lossGrid] ?? LOSS_GRID_COORDINATES.log;
+    const modeOptions = LOSS_NUMERICAL_INTEGRATION_OPTIONS.some((option) => option.value === activeMode)
+      ? LOSS_NUMERICAL_INTEGRATION_OPTIONS
+      : [{ value: activeMode, label: activeMode }, ...LOSS_NUMERICAL_INTEGRATION_OPTIONS];
+    const modeConfig = integrationConfigFor(section, activeMode);
+    const input1Bins = positiveInteger(modeConfig.loss_input1_bins, 1);
+    const input2Bins = positiveInteger(modeConfig.loss_input2_bins, 1);
+    const enuBins = positiveInteger(modeConfig.num_E_nu_bins, 1);
+    const adaptiveDepth = positiveInteger(modeConfig.adaptive_max_depth, 1);
+    const glInput1Order = positiveInteger(modeConfig.gauss_legendre_input1_order, 1);
+    const glInput2Order = positiveInteger(modeConfig.gauss_legendre_input2_order, 1);
+    const binSumCells = input1Bins * input2Bins * enuBins;
+    const adaptiveMaxCells = Math.pow(4, adaptiveDepth);
+    const gaussLegendreNodes = glInput1Order * glInput2Order * enuBins;
+    const commonRangeFields = [
+      "loss_input1_min",
+      "loss_input1_max",
+      "loss_input2_min",
+      "loss_input2_max",
+      "num_E_nu_bins",
+    ];
+    const modeFields =
+      activeMode === "gauss_legendre"
+        ? [...commonRangeFields, "gauss_legendre_input1_order", "gauss_legendre_input2_order"]
+        : activeMode === "adaptive"
+          ? [...commonRangeFields, "loss_input1_bins", "loss_input2_bins", "adaptive_max_depth", "adaptive_min_events"]
+          : [...commonRangeFields, "loss_input1_bins", "loss_input2_bins"];
+    const estimatorText =
+      activeMode === "gauss_legendre"
+        ? `estimated nodes: ${compactNumber(gaussLegendreNodes)} (${glInput1Order} x ${glInput2Order} x ${enuBins})`
+        : activeMode === "adaptive"
+          ? `max leaf cells: ${compactNumber(adaptiveMaxCells)}; max eval nodes: ${compactNumber(adaptiveMaxCells * enuBins)}`
+          : `estimated cells: ${compactNumber(binSumCells)} (${input1Bins} x ${input2Bins} x ${enuBins})`;
+
+    return (
+      <section key="optimization-integration" style={sectionBlockStyle}>
+        <h3 style={sectionTitleStyle}>Loss Integration</h3>
+        <div className="train-config-item">
+          <label className="train-config-label" htmlFor="train-config-loss-integration-mode">
+            loss_numerical_integration
+          </label>
+          <select
+            id="train-config-loss-integration-mode"
+            className="train-config-input"
+            value={activeMode}
+            onChange={(e) => updateOptimizationIntegrationMode(e.target.value)}
+            disabled={configBusy}
+            style={runModeSelectStyle}
+          >
+            {modeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={integrationCoordinateStyle}>
+          {formatCoordinateSummary("input1", coordinates.input1)}
+          <br />
+          {formatCoordinateSummary("input2", coordinates.input2)}
+        </div>
+        <div style={{ height: 12 }} />
+        <div style={integrationGridStyle}>
+          {modeFields.map((key) => renderIntegrationNumberInput(activeMode, key, modeConfig, coordinates))}
+        </div>
+        <div style={integrationEstimatorStyle}>{estimatorText}</div>
+      </section>
+    );
+  }
+
   function renderSectionFields(sectionName) {
     const section = config.sections?.[sectionName] ?? {};
-    const entries = Object.entries(section);
+    const entries = Object.entries(section).filter(
+      ([key]) => sectionName !== "optimization_config" || !OPTIMIZATION_INTEGRATION_KEYS.has(key)
+    );
 
     if (entries.length === 0) {
       return (
@@ -773,6 +1124,14 @@ export default function HyperParamPanel({ onBattle, disabled }) {
       }
 
       return blocks;
+    }
+
+    if (activeConfigTab === "optimization_config") {
+      const section = config.sections?.optimization_config ?? {};
+      return [
+        renderSectionFields(activeConfigTab),
+        renderOptimizationIntegrationControls(section),
+      ];
     }
 
     return [renderSectionFields(activeConfigTab)];

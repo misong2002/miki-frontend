@@ -57,3 +57,17 @@ export async function fetchTrainingLossSummaryPrompt() {
 
   return await response.json();
 }
+
+export async function fetchTrainingLiveLog(offset = null) {
+  const query =
+    Number.isFinite(offset) && offset >= 0
+      ? `?offset=${encodeURIComponent(offset)}`
+      : "";
+  const response = await fetch(buildApiUrl(`/api/battle/train-live-log${query}`));
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch train live log: ${response.status}`);
+  }
+
+  return await response.json();
+}

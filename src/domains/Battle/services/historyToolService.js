@@ -65,7 +65,13 @@ function normalizePlotImageFiles(files = []) {
 
   return files.map((item) => ({
     ...item,
-    url: item?.url ? buildApiUrl(item.url) : "",
+    url: item?.url
+      ? buildApiUrl(
+          `${item.url}${item.url.includes("?") ? "&" : "?"}v=${encodeURIComponent(
+            item?.mtime ?? ""
+          )}`
+        )
+      : "",
   }));
 }
 

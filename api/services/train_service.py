@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import sys
+import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +22,12 @@ from config import (
     TRAIN_SESSION_PATH,
     LOSS_FILE_PATH,
     TRAIN_LOG_PATH,
+    TRAIN_LIVE_LOG_PATH,
     BATTLE_SCRIPT_PATH,
     BATTLE_STOP_SCRIPT_PATH,
+    HISTORY_ROOT,
+    SAVE_HISTORY_SCRIPT_PATH,
+    PLOT_SCRIPT_PATH,
     BATTLE_RECENT_WINDOW_POINTS,
     BATTLE_GLOBAL_SNAPSHOT_MAX_POINTS,
 )
@@ -30,8 +37,12 @@ TRAIN_CONFIG_PATH = Path(TRAIN_CONFIG_PATH)
 TRAIN_SESSION_PATH = Path(TRAIN_SESSION_PATH)
 LOSS_FILE_PATH = Path(LOSS_FILE_PATH)
 TRAIN_LOG_PATH = Path(TRAIN_LOG_PATH)
+TRAIN_LIVE_LOG_PATH = Path(TRAIN_LIVE_LOG_PATH)
 BATTLE_SCRIPT_PATH = Path(BATTLE_SCRIPT_PATH)
 BATTLE_STOP_PATH = Path(BATTLE_STOP_SCRIPT_PATH)
+HISTORY_DIR = Path(HISTORY_ROOT)
+SAVE_HISTORY_SCRIPT = Path(SAVE_HISTORY_SCRIPT_PATH)
+PLOT_SCRIPT = Path(PLOT_SCRIPT_PATH)
 PATH_CONFIG_PATH = MIKI_ROOT / "config" / "path.json"
 AVAILABLE_MODELS_PATH = MIKI_ROOT / "config" / "available_models.json"
 sys.path.insert(0, str(MIKI_ROOT))
@@ -64,6 +75,8 @@ SECTION_KEYS = {
         "log_every",
         "loss_mode",
         "loss_integration_grid",
+        "loss_numerical_integration",
+        "loss_integration_configs",
         "lr",
         "rounds",
         "seed",
@@ -83,6 +96,38 @@ CONFIG_SECTION_FILE_MAP = {
     "cluster_config": "config/training_config/cluster.json",
     "debug_config": "config/training_config/debug.json",
 }
+
+OPTIMIZATION_INTEGRATION_CONFIG_FILE_MAP = {
+    "bin_sum": "config/training_config/optimization/bin_sum.json",
+    "adaptive": "config/training_config/optimization/adaptive.json",
+    "gauss_legendre": "config/training_config/optimization/gauss_legendre.json",
+}
+OPTIMIZATION_INTEGRATION_CONFIG_KEYS = [
+    "loss_input1_min",
+    "loss_input1_max",
+    "loss_input2_min",
+    "loss_input2_max",
+    "loss_input1_bins",
+    "loss_input2_bins",
+    "num_E_nu_bins",
+    "adaptive_max_depth",
+    "adaptive_min_events",
+    "adaptive_min_cell_area",
+    "adaptive_refine_mode",
+    "adaptive_gradient_coarse_bins",
+    "adaptive_gradient_smooth_sigma",
+    "adaptive_gradient_quantile",
+    "adaptive_gradient_eps",
+    "gauss_legendre_input1_order",
+    "gauss_legendre_input2_order",
+]
+
+_AUTO_HISTORY_LOCK = threading.Lock()
+_AUTO_HISTORY_SESSION_RE = re.compile(
+    r"history_session=(\d{8}_\d{6}/(?:epoch\d+\(model on epoch \d+\)(?:_\d+)?|\d+))"
+)
+_HISTORY_SESSION_RE = re.compile(r"^\d{8}_\d{6}$")
+_HISTORY_LEAF_NAME_RE = re.compile(r"^epoch\d+\(model on epoch \d+\)(?:_\d+)?$|^\d+$")
 
 
 def _config_root(config_path: str | Path) -> Path:
@@ -140,6 +185,25 @@ def _load_config_sections_from_files(
             continue
         sections[section_name] = _load_json_object(section_path)
 
+    optimization = sections.get("optimization_config")
+    if isinstance(optimization, dict):
+        integration_refs = optimization.get("loss_integration_configs")
+        if not isinstance(integration_refs, dict):
+            integration_refs = OPTIMIZATION_INTEGRATION_CONFIG_FILE_MAP
+
+        integration_configs = {}
+        for mode, default_ref in OPTIMIZATION_INTEGRATION_CONFIG_FILE_MAP.items():
+            ref = integration_refs.get(mode, default_ref)
+            if not isinstance(ref, str) or not ref.strip():
+                ref = default_ref
+            integration_path = _resolve_config_ref(TRAIN_CONFIG_PATH, ref)
+            integration_configs[mode] = (
+                _load_json_object(integration_path)
+                if integration_path.exists()
+                else {}
+            )
+        optimization["loss_integration_configs"] = integration_configs
+
     return sections
 
 
@@ -170,11 +234,43 @@ def _write_config_sections_to_files(config: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(section_data, dict):
             raise ValueError(f"{section_name} must be an object")
 
+        integration_configs = None
+        if section_name == "optimization_config":
+            section_data = dict(section_data)
+            raw_integration_configs = section_data.pop("loss_integration_configs", {})
+            integration_configs = (
+                raw_integration_configs
+                if isinstance(raw_integration_configs, dict)
+                else {}
+            )
+            section_data["loss_integration_configs"] = OPTIMIZATION_INTEGRATION_CONFIG_FILE_MAP
+
         section_path = _resolve_config_ref(TRAIN_CONFIG_PATH, ref)
         section_path.parent.mkdir(parents=True, exist_ok=True)
         with open(section_path, "w", encoding="utf-8") as f:
             json.dump(section_data, f, ensure_ascii=False, indent=2)
             f.write("\n")
+
+        if integration_configs is not None:
+            for mode, integration_ref in OPTIMIZATION_INTEGRATION_CONFIG_FILE_MAP.items():
+                integration_path = _resolve_config_ref(TRAIN_CONFIG_PATH, integration_ref)
+                if mode in integration_configs:
+                    integration_data = integration_configs.get(mode, {})
+                else:
+                    integration_data = (
+                        _load_json_object(integration_path)
+                        if integration_path.exists()
+                        else {}
+                    )
+                if integration_data is None:
+                    integration_data = {}
+                if not isinstance(integration_data, dict):
+                    raise ValueError(f"loss_integration_configs.{mode} must be an object")
+
+                integration_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(integration_path, "w", encoding="utf-8") as f:
+                    json.dump(integration_data, f, ensure_ascii=False, indent=2)
+                    f.write("\n")
 
         manifest[section_name] = ref
 
@@ -221,6 +317,294 @@ def _get_loss_file_path() -> Path:
 
 def _get_train_log_path() -> Path:
     return _resolve_runtime_path("log_file", TRAIN_LOG_PATH)
+
+
+def _get_train_live_log_path() -> Path:
+    return TRAIN_LIVE_LOG_PATH
+
+
+def _leaf_sort_key(leaf_name: str) -> tuple[int, int, int]:
+    if leaf_name.isdigit():
+        return int(leaf_name), -1, 0
+
+    match = re.fullmatch(
+        r"epoch(?P<loss>\d+)\(model on epoch (?P<model>\d+)\)(?:_(?P<suffix>\d+))?",
+        leaf_name,
+    )
+    if match:
+        return (
+            int(match.group("loss")),
+            int(match.group("model")),
+            int(match.group("suffix") or 0),
+        )
+
+    return -1, -1, -1
+
+
+def _list_history_session_ids() -> list[str]:
+    if not HISTORY_DIR.exists():
+        return []
+
+    items = []
+    for item in HISTORY_DIR.iterdir():
+        if not item.is_dir():
+            continue
+
+        timestamp = item.name
+        if not _HISTORY_SESSION_RE.fullmatch(timestamp):
+            continue
+
+        for child in item.iterdir():
+            if not child.is_dir() or not _HISTORY_LEAF_NAME_RE.fullmatch(child.name):
+                continue
+            items.append(f"{timestamp}/{child.name}")
+
+    items.sort(
+        key=lambda session_id: (
+            session_id.split("/", 1)[0],
+            *_leaf_sort_key(session_id.split("/", 1)[1]),
+        ),
+        reverse=True,
+    )
+    return items
+
+
+def _latest_history_session_id() -> str:
+    sessions = _list_history_session_ids()
+    return sessions[0] if sessions else ""
+
+
+def _latest_auto_history_session_id() -> str:
+    if not HISTORY_DIR.exists():
+        return ""
+
+    candidates: list[str] = []
+    for marker in HISTORY_DIR.rglob(".auto"):
+        try:
+            resolved_marker = marker.resolve()
+            resolved_marker.relative_to(HISTORY_DIR.resolve())
+            session_path = marker.parent.resolve()
+            session_path.relative_to(HISTORY_DIR.resolve())
+        except Exception:
+            continue
+
+        if not marker.is_file() and not marker.is_symlink():
+            continue
+
+        relative_path = session_path.relative_to(HISTORY_DIR.resolve())
+        session_id = str(relative_path).replace(os.sep, "/")
+        if "/" not in session_id:
+            continue
+        candidates.append(session_id)
+
+    if not candidates:
+        return ""
+
+    candidates.sort(
+        key=lambda session_id: (
+            session_id.split("/", 1)[0],
+            *_leaf_sort_key(session_id.split("/", 1)[1]),
+        ),
+        reverse=True,
+    )
+    return candidates[0]
+
+
+def _model_epoch_from_session_id(session_id: str) -> int | None:
+    if not session_id or "/" not in session_id:
+        return None
+
+    leaf_name = session_id.split("/", 1)[1]
+    match = re.fullmatch(
+        r"epoch\d+\(model on epoch (?P<model>\d+)\)(?:_\d+)?",
+        leaf_name,
+    )
+    if match:
+        return int(match.group("model"))
+
+    return None
+
+
+def _current_model_epoch() -> int | None:
+    try:
+        config = load_train_config(TRAIN_CONFIG_PATH)
+    except Exception:
+        return None
+
+    output = config.get("output")
+    if not output:
+        return None
+
+    best_path = Path(output)
+    if not best_path.is_absolute():
+        best_path = MIKI_ROOT / best_path
+    latest_path = Path(str(best_path).removesuffix(".npz") + ".latest.npz")
+
+    for model_path in (latest_path, best_path):
+        if not model_path.is_file():
+            continue
+        try:
+            import numpy as np
+
+            data = np.load(model_path, allow_pickle=True)
+            if "epoch" not in data.files:
+                continue
+            value = data["epoch"]
+            if getattr(value, "shape", ()):
+                value = value.reshape(-1)[0]
+            else:
+                value = value.item()
+            return int(value)
+        except Exception:
+            continue
+
+    return None
+
+
+def _should_refresh_auto_history_on_battle_start() -> bool:
+    current_model_epoch = _current_model_epoch()
+    latest_auto_session_id = _latest_auto_history_session_id()
+    latest_auto_model_epoch = _model_epoch_from_session_id(latest_auto_session_id)
+
+    if current_model_epoch is None:
+        return not latest_auto_session_id
+
+    if not latest_auto_session_id:
+        return True
+
+    return latest_auto_model_epoch != current_model_epoch
+
+
+def _remove_auto_history_sessions() -> list[str]:
+    removed = []
+    if not HISTORY_DIR.exists():
+        return removed
+
+    for marker in HISTORY_DIR.rglob(".auto"):
+        try:
+            resolved_marker = marker.resolve()
+            resolved_marker.relative_to(HISTORY_DIR.resolve())
+            session_path = marker.parent.resolve()
+            session_path.relative_to(HISTORY_DIR.resolve())
+        except Exception:
+            continue
+
+        if not marker.is_file() and not marker.is_symlink():
+            continue
+
+        shutil.rmtree(session_path)
+        removed.append(str(session_path))
+
+    return removed
+
+
+def _mark_auto_history_session(session_id: str) -> Path | None:
+    if not session_id:
+        return None
+
+    session_path = (HISTORY_DIR / session_id).resolve()
+    try:
+        session_path.relative_to(HISTORY_DIR.resolve())
+    except ValueError:
+        return None
+
+    if not session_path.is_dir():
+        return None
+
+    marker_path = session_path / ".auto"
+    marker_path.touch()
+    return marker_path
+
+
+def _plot_auto_history_session(session_id: str) -> dict[str, Any]:
+    if not session_id:
+        return {
+            "ok": False,
+            "error": "history_session was not returned by save_history.sh",
+        }
+
+    if not PLOT_SCRIPT.is_file():
+        return {
+            "ok": False,
+            "error": f"plot script not found: {PLOT_SCRIPT}",
+        }
+
+    result = run_command(
+        [sys.executable, str(PLOT_SCRIPT), session_id],
+        cwd=MIKI_ROOT,
+    )
+
+    return {
+        "ok": result.returncode == 0,
+        **command_result_payload(result),
+    }
+
+
+def _save_auto_history_for_live_log() -> dict[str, Any]:
+    with _AUTO_HISTORY_LOCK:
+        removed_sessions = _remove_auto_history_sessions()
+        previous_session_id = _latest_history_session_id()
+        previous_model_epoch = _model_epoch_from_session_id(previous_session_id)
+
+        if not SAVE_HISTORY_SCRIPT.is_file():
+            return {
+                "ok": False,
+                "error": f"save_history.sh not found: {SAVE_HISTORY_SCRIPT}",
+                "removed_auto_sessions": removed_sessions,
+                "previous_history_session": previous_session_id,
+                "previous_model_epoch": previous_model_epoch,
+            }
+
+        result = run_command(
+            ["bash", str(SAVE_HISTORY_SCRIPT), str(TRAIN_CONFIG_PATH)],
+            cwd=MIKI_ROOT,
+            check=True,
+        )
+
+        stdout = getattr(result, "stdout", "") or ""
+        match = _AUTO_HISTORY_SESSION_RE.search(stdout)
+        history_session = match.group(1) if match else ""
+        current_model_epoch = _model_epoch_from_session_id(history_session)
+        should_plot = not (
+            previous_model_epoch is not None
+            and current_model_epoch is not None
+            and previous_model_epoch == current_model_epoch
+        )
+        marker_path = _mark_auto_history_session(history_session)
+        plot_result = (
+            _plot_auto_history_session(history_session)
+            if should_plot
+            else {
+                "ok": True,
+                "skipped": True,
+                "message": "skipped plot because model epoch did not change",
+            }
+        )
+
+        return {
+            "ok": True,
+            "history_session": history_session,
+            "session_id": history_session,
+            "previous_history_session": previous_session_id,
+            "previous_model_epoch": previous_model_epoch,
+            "model_epoch": current_model_epoch,
+            "should_plot": should_plot,
+            "auto_marker": str(marker_path) if marker_path is not None else "",
+            "removed_auto_sessions": removed_sessions,
+            "plot": plot_result,
+            **command_result_payload(result),
+        }
+
+
+def _try_save_auto_history_for_live_log() -> dict[str, Any]:
+    try:
+        return _save_auto_history_for_live_log()
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": "auto save_history failed",
+            **command_result_payload(e),
+        }
 
 
 def _append_frontend_manual_stop_notice() -> None:
@@ -305,6 +689,19 @@ def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
                 section[key] = remaining.pop(key)
         grouped_sections[section_name] = section
 
+    optimization = grouped_sections.get("optimization_config", {})
+    if isinstance(optimization, dict):
+        selected_mode = str(optimization.get("loss_numerical_integration", "bin_sum")).strip()
+        selected_mode = "gauss_legendre" if selected_mode == "gauss-legendre" else selected_mode
+        integration_config = {}
+        for key in OPTIMIZATION_INTEGRATION_CONFIG_KEYS:
+            if key in remaining:
+                integration_config[key] = remaining.pop(key)
+        if integration_config:
+            optimization["loss_integration_configs"] = {
+                selected_mode: integration_config,
+            }
+
     grouped_sections["misc_config"].update(remaining)
 
     default_model, _available_models = _load_available_models()
@@ -345,7 +742,18 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
         section = sections.get(section_name, {})
         if not isinstance(section, dict):
             continue
+        if section_name == "optimization_config":
+            selected_mode = str(section.get("loss_numerical_integration", "bin_sum")).strip()
+            integration_configs = section.get("loss_integration_configs")
+            if isinstance(integration_configs, dict):
+                selected_config = integration_configs.get(selected_mode)
+                if selected_config is None and selected_mode == "gauss-legendre":
+                    selected_config = integration_configs.get("gauss_legendre")
+                if isinstance(selected_config, dict):
+                    flat.update(selected_config)
         for key, value in section.items():
+            if section_name == "optimization_config" and key == "loss_integration_configs":
+                continue
             flat[key] = value
 
     return flat
@@ -815,6 +1223,66 @@ def read_training_loss_summary_prompt():
             path=str(_get_loss_file_path()),
             prompt="",
             has_prompt=False,
+        ), 500
+
+
+def read_training_live_log(offset: int | None = None):
+    live_log_path = _get_train_live_log_path()
+
+    if not live_log_path.exists():
+        auto_history = (
+            _try_save_auto_history_for_live_log()
+            if offset is None and _should_refresh_auto_history_on_battle_start()
+            else None
+        )
+        return success_payload(
+            path=str(live_log_path),
+            exists=False,
+            offset=0,
+            next_offset=0,
+            lines=[],
+            truncated=False,
+            auto_history=auto_history,
+        ), 200
+
+    try:
+        file_size = live_log_path.stat().st_size
+        start_offset = file_size if offset is None else max(0, int(offset))
+        truncated = start_offset > file_size
+        if truncated:
+            start_offset = 0
+
+        with open(live_log_path, "rb") as f:
+            f.seek(start_offset)
+            chunk = f.read()
+            next_offset = f.tell()
+
+        text = chunk.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        auto_history = (
+            _try_save_auto_history_for_live_log()
+            if lines or (offset is None and _should_refresh_auto_history_on_battle_start())
+            else None
+        )
+
+        return success_payload(
+            path=str(live_log_path),
+            exists=True,
+            offset=start_offset,
+            next_offset=next_offset,
+            lines=lines,
+            truncated=truncated,
+            auto_history=auto_history,
+        ), 200
+    except Exception as e:
+        return error_payload(
+            f"failed to read train.live.log: {e}",
+            path=str(live_log_path),
+            exists=live_log_path.exists(),
+            offset=offset,
+            next_offset=offset,
+            lines=[],
+            truncated=False,
         ), 500
 
 

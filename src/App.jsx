@@ -140,7 +140,14 @@ function ChatModeView({
 function BattleModeView({
   battle,
   battleExiting,
+  historyAction,
+  historyMessage,
+  historyError,
+  historyStatusKind,
+  lastPlottedSessionId,
+  plotRefreshKey,
   onForceExitBattle,
+  onSaveHistoryAndPlot,
   stageProps,
   onLive2DInteraction,
 }) {
@@ -175,7 +182,14 @@ function BattleModeView({
           lossData={battle.lossData}
           sourcePath={APP_CONFIG.lossFilePath}
           onForceExit={onForceExitBattle}
+          onSaveHistoryAndPlot={onSaveHistoryAndPlot}
           exiting={battleExiting}
+          historyAction={historyAction}
+          historyMessage={historyMessage}
+          historyError={historyError}
+          historyStatusKind={historyStatusKind}
+          lastPlottedSessionId={lastPlottedSessionId}
+          plotRefreshKey={plotRefreshKey}
         />
       </aside>
 
@@ -307,8 +321,15 @@ export default function App() {
   const {
     battle,
     battleExiting,
+    historyAction,
+    historyMessage,
+    historyError,
+    historyStatusKind,
+    lastPlottedSessionId,
+    plotRefreshKey,
     handleEnterBattleMode,
     handleForceExitBattle,
+    handleSaveHistoryAndPlot,
     battleBootstrapResolved,
   } = useBattleController({
     battleAgent: agent.battle,
@@ -431,7 +452,14 @@ export default function App() {
         <BattleModeView
           battle={battle}
           battleExiting={battleExiting}
+          historyAction={historyAction}
+          historyMessage={historyMessage}
+          historyError={historyError}
+          historyStatusKind={historyStatusKind}
+          lastPlottedSessionId={lastPlottedSessionId}
+          plotRefreshKey={plotRefreshKey}
           onForceExitBattle={handleForceExitBattle}
+          onSaveHistoryAndPlot={handleSaveHistoryAndPlot}
           stageProps={stageProps}
           onLive2DInteraction={handleLive2DInteraction}
         />

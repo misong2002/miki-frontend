@@ -2,7 +2,11 @@ import json
 import re
 from typing import Any, Generator
 
-from config import OPENAI_MODEL, PROFILE_BUNDLE_MAX_FACTS
+from config import (
+    OPENAI_FAST_MODEL,
+    OPENAI_THINKING_MODEL,
+    PROFILE_BUNDLE_MAX_FACTS,
+)
 from memory.memory_store import get_long_term_db, list_idea_tag_catalog
 from services.llm_service import get_llm_client
 from services.memory_service import (
@@ -934,8 +938,18 @@ def choose_max_completion_tokens(user_message: str, message_type: str = "user") 
     if message_type == "interaction":
         return INTERACTION_MAX_COMPLETION_TOKENS
 
+    if requires_thinking_model(user_message, message_type=message_type):
+        return EXTENDED_MAX_COMPLETION_TOKENS
+
+    return DEFAULT_MAX_COMPLETION_TOKENS
+
+
+def requires_thinking_model(user_message: str, message_type: str = "user") -> bool:
+    if message_type == "interaction":
+        return False
+
     text = _normalize_text(user_message).lower()
-    extended_triggers = [
+    thinking_triggers = [
         "证明",
         "推导",
         "数学",
@@ -958,10 +972,14 @@ def choose_max_completion_tokens(user_message: str, message_type: str = "user") 
         "explain fully",
     ]
 
-    if any(trigger in text for trigger in extended_triggers):
-        return EXTENDED_MAX_COMPLETION_TOKENS
+    return any(trigger in text for trigger in thinking_triggers)
 
-    return DEFAULT_MAX_COMPLETION_TOKENS
+
+def choose_chat_model(user_message: str, message_type: str = "user") -> str:
+    if requires_thinking_model(user_message, message_type=message_type):
+        return OPENAI_THINKING_MODEL
+
+    return OPENAI_FAST_MODEL
 
 
 def create_chat_stream_response(
@@ -985,10 +1003,14 @@ def create_chat_stream_response(
         user_message,
         message_type=message_type,
     )
+    model_name = choose_chat_model(
+        user_message,
+        message_type=message_type,
+    )
 
     try:
         stream = get_llm_client().chat.completions.create(
-            model=OPENAI_MODEL,
+            model=model_name,
             messages=messages,
             temperature=0.7,
             max_tokens=max_completion_tokens,

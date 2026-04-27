@@ -1,4 +1,4 @@
-# MIKI Frontend v2.6 — Saber
+# MIKI Frontend v2.7 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,17 +6,16 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v2.6 — Saber
+## What's New in v2.7 — Saber
 
-Compared with **v2.5**, this version focuses on a stronger training workspace, richer Live2D interactions, and more reliable shared-server startup.
+Compared with **v2.6**, this version focuses on smarter chat-model routing, stronger battle autosave behavior, and a more explicit training-integration workflow.
 
-- 🧩 **Training config now supports file-backed sections**: the backend can read and write section references such as `io_config`, `model_config`, `optimization_config`, `cluster_config`, and `debug_config`, preserving grouped config files instead of flattening everything into one JSON blob.
-- 🗂️ **History management is easier to navigate**: history sessions are grouped by timestamp and expanded into epoch/model checkpoints, making initialize and plot actions less dependent on scanning a long flat select list.
-- 📉 **Battle monitoring is clearer**: battle charts now use explicit loss-focused labels, better chart margins, scientific tick formatting, and smarter save-history-and-plot handling when a model epoch has not changed.
-- 🖼️ **Chat and battle environments have full-scene backgrounds**: chat uses a classroom backdrop, battle uses rotating witch-space backgrounds, and the shared panel styling has been tightened for a cleaner glass UI.
-- 👆 **Live2D interaction reaches the agent loop**: tapping Miki in chat can send an interaction message, while tapping during battle can trigger battle presentation behavior.
-- 💬 **Chat scrolling behaves more predictably**: new messages auto-follow only when appropriate, while manual scroll, wheel, touch, and scrollbar interactions stop forced scrolling.
-- 🛠️ **Startup and remote access are more robust**: frontend/backend ports can be driven by environment variables, Flask debug/reloader behavior is configurable, and API URLs built with `localhost` can adapt to the page hostname when opened from a remote machine.
+- 🧠 **Chat now switches between fast and thinking models automatically**: lightweight turns can use `deepseek-v4-flash`, while proof-style or step-by-step questions are routed to `deepseek-v4-pro` using backend trigger rules.
+- ⚙️ **Loss integration config is now mode-aware**: the training panel exposes `bin_sum`, `adaptive`, and `gauss-legendre` integration modes, with dedicated per-mode parameter blocks and backend persistence for nested integration config files.
+- 💾 **Battle autosave is now much closer to manual save-history-and-plot**: auto history snapshots carry the same `should_plot` semantics as manual saves, surface success/error state back to the frontend, and refresh the battle plot browser when a new plot is actually generated.
+- 🖼️ **Latest battle images refresh more reliably**: the battle plot browser now stays pinned to the latest history result instead of a stale saved session, and plot-file URLs are cache-busted with file modification times.
+- 🔄 **Battle startup can repair stale auto snapshots**: when battle mode reconnects, the backend compares the current latest model epoch against the last `.auto` history snapshot and forces a fresh auto save when they diverge.
+- 📜 **Live training log polling is now part of the battle feedback loop**: the frontend polls `train.live.log`, streams grouped system messages into the battle contact feed, and uses the same channel to receive backend auto-history updates.
 
 ---
 
@@ -175,6 +174,7 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
+| v2.7 | Saber | Dual-speed chat model routing, integration-mode training config UI, battle live-log autosave feedback, latest-plot refresh fixes, startup auto-history epoch resync |
 | v2.6 | Saber | File-backed training config sections, grouped history checkpoint navigation, refreshed chat/battle visuals, Live2D tap interactions, more stable chat scrolling, remote-safe API URL handling |
 | v2.5 | Saber | Collection-file long-term memory storage, safer memory debug endpoints, streaming chat bootstrap/remind flow, richer training summaries, consistent backend command responses, battle save-history-and-plot tooling |
 | v2.4 | Saber | Sectioned training config UI, backend-driven model selection, safer battle bootstrap recovery, cached battle contact restore, automatic post-training summaries, improved chat history prompting and speech runtime |
@@ -189,6 +189,16 @@ Possible future extensions include:
 ---
 
 ## Archived Release Notes
+
+### v2.6 — Saber
+
+- 🧩 **Training config now supports file-backed sections**: the backend can read and write section references such as `io_config`, `model_config`, `optimization_config`, `cluster_config`, and `debug_config`, preserving grouped config files instead of flattening everything into one JSON blob.
+- 🗂️ **History management is easier to navigate**: history sessions are grouped by timestamp and expanded into epoch/model checkpoints, making initialize and plot actions less dependent on scanning a long flat select list.
+- 📉 **Battle monitoring is clearer**: battle charts now use explicit loss-focused labels, better chart margins, scientific tick formatting, and smarter save-history-and-plot handling when a model epoch has not changed.
+- 🖼️ **Chat and battle environments have full-scene backgrounds**: chat uses a classroom backdrop, battle uses rotating witch-space backgrounds, and the shared panel styling has been tightened for a cleaner glass UI.
+- 👆 **Live2D interaction reaches the agent loop**: tapping Miki in chat can send an interaction message, while tapping during battle can trigger battle presentation behavior.
+- 💬 **Chat scrolling behaves more predictably**: new messages auto-follow only when appropriate, while manual scroll, wheel, touch, and scrollbar interactions stop forced scrolling.
+- 🛠️ **Startup and remote access are more robust**: frontend/backend ports can be driven by environment variables, Flask debug/reloader behavior is configurable, and API URLs built with `localhost` can adapt to the page hostname when opened from a remote machine.
 
 ### v2.5 — Saber
 

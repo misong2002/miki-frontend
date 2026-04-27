@@ -7,6 +7,7 @@ from services.train_service import (
     start_training,
     stop_training,
     read_training_loss,
+    read_training_live_log,
     read_training_loss_summary_prompt,
 )
 
@@ -41,6 +42,20 @@ def battle_loss_route():
 @battle_bp.route("/api/battle/loss-summary-prompt", methods=["GET"])
 def battle_loss_summary_prompt_route():
     result, status_code = read_training_loss_summary_prompt()
+    return jsonify(result), status_code
+
+
+@battle_bp.route("/api/battle/train-live-log", methods=["GET"])
+def battle_train_live_log_route():
+    raw_offset = request.args.get("offset")
+    offset = None
+    if raw_offset not in (None, ""):
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            offset = None
+
+    result, status_code = read_training_live_log(offset)
     return jsonify(result), status_code
 
 
