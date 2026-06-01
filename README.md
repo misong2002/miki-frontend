@@ -1,4 +1,4 @@
-# MIKI Frontend v2.7 — Saber
+# MIKI Frontend v2.8 — Saber
 
 A Live2D visual interface for interacting with **MIKI**, a neutrino–nucleus scattering model.
 
@@ -6,16 +6,22 @@ This project provides an interactive web UI where you can talk with **Miki-san**
 
 ---
 
-## What's New in v2.7 — Saber
+## What's New in v2.8 — Saber
 
-Compared with **v2.6**, this version focuses on smarter chat-model routing, stronger battle autosave behavior, and a more explicit training-integration workflow.
+Compared with **v2.7**, this version adds tabbed benchmark/training panels, GPU-safe auto-save throttling, background plot generation, and a cleaner history management UI.
 
-- 🧠 **Chat now switches between fast and thinking models automatically**: lightweight turns can use `deepseek-v4-flash`, while proof-style or step-by-step questions are routed to `deepseek-v4-pro` using backend trigger rules.
-- ⚙️ **Loss integration config is now mode-aware**: the training panel exposes `bin_sum`, `adaptive`, and `gauss-legendre` integration modes, with dedicated per-mode parameter blocks and backend persistence for nested integration config files.
-- 💾 **Battle autosave is now much closer to manual save-history-and-plot**: auto history snapshots carry the same `should_plot` semantics as manual saves, surface success/error state back to the frontend, and refresh the battle plot browser when a new plot is actually generated.
-- 🖼️ **Latest battle images refresh more reliably**: the battle plot browser now stays pinned to the latest history result instead of a stale saved session, and plot-file URLs are cache-busted with file modification times.
-- 🔄 **Battle startup can repair stale auto snapshots**: when battle mode reconnects, the backend compares the current latest model epoch against the last `.auto` history snapshot and forces a fresh auto save when they diverge.
-- 📜 **Live training log polling is now part of the battle feedback loop**: the frontend polls `train.live.log`, streams grouped system messages into the battle contact feed, and uses the same channel to receive backend auto-history updates.
+- 🧩 **Training & Benchmark share a tabbed panel**: `[Benchmark | Training]` tabs with unified styling. Benchmark is the default (left) tab.
+- 📐 **Benchmark sub-tabs**: Manifest, IO, Model, and Build views are now independently tabbed inside the benchmark panel.
+- 🔀 **Doraemon auto-detection in IO tab**: when `dataset_type == "doraemon"`, the IO tab shows generator/oscillation/flavor/beam_mode fields instead of file paths. Flux/dataset slots can be dynamically added or removed.
+- 🎨 **Training sub-tabs unified with other tabs**: `io | model | optimization | run_mode` now use the same `.train-config-tabs` style as benchmark and history tabs.
+- ⚡ **GPU-safe auto-save**: 30-second cooldown and model-epoch dedup prevent `save_history.sh` from being re-triggered on every poll cycle during fast GPU training.
+- 🔀 **Save and plot are now separate**: after saving history, plot runs in a background thread. The frontend polls `/api/history/plot-status` and shows "plotting..." indicators.
+- 📋 **History panel is collapsible**: hidden by default in chat mode ("📋 History ▸" toggle), giving the chat panel full height. Tree view uses 65/35 split with hover effects.
+- 📊 **Battle panel shows auto-save feedback**: a non-intrusive banner reports auto-save success/error. Plot-pending sessions show a "图表生成中" indicator.
+- 🎯 **Sticky footer buttons**: save/build/start-training buttons are fixed at the panel bottom and don't scroll away.
+- 📏 **Recent loss chart is smaller**: the recent-loss chart in battle mode takes 38% height instead of 50%, leaving more room for the full loss history.
+- 🌐 **MIKI_ROOT auto-detection**: the backend config now reads `$MIKI_ROOT` from the environment with a fallback based on file location.
+- 🔧 **Frontend config**: `config.js` now reads `VITE_MIKI_ROOT` from the environment, defaulting to auto-detect.
 
 ---
 
@@ -174,6 +180,7 @@ Possible future extensions include:
 
 | Version | Codename | Description |
 |---------|----------|-------------|
+| v2.8 | Saber | Tabbed benchmark/training panels, dynamic flux slots with Doraemon auto-detection, GPU-safe auto-save cooldown + epoch dedup, save/plot separation with background plot + status polling, collapsible history panel, sticky footer buttons, unified tab styling, auto-save feedback banners |
 | v2.7 | Saber | Dual-speed chat model routing, integration-mode training config UI, battle live-log autosave feedback, latest-plot refresh fixes, startup auto-history epoch resync |
 | v2.6 | Saber | File-backed training config sections, grouped history checkpoint navigation, refreshed chat/battle visuals, Live2D tap interactions, more stable chat scrolling, remote-safe API URL handling |
 | v2.5 | Saber | Collection-file long-term memory storage, safer memory debug endpoints, streaming chat bootstrap/remind flow, richer training summaries, consistent backend command responses, battle save-history-and-plot tooling |
