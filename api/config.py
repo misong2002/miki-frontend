@@ -1,8 +1,12 @@
 import json
+import os
 from pathlib import Path
 
-# 根目录
-MIKI_ROOT = "/home/mingzhuo/miki"  # 请不要用相对路径
+# 根目录 — 优先从环境变量读取，fallback 到自动检测
+MIKI_ROOT = os.environ.get(
+    "MIKI_ROOT",
+    str(Path(__file__).resolve().parents[2]),
+)
 API_DIR = Path(__file__).resolve().parent
 FRONTEND_ROOT = API_DIR.parent
 SHARED_CONFIG_PATH = FRONTEND_ROOT / "shared" / "battle_chart_config.json"

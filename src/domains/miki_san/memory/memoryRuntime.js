@@ -121,7 +121,7 @@ function matchBackendSession(run, sessionInfo = {}) {
   const runPid = normalizeBackendSessionKeyPart(runSession.pid);
   const queryPid = normalizeBackendSessionKeyPart(sessionInfo.pid);
 
-  if (queryMode === "cluster") {
+  if (queryMode === "pbs" || queryMode === "qos") {
     return queryJobId != null && runJobId === queryJobId;
   }
 
@@ -701,8 +701,8 @@ export function createMemoryRuntime(options = {}) {
     }
 
     const backendMode =
-      session?.mode === "cluster"
-        ? "cluster"
+      session?.mode === "pbs" || session?.mode === "qos"
+        ? session.mode
         : session?.mode === "local"
         ? "local"
         : null;

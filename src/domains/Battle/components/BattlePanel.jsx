@@ -22,16 +22,24 @@ export default function BattlePanel({
   historyStatusKind,
   lastPlottedSessionId,
   plotRefreshKey,
+  autoSaveStatus,
+  plotPendingSessions,
 }) {
   const recentData = lossData.slice(
     -APP_CONFIG.battleCharts.recentWindowPoints
   );
-  const historyBusy = Boolean(historyAction);
   const historyStatusClass = historyError
     ? "battle-tool-status battle-tool-status-error"
     : historyStatusKind === "success"
       ? "battle-tool-status battle-tool-status-success"
       : "battle-tool-status";
+
+  let buttonLabel = "Save History & Plot";
+  if (historyAction === "save-plot") {
+    buttonLabel = "Saving...";
+  } else if (historyAction === "auto-save") {
+    buttonLabel = "Auto-saving...";
+  }
 
   //console.log("[Battle Panel]:drawing with recent data:" ,recentData)
   return (
@@ -46,19 +54,29 @@ export default function BattlePanel({
           <button
             className="battle-exit-btn"
             onClick={onSaveHistoryAndPlot}
-            disabled={exiting || historyBusy}
+            disabled={exiting || Boolean(historyAction)}
           >
-            {historyBusy ? "Saving/Plotting..." : "Save History & Plot"}
+            {buttonLabel}
           </button>
           <button
             className="battle-exit-btn"
             onClick={onForceExit}
-            disabled={exiting || historyBusy}
+            disabled={exiting || Boolean(historyAction)}
           >
             {exiting ? "Exiting..." : "Force Exit"}
           </button>
         </div>
       </div>
+
+      {autoSaveStatus?.kind !== "idle" && (
+        <div className={`battle-tool-status battle-tool-status-${autoSaveStatus.kind}`}>
+          {autoSaveStatus.message}
+        </div>
+      )}
+
+      {plotPendingSessions?.length > 0 && (
+        <div className="panel-status">图表生成中 ({plotPendingSessions.length} sessions)...</div>
+      )}
 
       {(historyMessage || historyError) && (
         <div className={historyStatusClass}>
@@ -100,7 +118,7 @@ export default function BattlePanel({
         </div>
       </div>
 
-      <div className="battle-chart-block">
+      <div className="battle-chart-block battle-chart-block-recent">
         <div className="battle-chart-title">Recent loss（loss vs epoch）</div>
         <div className="battle-chart-box">
           <ResponsiveContainer width="100%" height="100%">

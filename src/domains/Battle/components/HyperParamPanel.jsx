@@ -3,14 +3,9 @@ import {
   fetchTrainConfig,
   saveTrainConfig,
 } from "../services/trainConfigService";
-import {
-  fetchHistorySessions,
-  runHistoryInitialize,
-  runHistoryPlot,
-} from "../services/historyToolService";
-import PlotImageBrowser from "./PlotImageBrowser";
+import BenchmarkPanel from "../../Benchmark/components/BenchmarkPanel";
 
-const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
+const RUN_MODE_OPTIONS = ["local", "pbs", "qos", "debug"];
 const LOSS_NUMERICAL_INTEGRATION_OPTIONS = [
   { value: "bin_sum", label: "bin_sum" },
   { value: "adaptive", label: "adaptive" },
@@ -22,11 +17,13 @@ const CONFIG_SECTION_ORDER = [
   "io_config",
   "model_config",
   "optimization_config",
-  "cluster_config",
+  "pbs_config",
+  "qos_config",
   "debug_config",
 ];
 const RUN_MODE_SECTION_BY_MODE = {
-  cluster: "cluster_config",
+  pbs: "pbs_config",
+  qos: "qos_config",
   debug: "debug_config",
 };
 const SECTION_LABELS = {
@@ -38,7 +35,8 @@ const SECTION_TITLES = {
   io_config: "IO Config",
   model_config: "Model Config",
   optimization_config: "Optimization Config",
-  cluster_config: "Cluster Config",
+  pbs_config: "PBS Config",
+  qos_config: "QoS Config",
   debug_config: "Debug Config",
 };
 const OPTIMIZATION_INTEGRATION_KEYS = new Set([
@@ -233,105 +231,6 @@ function parseEditedValue(rawValue, originalValue) {
   return rawValue;
 }
 
-function toSessionLabel(item) {
-  if (!item) return "";
-  if (typeof item === "string") return item;
-  if (item.label) return item.label;
-  if (item.path) return item.path;
-  if (item.session_id) return `history/${item.session_id}`;
-  return "";
-}
-
-function toSessionId(item) {
-  if (!item) return "";
-  if (typeof item === "string") {
-    return item.replace(/^history\//, "");
-  }
-  return item.session_id ?? "";
-}
-
-function splitHistorySessionId(sessionId) {
-  const value = String(sessionId || "").replace(/^history\//, "");
-  const [timestamp = "", epoch = ""] = value.split("/");
-  return { timestamp, epoch };
-}
-
-function historyTimestampOf(item) {
-  if (!item) return "";
-  if (typeof item === "object" && item.timestamp) return item.timestamp;
-  return splitHistorySessionId(toSessionId(item)).timestamp;
-}
-
-function historyEpochOf(item) {
-  if (!item) return "";
-  if (typeof item === "object" && item.epoch) return item.epoch;
-  return splitHistorySessionId(toSessionId(item)).epoch;
-}
-
-function groupHistorySessions(sessions) {
-  const groupsByTimestamp = new Map();
-
-  for (const item of sessions) {
-    const sessionId = toSessionId(item);
-    const timestamp = historyTimestampOf(item);
-    if (!sessionId || !timestamp) continue;
-
-    if (!groupsByTimestamp.has(timestamp)) {
-      groupsByTimestamp.set(timestamp, {
-        timestamp,
-        entries: [],
-      });
-    }
-
-    groupsByTimestamp.get(timestamp).entries.push({
-      item,
-      sessionId,
-      epoch: historyEpochOf(item),
-      label: toSessionLabel(item),
-    });
-  }
-
-  const groups = [...groupsByTimestamp.values()];
-  for (const group of groups) {
-    group.entries.sort((a, b) => {
-      const aKey = historyLeafSortKey(a.epoch);
-      const bKey = historyLeafSortKey(b.epoch);
-      return (
-        bKey.lossEpoch - aKey.lossEpoch
-        || bKey.modelEpoch - aKey.modelEpoch
-        || bKey.suffix - aKey.suffix
-        || b.sessionId.localeCompare(a.sessionId)
-      );
-    });
-  }
-
-  groups.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  return groups;
-}
-
-function historyLeafSortKey(name) {
-  const text = String(name || "");
-  const match = text.match(/^epoch(\d+)\(model on epoch (\d+)\)(?:_(\d+))?$/);
-  if (match) {
-    return {
-      lossEpoch: Number(match[1]),
-      modelEpoch: Number(match[2]),
-      suffix: Number(match[3] || 0),
-    };
-  }
-  if (/^\d+$/.test(text)) {
-    return {
-      lossEpoch: Number(text),
-      modelEpoch: 0,
-      suffix: 0,
-    };
-  }
-  return {
-    lossEpoch: -1,
-    modelEpoch: -1,
-    suffix: -1,
-  };
-}
 
 function titleFromSectionName(sectionName) {
   return SECTION_TITLES[sectionName] ?? sectionName.replace(/_/g, " ");
@@ -383,14 +282,14 @@ function cloneConfig(config) {
 }
 
 const rootStyle = {
-  display: "grid",
-  gridTemplateRows: "2fr 3fr",
-  gap: 12,
+  display: "flex",
+  flexDirection: "column",
   minHeight: 0,
   height: "100%",
 };
 
 const subPanelStyle = {
+  flex: 1,
   minHeight: 0,
   display: "flex",
   flexDirection: "column",
@@ -399,130 +298,6 @@ const subPanelStyle = {
   borderRadius: 12,
   background: "rgba(255,255,255,0.03)",
   overflow: "hidden",
-};
-
-const historyPanelStyle = {
-  ...subPanelStyle,
-  display: "grid",
-  gridTemplateRows: "auto minmax(0, 1fr) auto auto auto",
-  rowGap: 0,
-};
-
-const subHeaderStyle = {
-  marginBottom: 10,
-  flex: "0 0 auto",
-};
-
-const subTitleStyle = {
-  fontSize: "1rem",
-  margin: 0,
-};
-
-const subSubtitleStyle = {
-  fontSize: "0.85rem",
-  opacity: 0.8,
-  marginTop: 4,
-};
-
-const actionRowStyle = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-  marginTop: 12,
-  flex: "0 0 auto",
-};
-
-const historySelectWrapStyle = {
-  minHeight: 0,
-  flex: "1 1 auto",
-  display: "flex",
-  flexDirection: "column",
-  overflow: "hidden",
-};
-
-const historyLabelStyle = {
-  flex: "0 0 auto",
-};
-
-const historyTreeStyle = {
-  width: "100%",
-  flex: "1 1 auto",
-  minHeight: 0,
-  maxHeight: "100%",
-  overflowY: "auto",
-  overflowX: "hidden",
-  display: "block",
-  padding: 2,
-  boxSizing: "border-box",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 8,
-  background: "rgba(255,255,255,0.02)",
-};
-
-const historyGroupStyle = {
-  display: "block",
-  margin: 0,
-  padding: 0,
-};
-
-const historyRowStyle = {
-  width: "100%",
-  height: 32,
-  minHeight: 32,
-  maxHeight: 32,
-  flex: "none",
-  lineHeight: "20px",
-  margin: 0,
-  padding: "6px 8px",
-  border: 0,
-  borderRadius: 4,
-  background: "transparent",
-  color: "inherit",
-  textAlign: "left",
-  cursor: "pointer",
-  boxSizing: "border-box",
-  appearance: "none",
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  overflow: "hidden",
-  transform: "none",
-};
-
-const historyRowActiveStyle = {
-  background: "rgba(125, 211, 252, 0.16)",
-  boxShadow: "inset 0 0 0 1px rgba(125, 211, 252, 0.48)",
-};
-
-const historyTimestampButtonActiveStyle = {
-  ...historyRowActiveStyle,
-};
-
-const historyTreeIconStyle = {
-  width: 14,
-  flex: "0 0 14px",
-  opacity: 0.78,
-  textAlign: "center",
-};
-
-const historyEpochButtonStyle = {
-  ...historyRowStyle,
-  paddingLeft: 28,
-  color: "rgba(31, 53, 84, 0.92)",
-};
-
-const historyEpochButtonActiveStyle = {
-  background: "rgba(134, 239, 172, 0.14)",
-  boxShadow: "inset 0 0 0 1px rgba(134, 239, 172, 0.46)",
-};
-
-const historyRowTextStyle = {
-  minWidth: 0,
-  flex: 1,
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  lineHeight: "20px",
 };
 
 const configScrollStyle = {
@@ -542,8 +317,6 @@ const feedbackSlotStyle = {
 };
 
 const tabRowStyle = {
-  display: "grid",
-  gap: 0,
   flex: "0 0 auto",
 };
 
@@ -637,15 +410,7 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   const [saveError, setSaveError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
 
-  const [historySessions, setHistorySessions] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [historyLoadError, setHistoryLoadError] = useState("");
-  const [selectedHistoryTimestamp, setSelectedHistoryTimestamp] = useState("");
-  const [selectedSessionId, setSelectedSessionId] = useState("");
-  const [historyAction, setHistoryAction] = useState("");
-  const [historyError, setHistoryError] = useState("");
-  const [historyMessage, setHistoryMessage] = useState("");
-  const [historyPlotRefreshKey, setHistoryPlotRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState("benchmark");
 
   const loadConfig = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -686,95 +451,8 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     }
   }, []);
 
-  const loadHistorySessions = useCallback(async ({ silent = false } = {}) => {
-    setHistoryLoading(true);
-    setHistoryLoadError("");
-    setHistoryError("");
-    if (!silent) {
-      setHistoryMessage("");
-    }
+  useEffect(() => { loadConfig(); }, [loadConfig]);
 
-    try {
-      const sessions = await fetchHistorySessions();
-      const normalized = Array.isArray(sessions) ? sessions : [];
-      setHistorySessions(normalized);
-
-      if (silent) {
-        setHistoryMessage("history refreshed");
-      }
-    } catch (err) {
-      setHistoryLoadError(err.message || "failed to load history sessions");
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function boot() {
-      try {
-        await loadConfig();
-      } catch {}
-
-      if (!cancelled) {
-        try {
-          await loadHistorySessions();
-        } catch {}
-      }
-    }
-
-    boot();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loadConfig, loadHistorySessions]);
-
-  const historyGroups = useMemo(
-    () => groupHistorySessions(historySessions),
-    [historySessions]
-  );
-  const selectedHistoryGroup = useMemo(
-    () => historyGroups.find((group) => group.timestamp === selectedHistoryTimestamp) ?? null,
-    [historyGroups, selectedHistoryTimestamp]
-  );
-
-  useEffect(() => {
-    if (historyGroups.length === 0) {
-      if (selectedHistoryTimestamp) setSelectedHistoryTimestamp("");
-      if (selectedSessionId) setSelectedSessionId("");
-      return;
-    }
-
-    const hasTimestamp = historyGroups.some(
-      (group) => group.timestamp === selectedHistoryTimestamp
-    );
-    if (!hasTimestamp) {
-      setSelectedHistoryTimestamp("");
-      if (selectedSessionId) setSelectedSessionId("");
-    }
-  }, [historyGroups, selectedHistoryTimestamp, selectedSessionId]);
-
-  useEffect(() => {
-    if (!selectedHistoryGroup) return;
-
-    const hasSession = selectedHistoryGroup.entries.some(
-      (entry) => entry.sessionId === selectedSessionId
-    );
-    if (!hasSession) {
-      setSelectedSessionId(selectedHistoryGroup.entries[0]?.sessionId ?? "");
-    }
-  }, [selectedHistoryGroup, selectedSessionId]);
-
-  const historyBusy = Boolean(historyAction);
-  const historyLoadingText = historyAction
-    ? historyAction === "plot"
-      ? `plotting ${selectedSessionId}...`
-      : `initializing ${selectedSessionId}...`
-    : historyLoading
-      ? "loading history..."
-      : "";
   const configBusy = disabled || saving || loading || refreshingConfig;
 
   function updateRunMode(nextRunMode) {
@@ -999,6 +677,62 @@ export default function HyperParamPanel({ onBattle, disabled }) {
           const displayValue = toDisplayValue(value);
           const inputId = `cfg-${sectionName}-${key}`;
 
+          if (sectionName === "qos_config" && key === "qos") {
+            const qosOptions = ["normal", "long"];
+            return (
+              <div key={key} className="train-config-item">
+                <label className="train-config-label" htmlFor={inputId}>
+                  QoS Level
+                </label>
+                <select
+                  id={inputId}
+                  className="train-config-input"
+                  value={String(displayValue || "normal")}
+                  onChange={(e) => updateField(sectionName, key, e.target.value)}
+                  disabled={configBusy}
+                  style={runModeSelectStyle}
+                >
+                  {qosOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                      {option === "normal"
+                        ? " — 48h max, ≤3 nodes, ≤8 GPUs total"
+                        : " — 7d max, 1 node, ≤4 GPUs total"}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ marginTop: 4, color: "#66819d", fontSize: "0.75rem" }}>
+                  {displayValue === "long" || !displayValue
+                    ? "long QoS: concurrent usage is limited; jobs may pend until resources are available"
+                    : "normal QoS: default, good for typical training runs"}
+                </div>
+              </div>
+            );
+          }
+
+          if (sectionName === "qos_config" && key === "gres") {
+            return (
+              <div key={key} className="train-config-item">
+                <label className="train-config-label" htmlFor={inputId}>
+                  GPU Request (gres)
+                </label>
+                <input
+                  id={inputId}
+                  className="train-config-input"
+                  type="text"
+                  value={displayValue}
+                  placeholder="gpu:1"
+                  onChange={(e) => updateField(sectionName, key, e.target.value)}
+                  disabled={configBusy}
+                />
+                <div style={{ marginTop: 4, color: "#66819d", fontSize: "0.75rem" }}>
+                  Slurm generic resource scheduling. Format: gpu:N (e.g. gpu:1, gpu:2).
+                  Without this, the job cannot access GPU devices.
+                </div>
+              </div>
+            );
+          }
+
           if (sectionName === "model_config" && key === "model_name") {
             const options = availableModels.length > 0 ? availableModels : [displayValue || "HMsiren"];
             return (
@@ -1128,10 +862,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
 
     if (activeConfigTab === "optimization_config") {
       const section = config.sections?.optimization_config ?? {};
-      return [
-        renderSectionFields(activeConfigTab),
-        renderOptimizationIntegrationControls(section),
-      ];
+      const modelName = config?.sections?.model_config?.model_name ?? "";
+      const isSaber = modelName === "SABER";
+      const blocks = [renderSectionFields(activeConfigTab)];
+      if (!isSaber) {
+        blocks.push(renderOptimizationIntegrationControls(section));
+      }
+      return blocks;
     }
 
     return [renderSectionFields(activeConfigTab)];
@@ -1140,11 +877,6 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   async function handleRefreshConfig() {
     if (disabled || saving || loading || refreshingConfig) return;
     await loadConfig({ silent: true });
-  }
-
-  async function handleRefreshHistory() {
-    if (disabled || historyBusy || historyLoading) return;
-    await loadHistorySessions({ silent: true });
   }
 
   async function persistConfig(afterSave) {
@@ -1195,251 +927,102 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     }
   }
 
-  async function handleInitialize() {
-    if (disabled || historyLoading || historyAction || !selectedSessionId) {
-      return;
-    }
-
-    setHistoryAction("initialize");
-    setHistoryError("");
-    setHistoryMessage(`initializing ${selectedSessionId}...`);
-
-    try {
-      const result = await runHistoryInitialize(selectedSessionId);
-      setHistoryMessage(
-        result?.message || `initialize finished: ${selectedSessionId}`
-      );
-    } catch (err) {
-      setHistoryError(err.message || "failed to initialize from history");
-    } finally {
-      setHistoryAction("");
-    }
-  }
-
-  async function handlePlot() {
-    if (disabled || historyLoading || historyAction || !selectedSessionId) {
-      return;
-    }
-
-    setHistoryAction("plot");
-    setHistoryError("");
-    setHistoryMessage(`plotting ${selectedSessionId}...`);
-
-    try {
-      const result = await runHistoryPlot(selectedSessionId);
-      setHistoryMessage(result?.message || `plot finished: ${selectedSessionId}`);
-      setHistoryPlotRefreshKey((prev) => prev + 1);
-    } catch (err) {
-      setHistoryError(err.message || "failed to plot history");
-    } finally {
-      setHistoryAction("");
-    }
-  }
-
   return (
     <div className="panel param-panel train-config-panel" style={rootStyle}>
-      <section style={historyPanelStyle}>
-        <div style={subHeaderStyle}>
-          <h3 className="train-config-title" style={subTitleStyle}>
-            History Management
-          </h3>
-        </div>
-
-        <div style={historySelectWrapStyle}>
-          {historyLoadError ? (
-            <div className="panel-error">{historyLoadError}</div>
-          ) : historySessions.length === 0 && !historyLoading ? (
-            <div className="panel-status">no history sessions found</div>
-          ) : (
-            <>
-              <div
-                id="history-session-tree"
-                style={historyTreeStyle}
-                role="listbox"
-                aria-label="History Sessions"
-              >
-                {historyGroups.map((group) => {
-                  const selectedTimestamp = group.timestamp === selectedHistoryTimestamp;
-
-                  return (
-                    <div key={group.timestamp} style={historyGroupStyle}>
-                      <button
-                        type="button"
-                        style={{
-                          ...historyRowStyle,
-                          ...(selectedTimestamp ? historyTimestampButtonActiveStyle : {}),
-                        }}
-                        onClick={() => {
-                          if (selectedTimestamp) {
-                            setSelectedHistoryTimestamp("");
-                            setSelectedSessionId("");
-                            setHistoryError("");
-                            return;
-                          }
-                          setSelectedHistoryTimestamp(group.timestamp);
-                          setSelectedSessionId(group.entries[0]?.sessionId ?? "");
-                          setHistoryError("");
-                        }}
-                        disabled={disabled || historyBusy || historyLoading}
-                      >
-                        <span style={historyTreeIconStyle}>
-                          {selectedTimestamp ? "▾" : "▸"}
-                        </span>
-                        <span style={historyRowTextStyle}>{group.timestamp}</span>
-                      </button>
-
-                      {selectedTimestamp
-                        ? group.entries.map((entry) => {
-                            const selectedEpoch = entry.sessionId === selectedSessionId;
-                            return (
-                              <button
-                                key={entry.sessionId}
-                                type="button"
-                                style={{
-                                  ...historyEpochButtonStyle,
-                                  ...(selectedEpoch ? historyEpochButtonActiveStyle : {}),
-                                }}
-                                onClick={() => {
-                                  setSelectedSessionId(entry.sessionId);
-                                  setHistoryError("");
-                                }}
-                                disabled={disabled || historyBusy || historyLoading}
-                              >
-                                <span style={historyTreeIconStyle}>└</span>
-                                <span style={historyRowTextStyle}>{entry.epoch || "root"}</span>
-                              </button>
-                            );
-                          })
-                        : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        <FeedbackSlot
-          error={historyError}
-          message={historyMessage}
-          loadingText={historyLoadingText}
-        />
-
-        <div style={actionRowStyle}>
-          <button
-            className="train-config-btn"
-            onClick={handleRefreshHistory}
-            disabled={disabled || historyBusy || historyLoading}
-          >
-            {historyLoading ? "loading..." : "refresh history"}
-          </button>
-
-          <button
-            className="train-config-btn"
-            onClick={handleInitialize}
-            disabled={
-              disabled || historyLoading || historyBusy || !selectedSessionId
-            }
-          >
-            {historyAction === "initialize" ? "initializing..." : "initialize"}
-          </button>
-
-          <button
-            className="train-config-btn"
-            onClick={handlePlot}
-            disabled={
-              disabled || historyLoading || historyBusy || !selectedSessionId
-            }
-          >
-            {historyAction === "plot" ? "plotting..." : "plot"}
-          </button>
-        </div>
-
-        <PlotImageBrowser
-          title="History Plots"
-          mode="session"
-          sessionId={selectedSessionId}
-          refreshKey={historyPlotRefreshKey}
-          overlayClassName="plot-browser-overlay-chat"
-        />
-      </section>
-
       <section style={subPanelStyle}>
-        <div style={subHeaderStyle}>
-          <h2 className="train-config-title" style={subTitleStyle}>
-            Training Plan
-          </h2>
+        <div className="train-config-tabs">
+          <button
+            className={`train-config-tab ${activeTab === "benchmark" ? "active" : ""}`}
+            onClick={() => setActiveTab("benchmark")}
+          >
+            Benchmark
+          </button>
+          <button
+            className={`train-config-tab ${activeTab === "training" ? "active" : ""}`}
+            onClick={() => setActiveTab("training")}
+          >
+            Training
+          </button>
         </div>
 
-        {loading && <div className="panel-status">loading...</div>}
-        {loadError && <div className="panel-error">{loadError}</div>}
-
-        {!loading && !loadError && (
+        {activeTab === "benchmark" ? (
+          <BenchmarkPanel
+            onBenchmarkBuilt={({ benchmark_path, val_benchmark_path, test_benchmark_path }) => {
+              setConfig((prev) => ({
+                ...prev,
+                sections: {
+                  ...prev.sections,
+                  io_config: {
+                    ...(prev.sections?.io_config ?? {}),
+                    benchmark_path,
+                    val_benchmark_path,
+                    test_benchmark_path,
+                  },
+                },
+              }));
+            }}
+          />
+        ) : (
           <>
-            <div
-              style={{
-                ...tabRowStyle,
-                gridTemplateColumns: `repeat(${getConfigTabs(config).length}, minmax(0, 1fr))`,
-              }}
-            >
-              {getConfigTabs(config).map((tab, index) => {
-                const active = activeConfigTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    className="train-config-btn"
-                    onClick={() => setActiveConfigTab(tab.id)}
-                    disabled={configBusy}
-                    style={{
-                      borderRadius: 0,
-                      marginLeft: index === 0 ? 0 : -1,
-                      background: active ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.05)",
-                      borderColor: active ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
-                      position: active ? "relative" : "static",
-                      zIndex: active ? 1 : 0,
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
+            {loading && <div className="panel-status">loading...</div>}
+            {loadError && <div className="panel-error">{loadError}</div>}
 
-            <div className="train-config-scroll" style={configScrollStyle}>
-              <div className="train-config-list">{activeConfigContent}</div>
-            </div>
+            {!loading && !loadError && (
+              <>
+                <div style={tabRowStyle}>
+                  <div className="train-config-tabs">
+                    {getConfigTabs(config).map((tab) => (
+                      <button
+                        key={tab.id}
+                        className={`train-config-tab ${activeConfigTab === tab.id ? "active" : ""}`}
+                        onClick={() => setActiveConfigTab(tab.id)}
+                        disabled={configBusy}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-            <FeedbackSlot
-              error={saveError}
-              message={saveMessage}
-              loadingText=""
-            />
+                <div className="train-config-scroll" style={configScrollStyle}>
+                  <div className="train-config-list">{activeConfigContent}</div>
+                </div>
 
-            <div style={actionRowStyle}>
-              <button
-                className="train-config-btn"
-                onClick={handleRefreshConfig}
-                disabled={configBusy}
-              >
-                {refreshingConfig ? "reloading..." : "refresh"}
-              </button>
+                <div className="panel-sticky-footer">
+                  <FeedbackSlot
+                    error={saveError}
+                    message={saveMessage}
+                    loadingText=""
+                  />
 
-              <button
-                className="train-config-btn"
-                onClick={handleSave}
-                disabled={configBusy}
-              >
-                {saving ? "saving..." : "save"}
-              </button>
+                  <div className="train-config-actions">
+                    <button
+                      className="train-config-btn"
+                      onClick={handleRefreshConfig}
+                      disabled={configBusy}
+                    >
+                      {refreshingConfig ? "reloading..." : "refresh"}
+                    </button>
 
-              <button
-                className="train-config-btn train-config-btn-primary"
-                onClick={handleBattle}
-                disabled={configBusy}
-              >
-                start training
-              </button>
-            </div>
+                    <button
+                      className="train-config-btn"
+                      onClick={handleSave}
+                      disabled={configBusy}
+                    >
+                      {saving ? "saving..." : "save"}
+                    </button>
+
+                    <button
+                      className="train-config-btn train-config-btn-primary"
+                      onClick={handleBattle}
+                      disabled={configBusy}
+                    >
+                      start training
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
       </section>

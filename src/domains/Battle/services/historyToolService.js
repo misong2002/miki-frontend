@@ -102,3 +102,13 @@ export async function fetchLatestHistoryPlotImages() {
     files: normalizePlotImageFiles(result?.files),
   };
 }
+
+export async function fetchHistoryPlotStatus(sessionId) {
+  const params = new URLSearchParams({
+    session_id: sessionId,
+  });
+  return requestJson(
+    buildApiUrl(`/api/history/plot-status?${params.toString()}`),
+    { method: "GET" }
+  );
+}

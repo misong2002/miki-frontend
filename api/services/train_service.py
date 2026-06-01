@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,24 @@ from typing import Any
 
 from services.command_runner import command_result_payload, run_command
 from services.response_service import error_payload, success_payload
+
+# ── auto-save throttle ─────────────────────────────────────────────────────
+MIN_AUTO_SAVE_INTERVAL_SEC = 30          # cooldown between auto-saves
+_last_auto_save_time: float = 0.0
+_last_auto_save_epoch: int | None = None
+
+# ── plot status tracker ────────────────────────────────────────────────────
+# session_id → {"status": "plotting"|"done"|"error", "message": str, "ts": float}
+_plot_status: dict[str, dict[str, Any]] = {}
+_plot_status_lock = threading.Lock()
+
+def _set_plot_status(session_id: str, status: str, message: str = ""):
+    with _plot_status_lock:
+        _plot_status[session_id] = {"status": status, "message": message, "ts": time.time()}
+
+def _get_plot_status(session_id: str) -> dict[str, Any] | None:
+    with _plot_status_lock:
+        return _plot_status.get(session_id)
 
 from config import (
     MIKI_ROOT,
@@ -53,13 +72,24 @@ SECTION_NAMES = [
     "io_config",
     "model_config",
     "optimization_config",
-    "cluster_config",
+    "pbs_config",
+    "qos_config",
     "debug_config",
     "misc_config",
 ]
 
 SECTION_KEYS = {
-    "io_config": ["dataset", "dataset_config", "flux", "output", "loss_file"],
+    "io_config": [
+        "dataset",
+        "dataset_config",
+        "flux",
+        "output",
+        "loss_file",
+        # SaBER 用 io 字段
+        "benchmark_path",
+        "val_benchmark_path",
+        "test_benchmark_path",
+    ],
     "model_config": [
         "model_name",
         "hidden_features",
@@ -81,8 +111,28 @@ SECTION_KEYS = {
         "rounds",
         "seed",
         "val_every",
+        # SaBER 专属 loss / training 字段
+        "loss_type",
+        "density_mode",
+        "softplus_scale",
+        "eps",
+        "negative_penalty_weight",
+        "condition_number_max",
+        "condition_transition_width",
+        "training_mode",
+        "core_batch_size",
+        # 通用 optimizer / scheduler 字段
+        "optimizer",
+        "grad_clip_norm",
+        "weight_decay",
+        "use_patience_scheduler",
+        "patience",
+        "lr_reduction_factor",
+        "min_lr",
+        "resume_from_checkpoint",
     ],
-    "cluster_config": ["queue", "nodes", "walltime"],
+    "pbs_config": ["queue", "nodes", "walltime"],
+    "qos_config": ["partition", "nodes", "time", "qos", "gres"],
     "debug_config": ["debug_sleep_ms", "debug_steps"],
     "misc_config": [],
 }
@@ -93,7 +143,8 @@ CONFIG_SECTION_FILE_MAP = {
     "io_config": "config/training_config/io.json",
     "model_config": "config/training_config/model.json",
     "optimization_config": "config/training_config/optimization.json",
-    "cluster_config": "config/training_config/cluster.json",
+    "pbs_config": "config/training_config/pbs.json",
+    "qos_config": "config/training_config/qos.json",
     "debug_config": "config/training_config/debug.json",
 }
 
@@ -540,7 +591,60 @@ def _plot_auto_history_session(session_id: str) -> dict[str, Any]:
     }
 
 
+def _should_throttle_auto_save() -> bool:
+    """Return True if auto-save should be skipped (cooldown not expired)."""
+    if _last_auto_save_time <= 0:
+        return False
+    elapsed = time.time() - _last_auto_save_time
+    return elapsed < MIN_AUTO_SAVE_INTERVAL_SEC
+
+
+def _current_model_epoch_safe() -> int | None:
+    """Read model epoch with retry, returns None on any failure."""
+    try:
+        return _current_model_epoch()
+    except Exception:
+        return None
+
+
 def _save_auto_history_for_live_log() -> dict[str, Any]:
+    """Save history once (with throttle + epoch-dedup) and schedule async plot."""
+    global _last_auto_save_time, _last_auto_save_epoch
+
+    with _AUTO_HISTORY_LOCK:
+        # ── guard 0: only one auto-save at a time ──────────────────────────
+        pass  # _AUTO_HISTORY_LOCK already acquired
+
+    # ── guard 1: cooldown ──────────────────────────────────────────────────
+    if _should_throttle_auto_save():
+        return {
+            "ok": True,
+            "throttled": True,
+            "message": f"skipped auto-save: cooldown ({MIN_AUTO_SAVE_INTERVAL_SEC}s)",
+        }
+
+    # ── guard 2: epoch dedup ───────────────────────────────────────────────
+    current_epoch = _current_model_epoch_safe()
+    if (
+        current_epoch is not None
+        and _last_auto_save_epoch is not None
+        and current_epoch == _last_auto_save_epoch
+    ):
+        return {
+            "ok": True,
+            "throttled": True,
+            "message": f"skipped auto-save: epoch {current_epoch} unchanged",
+        }
+
+    # ── guard 3: check training still running ──────────────────────────────
+    try:
+        status_result, status_code = read_training_session()
+        training_running = (
+            status_code == 200 and status_result.get("running")
+        )
+    except Exception:
+        training_running = False
+
     with _AUTO_HISTORY_LOCK:
         removed_sessions = _remove_auto_history_sessions()
         previous_session_id = _latest_history_session_id()
@@ -565,21 +669,48 @@ def _save_auto_history_for_live_log() -> dict[str, Any]:
         match = _AUTO_HISTORY_SESSION_RE.search(stdout)
         history_session = match.group(1) if match else ""
         current_model_epoch = _model_epoch_from_session_id(history_session)
+
+        # ── guard 4: skip plot if epoch unchanged ──────────────────────────
         should_plot = not (
             previous_model_epoch is not None
             and current_model_epoch is not None
             and previous_model_epoch == current_model_epoch
         )
+
         marker_path = _mark_auto_history_session(history_session)
-        plot_result = (
-            _plot_auto_history_session(history_session)
-            if should_plot
-            else {
+
+        # ── update throttle state ──────────────────────────────────────────
+        _last_auto_save_time = time.time()
+        if current_model_epoch is not None:
+            _last_auto_save_epoch = current_model_epoch
+
+        # ── schedule async plot ────────────────────────────────────────────
+        plot_result: dict[str, Any]
+        if should_plot and history_session:
+            _set_plot_status(history_session, "plotting",
+                             f"plot started for {history_session}")
+            threading.Thread(
+                target=_run_plot_and_update_status,
+                args=(history_session,),
+                daemon=True,
+            ).start()
+            plot_result = {
+                "ok": True,
+                "async": True,
+                "message": f"plot scheduled in background for {history_session}",
+            }
+        elif not history_session:
+            plot_result = {
+                "ok": False,
+                "skipped": True,
+                "message": "skipped plot because history_session was empty",
+            }
+        else:
+            plot_result = {
                 "ok": True,
                 "skipped": True,
                 "message": "skipped plot because model epoch did not change",
             }
-        )
 
         return {
             "ok": True,
@@ -592,8 +723,23 @@ def _save_auto_history_for_live_log() -> dict[str, Any]:
             "auto_marker": str(marker_path) if marker_path is not None else "",
             "removed_auto_sessions": removed_sessions,
             "plot": plot_result,
+            "training_running": training_running,
             **command_result_payload(result),
         }
+
+
+def _run_plot_and_update_status(session_id: str):
+    """Run plot in background and update status tracker."""
+    try:
+        result = _plot_auto_history_session(session_id)
+        if result.get("ok"):
+            _set_plot_status(session_id, "done",
+                             f"plot finished: {session_id}")
+        else:
+            _set_plot_status(session_id, "error",
+                             result.get("error", "plot failed"))
+    except Exception as e:
+        _set_plot_status(session_id, "error", str(e))
 
 
 def _try_save_auto_history_for_live_log() -> dict[str, Any]:
@@ -907,10 +1053,18 @@ def read_training_session():
             except Exception:
                 running = False
 
-    elif mode == "cluster":
+    elif mode == "pbs":
         if job_id:
             try:
                 result = run_command(["qstat", str(job_id)], cwd=MIKI_ROOT)
+                running = result.returncode == 0
+            except Exception:
+                running = False
+
+    elif mode == "qos":
+        if job_id:
+            try:
+                result = run_command(["squeue", "-j", str(job_id)], cwd=MIKI_ROOT)
                 running = result.returncode == 0
             except Exception:
                 running = False

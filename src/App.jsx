@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ChatPanel from "./domains/Chat/components/ChatPanel";
 import HyperParamPanel from "./domains/Battle/components/HyperParamPanel";
+import HistoryPanel from "./domains/Battle/components/HistoryPanel";
 import TransitionOverlay from "./domains/Shared/TransitionOverlay";
 import Live2DStage from "./domains/Shared/Live2DStage";
 import ContactPanel from "./domains/Chat/components/ContactPanel";
@@ -102,6 +103,7 @@ function ChatModeView({
   onLive2DInteraction,
   onInteractionRequestHandled,
 }) {
+  const [showHistory, setShowHistory] = useState(false);
   return (
     <>
       <aside className="param-column">
@@ -114,6 +116,18 @@ function ChatModeView({
       </aside>
 
       <aside className="chat-column">
+        {showHistory ? (
+          <>
+            <button onClick={() => setShowHistory(false)} className="history-toggle-btn">
+              📋 History ▾
+            </button>
+            <HistoryPanel disabled={panelDisabled} />
+          </>
+        ) : (
+          <button onClick={() => setShowHistory(true)} className="history-toggle-btn">
+            📋 History ▸
+          </button>
+        )}
         <ChatPanel
           disabled={panelDisabled || !chatBootReady}
           bootLoading={!chatShellReady}
@@ -146,6 +160,8 @@ function BattleModeView({
   historyStatusKind,
   lastPlottedSessionId,
   plotRefreshKey,
+  autoSaveStatus,
+  plotPendingSessions,
   onForceExitBattle,
   onSaveHistoryAndPlot,
   stageProps,
@@ -180,7 +196,7 @@ function BattleModeView({
       <aside className="battle-loss-column">
         <BattlePanel
           lossData={battle.lossData}
-          sourcePath={APP_CONFIG.lossFilePath}
+          sourcePath={battle.lossSourcePath || APP_CONFIG.lossFilePath}
           onForceExit={onForceExitBattle}
           onSaveHistoryAndPlot={onSaveHistoryAndPlot}
           exiting={battleExiting}
@@ -190,6 +206,8 @@ function BattleModeView({
           historyStatusKind={historyStatusKind}
           lastPlottedSessionId={lastPlottedSessionId}
           plotRefreshKey={plotRefreshKey}
+          autoSaveStatus={autoSaveStatus}
+          plotPendingSessions={plotPendingSessions}
         />
       </aside>
 
@@ -327,6 +345,8 @@ export default function App() {
     historyStatusKind,
     lastPlottedSessionId,
     plotRefreshKey,
+    autoSaveStatus,
+    plotPendingSessions,
     handleEnterBattleMode,
     handleForceExitBattle,
     handleSaveHistoryAndPlot,
@@ -458,6 +478,8 @@ export default function App() {
           historyStatusKind={historyStatusKind}
           lastPlottedSessionId={lastPlottedSessionId}
           plotRefreshKey={plotRefreshKey}
+          autoSaveStatus={autoSaveStatus}
+          plotPendingSessions={plotPendingSessions}
           onForceExitBattle={handleForceExitBattle}
           onSaveHistoryAndPlot={handleSaveHistoryAndPlot}
           stageProps={stageProps}
