@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlparse
 import re
 import shutil
 import sys
@@ -51,6 +52,8 @@ from scripts.utils.train_config_utils import load_train_config, save_train_confi
 
 SECTION_NAMES = [
     "io_config",
+    "local_dataset_config",
+    "doraemon_dataset_config",
     "model_config",
     "optimization_config",
     "cluster_config",
@@ -59,7 +62,18 @@ SECTION_NAMES = [
 ]
 
 SECTION_KEYS = {
-    "io_config": ["dataset", "dataset_config", "flux", "output", "loss_file"],
+    "io_config": ["dataset_type", "output", "flux"],
+    "local_dataset_config": [
+        "dataset",
+        "dataset_config",
+        "loss_file",
+    ],
+    "doraemon_dataset_config": [
+        "doraemon_generator",
+        "doraemon_oscillation",
+        "doraemon_flavor",
+        "doraemon_beam_mode",
+    ],
     "model_config": [
         "model_name",
         "hidden_features",
@@ -91,6 +105,8 @@ SECTION_KEYS = {
 
 CONFIG_SECTION_FILE_MAP = {
     "io_config": "config/training_config/io.json",
+    "local_dataset_config": "config/training_config/dataset_local.json",
+    "doraemon_dataset_config": "config/training_config/dataset_doraemon.json",
     "model_config": "config/training_config/model.json",
     "optimization_config": "config/training_config/optimization.json",
     "cluster_config": "config/training_config/cluster.json",
@@ -121,6 +137,10 @@ OPTIMIZATION_INTEGRATION_CONFIG_KEYS = [
     "gauss_legendre_input1_order",
     "gauss_legendre_input2_order",
 ]
+DOWNLOAD_BENCHMARK_ROOT = MIKI_ROOT / "data" / "download_dataset4benchmark"
+ALLOWED_OSCILLATIONS = {"osc", "unosc"}
+ALLOWED_FLAVORS = {"numu", "numubar", "nue", "nuebar"}
+ALLOWED_BEAM_MODES = {"FHC", "RHC"}
 
 _AUTO_HISTORY_LOCK = threading.Lock()
 _AUTO_HISTORY_SESSION_RE = re.compile(
@@ -207,10 +227,48 @@ def _load_config_sections_from_files(
     return sections
 
 
+def _normalize_dataset_sections(sections: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if not isinstance(sections.get("io_config"), dict):
+        sections["io_config"] = {}
+    if not isinstance(sections.get("local_dataset_config"), dict):
+        sections["local_dataset_config"] = {}
+    if not isinstance(sections.get("doraemon_dataset_config"), dict):
+        sections["doraemon_dataset_config"] = {}
+
+    io_config = sections["io_config"]
+    local_config = sections["local_dataset_config"]
+    doraemon_config = sections["doraemon_dataset_config"]
+
+    for key in ["dataset", "dataset_config", "loss_file"]:
+        if key in io_config and key not in local_config:
+            local_config[key] = io_config.pop(key)
+
+    for key in ["output", "flux"]:
+        if key not in io_config:
+            io_config[key] = ""
+
+    for key in [
+        "doraemon_generator",
+        "doraemon_oscillation",
+        "doraemon_flavor",
+        "doraemon_beam_mode",
+    ]:
+        if key in io_config and key not in doraemon_config:
+            doraemon_config[key] = io_config.pop(key)
+
+    dataset_type = str(io_config.get("dataset_type") or "").strip()
+    if dataset_type not in {"local", "Doraemon"}:
+        dataset_type = "local"
+    io_config["dataset_type"] = dataset_type
+
+    return sections
+
+
 def _write_config_sections_to_files(config: dict[str, Any]) -> dict[str, Any]:
     sections = config.get("sections")
     if not isinstance(sections, dict):
         raise ValueError("config.sections must be an object")
+    sections = _normalize_dataset_sections(dict(sections))
 
     existing_manifest = _load_train_manifest()
     manifest: dict[str, Any] = {
@@ -321,6 +379,79 @@ def _get_train_log_path() -> Path:
 
 def _get_train_live_log_path() -> Path:
     return TRAIN_LIVE_LOG_PATH
+
+
+def read_doraemon_dataset_options():
+    """Scan data/download_dataset4benchmark/ directory structure and return
+    available generator/oscillation/flavor/beam_mode combinations."""
+    if not DOWNLOAD_BENCHMARK_ROOT.exists():
+        return success_payload(
+            root=str(DOWNLOAD_BENCHMARK_ROOT),
+            generators=[],
+            items=[],
+            by_generator={},
+        ), 200
+
+    items: list[dict[str, Any]] = []
+    # Scan: generator/{oscillation}/{flavor}/{beam_mode}/
+    for gen_dir in sorted(DOWNLOAD_BENCHMARK_ROOT.iterdir()):
+        if not gen_dir.is_dir() or gen_dir.name.startswith("."):
+            continue
+        generator = gen_dir.name
+        for osc_dir in sorted(gen_dir.iterdir()):
+            if not osc_dir.is_dir() or osc_dir.name not in ALLOWED_OSCILLATIONS:
+                continue
+            oscillation = osc_dir.name
+            for flavor_dir in sorted(osc_dir.iterdir()):
+                if not flavor_dir.is_dir() or flavor_dir.name not in ALLOWED_FLAVORS:
+                    continue
+                flavor = flavor_dir.name
+                for beam_dir in sorted(flavor_dir.iterdir()):
+                    if not beam_dir.is_dir() or beam_dir.name not in ALLOWED_BEAM_MODES:
+                        continue
+                    beam_mode = beam_dir.name
+                    has_train = (beam_dir / "train").is_dir()
+                    has_val = (beam_dir / "val").is_dir()
+                    has_test = (beam_dir / "test").is_dir()
+                    if not (has_train and has_val):
+                        continue
+                    items.append({
+                        "generator": generator,
+                        "oscillation": oscillation,
+                        "flavor": flavor,
+                        "beam_mode": beam_mode,
+                        "has_train": has_train,
+                        "has_val": has_val,
+                        "has_test": has_test,
+                    })
+
+    # Build by_generator lookup for cascading selects
+    by_generator: dict[str, dict[str, Any]] = {}
+    for item in items:
+        gen = item["generator"]
+        if gen not in by_generator:
+            by_generator[gen] = {
+                "oscillations": set(),
+                "flavors": set(),
+                "beam_modes": set(),
+            }
+        by_generator[gen]["oscillations"].add(item["oscillation"])
+        by_generator[gen]["flavors"].add(item["flavor"])
+        by_generator[gen]["beam_modes"].add(item["beam_mode"])
+
+    for gen in by_generator:
+        by_generator[gen] = {
+            k: sorted(v) for k, v in by_generator[gen].items()
+        }
+
+    generators = sorted(by_generator.keys())
+
+    return success_payload(
+        root=str(DOWNLOAD_BENCHMARK_ROOT),
+        generators=generators,
+        items=items,
+        by_generator=by_generator,
+    ), 200
 
 
 def _leaf_sort_key(leaf_name: str) -> tuple[int, int, int]:
@@ -703,6 +834,7 @@ def group_train_config(flat_config: dict[str, Any]) -> dict[str, Any]:
             }
 
     grouped_sections["misc_config"].update(remaining)
+    _normalize_dataset_sections(grouped_sections)
 
     default_model, _available_models = _load_available_models()
 
@@ -737,8 +869,19 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
         *SECTION_NAMES,
         *[name for name in sections.keys() if name not in SECTION_NAMES],
     ]
+    io_section = sections.get("io_config", {})
+    dataset_type = "local"
+    if isinstance(io_section, dict):
+        dataset_type = str(io_section.get("dataset_type", "local")).strip()
+    active_dataset_section = (
+        "doraemon_dataset_config"
+        if dataset_type == "Doraemon"
+        else "local_dataset_config"
+    )
 
     for section_name in ordered_section_names:
+        if section_name in {"local_dataset_config", "doraemon_dataset_config"}:
+            continue
         section = sections.get(section_name, {})
         if not isinstance(section, dict):
             continue
@@ -755,6 +898,10 @@ def flatten_train_config(config: dict[str, Any]) -> dict[str, Any]:
             if section_name == "optimization_config" and key == "loss_integration_configs":
                 continue
             flat[key] = value
+
+    dataset_section = sections.get(active_dataset_section, {})
+    if isinstance(dataset_section, dict):
+        flat.update(dataset_section)
 
     return flat
 
@@ -811,10 +958,11 @@ def read_train_config():
             sections = _load_config_sections_from_files(manifest)
             config = {
                 "run_mode": manifest.get("run_mode", "local"),
-                "sections": sections,
+                "sections": _normalize_dataset_sections(sections),
             }
         else:
             config = group_train_config(load_train_config(TRAIN_CONFIG_PATH))
+            config["sections"] = _normalize_dataset_sections(config.get("sections", {}))
     except Exception as e:
         return error_payload(
             f"failed to read train config: {e}",
@@ -1261,7 +1409,7 @@ def read_training_live_log(offset: int | None = None):
         lines = text.splitlines()
         auto_history = (
             _try_save_auto_history_for_live_log()
-            if lines or (offset is None and _should_refresh_auto_history_on_battle_start())
+            if _should_refresh_auto_history_on_battle_start()
             else None
         )
 

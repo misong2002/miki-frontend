@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { stripHiddenControlText } from "../../miki_san/language/controlTagParser";
+import { prepareToolRoutedContext } from "../../miki_san/program/tool_router/toolRouterModule";
 
 function makeMessage({
   id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -38,12 +40,34 @@ function normalizeInitialMessage(msg) {
 
   return makeMessage({
     ...msg,
+    content:
+      msg?.role === "assistant"
+        ? stripHiddenControlText(msg.content)
+        : msg.content,
     status,
+    references: msg?.references ?? msg?.meta?.references ?? [],
     meta: {
       ...(msg?.meta ?? {}),
       interrupted,
     },
   });
+}
+
+function buildRecentVisibleContext(messages = [], limit = 8) {
+  return (Array.isArray(messages) ? messages : [])
+    .filter((msg) => {
+      if (!msg?.content?.trim()) return false;
+      if (msg.status && msg.status !== "done") return false;
+      return msg.role === "user" || msg.role === "assistant";
+    })
+    .slice(-limit)
+    .map((msg) => ({
+      role: msg.role,
+      content:
+        msg.role === "assistant"
+          ? stripHiddenControlText(msg.content)
+          : String(msg.content || "").trim(),
+    }));
 }
 
 function buildFallbackMessages({ suppressFallbackGreeting = false } = {}) {
@@ -83,6 +107,66 @@ function formatTime(ts) {
   return `${month}-${day} ${hh}:${mm}`;
 }
 
+function normalizeToolStatus(status) {
+  if (!status || typeof status !== "object") return null;
+  const message = String(status.message || "").trim();
+  if (!message) return null;
+  return {
+    ...status,
+    tool: String(status.tool || "tool"),
+    phase: status.phase || "running",
+    message,
+    at: status.at || Date.now(),
+  };
+}
+
+function mergeToolStatusList(statuses = [], nextStatus) {
+  const normalized = normalizeToolStatus(nextStatus);
+  if (!normalized) return statuses;
+
+  const existing = Array.isArray(statuses) ? statuses : [];
+  const lastIndex = existing.length - 1;
+  const last = lastIndex >= 0 ? existing[lastIndex] : null;
+  const nextWithDuration = {
+    ...normalized,
+    durationMs:
+      normalized.durationMs ??
+      normalized.duration_ms ??
+      (
+        normalized.phase !== "running" &&
+        last &&
+        last.tool === normalized.tool &&
+        Number.isFinite(last.at)
+          ? Math.max(0, (normalized.at || Date.now()) - last.at)
+          : null
+      ),
+  };
+
+  if (
+    last &&
+    last.tool === nextWithDuration.tool &&
+    last.phase === "running"
+  ) {
+    return [
+      ...existing.slice(0, lastIndex),
+      {
+        ...last,
+        ...nextWithDuration,
+      },
+    ];
+  }
+
+  return [...existing, nextWithDuration];
+}
+
+function getToolStatuses(meta = {}) {
+  if (Array.isArray(meta.toolStatuses) && meta.toolStatuses.length > 0) {
+    return meta.toolStatuses;
+  }
+  const single = normalizeToolStatus(meta.toolStatus);
+  return single ? [single] : [];
+}
+
 export default function ChatPanel({
   disabled = false,
   chatAgent,
@@ -92,9 +176,13 @@ export default function ChatPanel({
   suppressFallbackGreeting = false,
   interactionRequest = null,
   onInteractionRequestHandled = null,
+  onTransformRequest = null,
+  onStartTrainingRequest = null,
+  onMoveRequest = null,
 }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachment, setAttachment] = useState(null);
 
   const [messages, setMessages] = useState(() => {
     if (Array.isArray(initialMessages) && initialMessages.length > 0) {
@@ -106,6 +194,8 @@ export default function ChatPanel({
 
   const historyRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const pendingInitialScrollRef = useRef(false);
   const scrollStateRef = useRef({
     autoFollow: false,
     lastMessageCount: messages.length,
@@ -113,6 +203,12 @@ export default function ChatPanel({
     programmatic: false,
     releaseTimer: null,
   });
+
+  function formatDuration(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs < 0) return "";
+    if (durationMs < 1000) return `${Math.round(durationMs)} ms`;
+    return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)} s`;
+  }
 
   function setProgrammaticScrollTop(top) {
     const el = historyRef.current;
@@ -130,6 +226,13 @@ export default function ChatPanel({
       state.programmatic = false;
       state.releaseTimer = null;
     }, 80);
+  }
+
+  function scrollHistoryToBottom() {
+    const el = historyRef.current;
+    if (!el) return;
+
+    setProgrammaticScrollTop(Math.max(0, el.scrollHeight - el.clientHeight));
   }
 
   function disableAutoFollowFromUserScroll(event) {
@@ -176,7 +279,11 @@ export default function ChatPanel({
       return;
     }
 
-    if (state.autoFollow && messageCountDelta > 0) {
+    if (pendingInitialScrollRef.current) {
+      pendingInitialScrollRef.current = false;
+      scrollHistoryToBottom();
+      window.requestAnimationFrame(scrollHistoryToBottom);
+    } else if (state.autoFollow && messageCountDelta > 0) {
       setProgrammaticScrollTop(
         Math.max(0, nextScrollHeight - el.clientHeight)
       );
@@ -207,6 +314,7 @@ export default function ChatPanel({
 
     if (Array.isArray(initialMessages) && initialMessages.length > 0) {
       setMessages(initialMessages.map(normalizeInitialMessage));
+      pendingInitialScrollRef.current = true;
       return;
     }
 
@@ -227,13 +335,31 @@ export default function ChatPanel({
   }, [input, bootLoading]);
 
   function updateAssistantMessage(messageId, content, status = "pending") {
+    const visibleContent = stripHiddenControlText(content);
     setMessages((prev) =>
       prev.map((msg) =>
         msg.id === messageId
           ? {
               ...msg,
-              content,
+              content: visibleContent,
               status,
+            }
+          : msg
+      )
+    );
+  }
+
+  function patchAssistantMessage(messageId, patch = {}) {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? {
+              ...msg,
+              ...patch,
+              meta: {
+                ...(msg.meta ?? {}),
+                ...(patch.meta ?? {}),
+              },
             }
           : msg
       )
@@ -242,12 +368,18 @@ export default function ChatPanel({
 
   async function sendMessage({
     text,
+    displayText: displayTextOverride = "",
     messageType = "user",
     clearInput = false,
+    attachment: nextAttachment = null,
+    renderUserMessage = true,
   }) {
     const trimmed = String(text ?? "").trim();
+    const displayTextValue = String(displayTextOverride || trimmed).trim();
+    const hasAttachment = Boolean(nextAttachment?.file);
+    const displayText = displayTextValue || (hasAttachment ? "请阅读这个附件。" : "");
     if (
-      !trimmed ||
+      !displayText ||
       sending ||
       disabled ||
       bootLoading ||
@@ -258,10 +390,13 @@ export default function ChatPanel({
 
     const userMessage = makeMessage({
       role: "user",
-      content: trimmed,
+      content: hasAttachment
+        ? `${displayText}\n\n[附件：${nextAttachment.file.name}]`
+        : displayText,
       status: "done",
       meta: {
         messageType,
+        attachmentName: nextAttachment?.file?.name ?? null,
       },
     });
 
@@ -272,22 +407,133 @@ export default function ChatPanel({
     });
 
     scrollStateRef.current.autoFollow = true;
-    setMessages((prev) => [...prev, userMessage, pendingAssistant]);
+    setMessages((prev) =>
+      renderUserMessage
+        ? [...prev, userMessage, pendingAssistant]
+        : [...prev, pendingAssistant]
+    );
     if (clearInput) setInput("");
+    if (nextAttachment) {
+      setAttachment(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
     setSending(true);
 
     try {
+      updateAssistantMessage(
+        pendingAssistant.id,
+        "正在思考……",
+        "pending"
+      );
+
+      let visiblePrelude = "";
+      const withPrelude = (text, fallback = "正在思考……") => {
+        const body = text || fallback;
+        return visiblePrelude ? `${visiblePrelude}\n\n${body}` : body;
+      };
+
+      const setToolStatus = (toolStatus) => {
+        const normalized = normalizeToolStatus(toolStatus);
+        if (!normalized) return;
+
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id !== pendingAssistant.id) return msg;
+            const toolStatuses = mergeToolStatusList(
+              msg.meta?.toolStatuses ?? [],
+              normalized
+            );
+            assistantMeta.toolStatuses = toolStatuses;
+            return {
+                ...msg,
+                meta: {
+                  ...(msg.meta ?? {}),
+                  toolStatus: normalized,
+                  toolStatuses,
+                },
+              };
+          })
+        );
+      };
+      const assistantMeta = {
+        toolStatuses: [],
+        references: [],
+      };
+      const mergeReferences = (nextReferences = []) => {
+        if (!Array.isArray(nextReferences) || nextReferences.length === 0) return;
+
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id !== pendingAssistant.id) return msg;
+            const existing = Array.isArray(msg.references) ? msg.references : [];
+            const merged = [...existing];
+            const seen = new Set(
+              existing.map((ref) => ref?.url || ref?.source || ref?.title).filter(Boolean)
+            );
+
+            for (const ref of nextReferences) {
+              const key = ref?.url || ref?.source || ref?.title;
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              merged.push(ref);
+            }
+
+            assistantMeta.references = merged;
+            return {
+              ...msg,
+              references: merged,
+            };
+          })
+        );
+      };
+
+      const routedContext = await prepareToolRoutedContext({
+        text: trimmed || displayText,
+        attachment: nextAttachment,
+        recentMessages: buildRecentVisibleContext(messages),
+        onTransformRequest,
+        onStartTrainingRequest,
+        onMoveRequest,
+        onToolStatus: setToolStatus,
+        onPrelude: (prelude) => {
+          visiblePrelude = prelude;
+          updateAssistantMessage(pendingAssistant.id, prelude, "pending");
+        },
+      });
+
+      const usedToolCount = routedContext.usedTools?.length ?? 0;
+
+      if (Array.isArray(routedContext.references)) {
+        patchAssistantMessage(pendingAssistant.id, {
+          references: routedContext.references,
+        });
+        assistantMeta.references = routedContext.references;
+      }
+
+      if (usedToolCount) {
+        setToolStatus({
+          tool: "llm",
+          phase: "running",
+          message: "正在组织语言",
+          at: Date.now(),
+        });
+      }
+
       await chatAgent.sendUserMessage(
         {
-          text: trimmed,
+          text: routedContext.promptText,
+          displayText,
           messageId: pendingAssistant.id,
           messageType,
+          assistantMeta,
         },
         {
           onThinkingStart: () => {
             updateAssistantMessage(
               pendingAssistant.id,
-              "正在思考……",
+              withPrelude("", "正在思考……"),
               "pending"
             );
           },
@@ -295,7 +541,7 @@ export default function ChatPanel({
           onTextUpdate: (fullText) => {
             updateAssistantMessage(
               pendingAssistant.id,
-              fullText || "正在思考……",
+              withPrelude(fullText, "正在思考……"),
               "pending"
             );
           },
@@ -303,7 +549,7 @@ export default function ChatPanel({
           onDone: (finalText) => {
             updateAssistantMessage(
               pendingAssistant.id,
-              finalText || "……",
+              withPrelude(finalText, "……"),
               "done"
             );
           },
@@ -311,7 +557,7 @@ export default function ChatPanel({
           onInterrupted: (partialText) => {
             updateAssistantMessage(
               pendingAssistant.id,
-              (partialText || "……") +
+              withPrelude(partialText, "……") +
                 "\n\n[对话被中断]\n诶诶诶，怎么啦？你先说~",
               "done"
             );
@@ -320,9 +566,26 @@ export default function ChatPanel({
           onError: (err, partialText) => {
             updateAssistantMessage(
               pendingAssistant.id,
-              partialText || `请求失败：${err?.message ?? "unknown error"}`,
+              withPrelude(
+                partialText,
+                `请求失败：${err?.message ?? "unknown error"}`
+              ),
               "error"
             );
+          },
+
+          onToolStatus: setToolStatus,
+          onReferences: mergeReferences,
+
+          onControl: (event) => {
+            if (event?.type === "config") {
+              setToolStatus({
+                tool: "program-config",
+                phase: "running",
+                message: `正在修改配置：${event.path}`,
+                at: Date.now(),
+              });
+            }
           },
         }
       );
@@ -345,7 +608,25 @@ export default function ChatPanel({
       text: input,
       messageType: "user",
       clearInput: true,
+      attachment,
     });
+  }
+
+  function handleAttachClick() {
+    if (disabled || sending || bootLoading) return;
+    fileInputRef.current?.click?.();
+  }
+
+  function handleFileChange(event) {
+    const file = event.target.files?.[0] ?? null;
+    setAttachment(file ? { file } : null);
+  }
+
+  function clearAttachment() {
+    setAttachment(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   useEffect(() => {
@@ -353,8 +634,10 @@ export default function ChatPanel({
 
     sendMessage({
       text: interactionRequest.text,
+      displayText: interactionRequest.displayText,
       messageType: "interaction",
       clearInput: false,
+      renderUserMessage: false,
     });
     onInteractionRequestHandled?.(interactionRequest.id);
   }, [interactionRequest?.id]);
@@ -430,6 +713,24 @@ export default function ChatPanel({
                     <div
                       className={`chat-bubble ${msg.role} ${msg.status || "done"}`}
                     >
+                      {msg.role === "assistant" && getToolStatuses(msg.meta).length > 0 && (
+                        <div className="chat-tool-status-list">
+                          {getToolStatuses(msg.meta).map((status, index) => (
+                            <div
+                              key={`${status.tool}-${status.phase}-${status.at}-${index}`}
+                              className={`chat-tool-status ${status.phase || "running"}`}
+                            >
+                              {status.message}
+                              {status.phase !== "running" && formatDuration(status.durationMs) && (
+                                <span className="chat-tool-status-duration">
+                                  {formatDuration(status.durationMs)}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex]}
@@ -441,14 +742,28 @@ export default function ChatPanel({
 
                     {Array.isArray(msg.references) && msg.references.length > 0 && (
                       <div className="chat-references">
-                        {msg.references.map((ref, i) => (
-                          <span
-                            className="chat-ref-chip"
-                            key={`${msg.id}-ref-${i}`}
-                          >
-                            {ref.title || ref.source || "reference"}
-                          </span>
-                        ))}
+                        {msg.references.map((ref, i) =>
+                          ref.url || ref.source?.startsWith?.("http") ? (
+                            <a
+                              className="chat-ref-chip"
+                              key={`${msg.id}-ref-${i}`}
+                              href={ref.url || ref.source}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={ref.url || ref.source}
+                            >
+                              {ref.title || ref.source || "reference"}
+                            </a>
+                          ) : (
+                            <span
+                              className="chat-ref-chip"
+                              key={`${msg.id}-ref-${i}`}
+                              title={ref.source || ref.title || "reference"}
+                            >
+                              {ref.title || ref.source || "reference"}
+                            </span>
+                          )
+                        )}
                       </div>
                     )}
                   </div>
@@ -485,11 +800,45 @@ export default function ChatPanel({
               rows={1}
             />
 
+            {attachment?.file && (
+              <div className="chat-attachment-chip">
+                <span className="chat-attachment-name">
+                  {attachment.file.name}
+                </span>
+                <button
+                  className="chat-attachment-remove"
+                  type="button"
+                  onClick={clearAttachment}
+                  disabled={sending}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+
             <div className="chat-actions">
+              <input
+                ref={fileInputRef}
+                className="chat-file-input"
+                type="file"
+                accept=".pdf,.docx,.txt,.md,.markdown,.tex,.csv,.json,.html,.htm,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={handleFileChange}
+                disabled={disabled || sending}
+              />
+
+              <button
+                className="chat-attach-btn"
+                type="button"
+                onClick={handleAttachClick}
+                disabled={disabled || sending}
+              >
+                Attach
+              </button>
+
               <button
                 className="chat-send-btn"
                 onClick={handleSend}
-                disabled={disabled || sending || !input.trim()}
+                disabled={disabled || sending || (!input.trim() && !attachment?.file)}
               >
                 {sending ? "Sending..." : "Send"}
               </button>

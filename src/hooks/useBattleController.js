@@ -454,7 +454,7 @@ export function useBattleController({
 
     await delay(800);
 
-    stageAgent?.setStageProps?.(defaultStageProps);
+    stageAgent?.setStagePreset?.("normal");
 
     clearCachedBattleContacts();
     setBattle(resetBattleState());
@@ -531,7 +531,7 @@ export function useBattleController({
       startResult = await startBattle(trainConfig);
     } catch (err) {
       console.error("[battle] startBattle failed:", err);
-      stageAgent?.setStageProps?.(defaultStageProps);
+      stageAgent?.setStagePreset?.("normal");
       appAgent?.setMode?.(appModeEnum.CHAT);
       setMode(appModeEnum.CHAT);
       return;
@@ -552,7 +552,7 @@ export function useBattleController({
     }
 
     await delay(150);
-    stageAgent?.setStageProps?.(magicalStageProps);
+    stageAgent?.setStagePreset?.("magical");
     await delay(350);
 
     try {
@@ -622,7 +622,7 @@ export function useBattleController({
     await saveHistoryOnSessionClosedOnce();
     await queueTrainingSummaryPromptIfAvailable();
 
-    stageAgent?.setStageProps?.(defaultStageProps);
+    stageAgent?.setStagePreset?.("normal");
 
     clearCachedBattleContacts();
     setBattle(resetBattleState());
@@ -665,7 +665,7 @@ export function useBattleController({
           resetHistoryUiState();
           const sessionKey = markSessionRunning(status.session);
           resetTrainingLiveLogState();
-          stageAgent?.setStageProps?.(magicalStageProps);
+          stageAgent?.setStagePreset?.("magical");
 
           const introMessages = [
             makeContactMessage({
@@ -711,7 +711,7 @@ export function useBattleController({
 
           clearCachedBattleContacts();
           resetTrainingLiveLogState();
-          stageAgent?.setStageProps?.(defaultStageProps);
+          stageAgent?.setStagePreset?.("normal");
           appAgent?.setMode?.(appModeEnum.CHAT);
           setMode(appModeEnum.CHAT);
         }
@@ -723,7 +723,7 @@ export function useBattleController({
         }
       } catch (err) {
         console.error("[battle/bootstrap] failed to get battle status:", err);
-        stageAgent?.setStageProps?.(defaultStageProps);
+        stageAgent?.setStagePreset?.("normal");
         appAgent?.setMode?.(appModeEnum.CHAT);
         setMode(appModeEnum.CHAT);
         if (!cancelled) {

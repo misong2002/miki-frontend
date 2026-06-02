@@ -67,7 +67,7 @@ def chat_with_miki(history, user_message: str):
         model=OPENAI_MODEL,
         messages=messages,
         temperature=0.7,
-        max_tokens=50000,
+        max_tokens=100000,
     )
 
     text = response.choices[0].message.content or ""

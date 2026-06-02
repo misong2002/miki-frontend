@@ -257,6 +257,7 @@ export function appendMessage({
     content,
     createdAt: timestamp,
     meta: {
+      ...meta,
       emotion: meta.emotion ?? null,
       motion: meta.motion ?? null,
       interrupted: meta.interrupted ?? false,

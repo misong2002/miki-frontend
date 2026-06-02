@@ -33,6 +33,7 @@ export function createLanguageModule({
     return runtime.hear(
       {
         text: trimmed,
+        displayText: normalized.displayText,
         messageId: normalized.messageId,
         messageType: normalized.messageType,
       },

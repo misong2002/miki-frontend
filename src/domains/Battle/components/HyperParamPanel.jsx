@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  fetchDoraemonDatasets,
   fetchTrainConfig,
   saveTrainConfig,
 } from "../services/trainConfigService";
@@ -9,8 +10,16 @@ import {
   runHistoryPlot,
 } from "../services/historyToolService";
 import PlotImageBrowser from "./PlotImageBrowser";
+import { PROGRAM_CONFIG_MODIFIED_EVENT } from "../../miki_san/program/programModule";
 
 const RUN_MODE_OPTIONS = ["local", "cluster", "debug"];
+const DATASET_TYPE_OPTIONS = ["local", "Doraemon"];
+const DORAEMON_DEFAULTS = {
+  generator: "",
+  oscillation: "osc",
+  flavor: "numu",
+  beam_mode: "",
+};
 const LOSS_NUMERICAL_INTEGRATION_OPTIONS = [
   { value: "bin_sum", label: "bin_sum" },
   { value: "adaptive", label: "adaptive" },
@@ -20,6 +29,8 @@ const RUN_MODE_TAB_ID = "run_mode";
 const PRIMARY_CONFIG_TABS = ["io_config", "model_config", "optimization_config"];
 const CONFIG_SECTION_ORDER = [
   "io_config",
+  "local_dataset_config",
+  "doraemon_dataset_config",
   "model_config",
   "optimization_config",
   "cluster_config",
@@ -36,6 +47,8 @@ const SECTION_LABELS = {
 };
 const SECTION_TITLES = {
   io_config: "IO Config",
+  local_dataset_config: "Local Dataset Config",
+  doraemon_dataset_config: "Doraemon Dataset Config",
   model_config: "Model Config",
   optimization_config: "Optimization Config",
   cluster_config: "Cluster Config",
@@ -372,10 +385,64 @@ function normalizeConfig(config) {
     }
   }
 
+  const ioConfig = normalizedSections.io_config ?? {};
+  if (!ioConfig.dataset_type) {
+    // Default to "Doraemon" if doraemon_generator is set, otherwise "local"
+    ioConfig.dataset_type = normalizedSections.doraemon_dataset_config?.doraemon_generator
+      ? "Doraemon"
+      : "local";
+  }
+  const localDatasetConfig = normalizedSections.local_dataset_config ?? {};
+  const doraemonDatasetConfig = normalizedSections.doraemon_dataset_config ?? {};
+  for (const key of ["dataset", "dataset_config", "loss_file"]) {
+    if (key in ioConfig && !(key in localDatasetConfig)) {
+      localDatasetConfig[key] = ioConfig[key];
+      delete ioConfig[key];
+    }
+  }
+  for (const key of ["output", "flux"]) {
+    if (key in localDatasetConfig && !(key in ioConfig)) {
+      ioConfig[key] = localDatasetConfig[key];
+      delete localDatasetConfig[key];
+    }
+  }
+  for (const key of [
+    "doraemon_generator",
+    "doraemon_oscillation",
+    "doraemon_flavor",
+    "doraemon_beam_mode",
+  ]) {
+    if (key in ioConfig && !(key in doraemonDatasetConfig)) {
+      doraemonDatasetConfig[key] = ioConfig[key];
+      delete ioConfig[key];
+    }
+  }
+  normalizedSections.io_config = ioConfig;
+  normalizedSections.local_dataset_config = localDatasetConfig;
+  normalizedSections.doraemon_dataset_config = doraemonDatasetConfig;
+
   return {
     run_mode: config?.run_mode ?? "local",
     sections: normalizedSections,
   };
+}
+
+function uniqueValues(items, key) {
+  return sortedStrings([...new Set(items.map((item) => item?.[key]).filter(Boolean))]);
+}
+
+function sortedStrings(values) {
+  return values
+    .map((value) => String(value))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function optionListWithCurrent(options, current) {
+  const values = [...options];
+  if (current && !values.includes(current)) {
+    values.unshift(current);
+  }
+  return values;
 }
 
 function cloneConfig(config) {
@@ -615,9 +682,13 @@ function FeedbackSlot({ error = "", message = "", loadingText = "" }) {
   }
 
   if (message) {
+    const successClassName = message.startsWith("miki-san has modified ")
+      ? "panel-success panel-success-agent"
+      : "panel-success";
+
     return (
       <div style={feedbackSlotStyle}>
-        <div className="panel-success">{message}</div>
+        <div className={successClassName}>{message}</div>
       </div>
     );
   }
@@ -625,7 +696,11 @@ function FeedbackSlot({ error = "", message = "", loadingText = "" }) {
   return <div style={feedbackSlotStyle} />;
 }
 
-export default function HyperParamPanel({ onBattle, disabled }) {
+export default function HyperParamPanel({
+  onBattle,
+  disabled,
+  startBattleRequest = null,
+}) {
   const [config, setConfig] = useState(() => normalizeConfig({}));
   const [originalConfig, setOriginalConfig] = useState(() => normalizeConfig({}));
   const [availableModels, setAvailableModels] = useState([]);
@@ -636,6 +711,13 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [doraemonDatasets, setDoraemonDatasets] = useState({
+    generators: [],
+    items: [],
+    by_generator: {},
+  });
+  const [doraemonLoading, setDoraemonLoading] = useState(false);
+  const [doraemonError, setDoraemonError] = useState("");
 
   const [historySessions, setHistorySessions] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -709,6 +791,27 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     }
   }, []);
 
+  const loadDoraemonDatasets = useCallback(async () => {
+    setDoraemonLoading(true);
+    setDoraemonError("");
+
+    try {
+      const result = await fetchDoraemonDatasets();
+      setDoraemonDatasets({
+        generators: Array.isArray(result?.generators) ? result.generators : [],
+        items: Array.isArray(result?.items) ? result.items : [],
+        by_generator:
+          result?.by_generator && typeof result.by_generator === "object"
+            ? result.by_generator
+            : {},
+      });
+    } catch (err) {
+      setDoraemonError(err.message || "failed to load Doraemon datasets");
+    } finally {
+      setDoraemonLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -722,6 +825,12 @@ export default function HyperParamPanel({ onBattle, disabled }) {
           await loadHistorySessions();
         } catch {}
       }
+
+      if (!cancelled) {
+        try {
+          await loadDoraemonDatasets();
+        } catch {}
+      }
     }
 
     boot();
@@ -729,7 +838,41 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     return () => {
       cancelled = true;
     };
-  }, [loadConfig, loadHistorySessions]);
+  }, [loadConfig, loadHistorySessions, loadDoraemonDatasets]);
+
+  useEffect(() => {
+    function handleProgramConfigModified(event) {
+      const detail = event?.detail ?? {};
+      const nextConfig = normalizeConfig(detail?.result?.config ?? {});
+      const nextAvailableModels = Array.isArray(detail?.result?.available_models)
+        ? detail.result.available_models
+        : availableModels;
+      const nextTabs = getConfigTabs(nextConfig);
+
+      setConfig(nextConfig);
+      setOriginalConfig(cloneConfig(nextConfig));
+      setAvailableModels(nextAvailableModels);
+      setActiveConfigTab((prev) =>
+        nextTabs.some((tab) => tab.id === prev)
+          ? prev
+          : nextTabs[0]?.id ?? RUN_MODE_TAB_ID
+      );
+      setSaveError("");
+      setSaveMessage(`miki-san has modified ${detail.path || "config"}`);
+    }
+
+    window.addEventListener(
+      PROGRAM_CONFIG_MODIFIED_EVENT,
+      handleProgramConfigModified
+    );
+
+    return () => {
+      window.removeEventListener(
+        PROGRAM_CONFIG_MODIFIED_EVENT,
+        handleProgramConfigModified
+      );
+    };
+  }, [availableModels]);
 
   const historyGroups = useMemo(
     () => groupHistorySessions(historySessions),
@@ -813,6 +956,266 @@ export default function HyperParamPanel({ onBattle, disabled }) {
         },
       }));
     }
+  }
+
+  function updateRawField(sectionName, key, value) {
+    setConfig((prev) => ({
+      ...prev,
+      sections: {
+        ...prev.sections,
+        [sectionName]: {
+          ...(prev.sections[sectionName] ?? {}),
+          [key]: value,
+        },
+      },
+    }));
+    setSaveError("");
+  }
+
+  function patchSection(sectionName, patch) {
+    setConfig((prev) => ({
+      ...prev,
+      sections: {
+        ...prev.sections,
+        [sectionName]: {
+          ...(prev.sections[sectionName] ?? {}),
+          ...patch,
+        },
+      },
+    }));
+    setSaveError("");
+  }
+
+  function getDoraemonMatches(nextValues = {}) {
+    const doraemonConfig = config.sections?.doraemon_dataset_config ?? {};
+    const selected = {
+      generator: doraemonConfig.doraemon_generator || DORAEMON_DEFAULTS.generator,
+      oscillation: doraemonConfig.doraemon_oscillation || DORAEMON_DEFAULTS.oscillation,
+      flavor: doraemonConfig.doraemon_flavor || DORAEMON_DEFAULTS.flavor,
+      beam_mode: doraemonConfig.doraemon_beam_mode || DORAEMON_DEFAULTS.beam_mode,
+      ...nextValues,
+    };
+
+    return (doraemonDatasets.items || []).filter((item) => {
+      if (selected.generator && item.generator !== selected.generator) return false;
+      if (selected.oscillation && item.oscillation !== selected.oscillation) return false;
+      if (selected.flavor && item.flavor !== selected.flavor) return false;
+      if (selected.beam_mode && item.beam_mode !== selected.beam_mode) return false;
+      return true;
+    });
+  }
+
+  function firstDoraemonMatch(nextValues = {}) {
+    return getDoraemonMatches(nextValues)[0] ?? null;
+  }
+
+  function updateDoraemonSelection(key, value) {
+    const fieldMap = {
+      generator: "doraemon_generator",
+      oscillation: "doraemon_oscillation",
+      flavor: "doraemon_flavor",
+      beam_mode: "doraemon_beam_mode",
+    };
+    const nextValues = { [key]: value };
+    let match = firstDoraemonMatch(nextValues);
+
+    if (!match && key === "generator") {
+      match = (doraemonDatasets.items || []).find((item) => item.generator === value) ?? null;
+    }
+
+    const patch = {};
+    if (match) {
+      patch.doraemon_generator = match.generator;
+      patch.doraemon_oscillation = match.oscillation;
+      patch.doraemon_flavor = match.flavor;
+      patch.doraemon_beam_mode = match.beam_mode;
+    } else {
+      patch[fieldMap[key]] = value;
+    }
+    patchSection("doraemon_dataset_config", patch);
+  }
+
+  function updateDatasetType(datasetType) {
+    if (datasetType !== "Doraemon") {
+      updateRawField("io_config", "dataset_type", "local");
+      return;
+    }
+
+    const currentGenerator = config.sections?.doraemon_dataset_config?.doraemon_generator;
+    const items = doraemonDatasets.items || [];
+    const match =
+      (currentGenerator
+        ? items.find((item) => item.generator === currentGenerator)
+        : null) ??
+      items[0] ??
+      null;
+
+    patchSection("io_config", {
+      dataset_type: "Doraemon",
+    });
+    patchSection("doraemon_dataset_config", {
+      doraemon_generator: match?.generator ?? currentGenerator ?? "",
+      doraemon_oscillation: match?.oscillation ?? DORAEMON_DEFAULTS.oscillation,
+      doraemon_flavor: match?.flavor ?? DORAEMON_DEFAULTS.flavor,
+      doraemon_beam_mode: match?.beam_mode ?? DORAEMON_DEFAULTS.beam_mode,
+    });
+  }
+
+  function doraemonOptionsFor(field) {
+    const doraemonConfig = config.sections?.doraemon_dataset_config ?? {};
+    const selected = {
+      generator: doraemonConfig.doraemon_generator || "",
+      oscillation: doraemonConfig.doraemon_oscillation || "",
+      flavor: doraemonConfig.doraemon_flavor || "",
+      beam_mode: doraemonConfig.doraemon_beam_mode || "",
+    };
+    const items = doraemonDatasets.items || [];
+    const filtered = items.filter((item) => {
+      if (field !== "generator" && selected.generator && item.generator !== selected.generator) return false;
+      if (field !== "oscillation" && selected.oscillation && item.oscillation !== selected.oscillation) return false;
+      if (field !== "flavor" && selected.flavor && item.flavor !== selected.flavor) return false;
+      if (field !== "beam_mode" && selected.beam_mode && item.beam_mode !== selected.beam_mode) return false;
+      return true;
+    });
+
+    const current = selected[field];
+    const options = uniqueValues(filtered.length ? filtered : items, field);
+    return optionListWithCurrent(options, current);
+  }
+
+  function renderSelectField({ id, label, value, options, onChange, disabled: fieldDisabled = false }) {
+    const renderedOptions = options.length > 0 ? options : [String(value ?? "")];
+    return (
+      <div className="train-config-item">
+        <label className="train-config-label" htmlFor={id}>
+          {label}
+        </label>
+        <select
+          id={id}
+          className="train-config-input"
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={configBusy || fieldDisabled}
+        >
+          {renderedOptions.map((option) => (
+            <option key={option} value={option}>
+              {option || "none"}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  function renderIoConfig() {
+    const sectionName = "io_config";
+    const section = config.sections?.[sectionName] ?? {};
+    const localSection = config.sections?.local_dataset_config ?? {};
+    const doraemonSection = config.sections?.doraemon_dataset_config ?? {};
+    const datasetType = section.dataset_type === "Doraemon" ? "Doraemon" : "local";
+    const localEntries = Object.entries(localSection);
+
+    return (
+      <section key={sectionName} style={sectionBlockStyle}>
+        <h3 style={sectionTitleStyle}>{titleFromSectionName(sectionName)}</h3>
+        {renderSelectField({
+          id: "cfg-io_config-dataset_type",
+          label: "dataset_type",
+          value: datasetType,
+          options: DATASET_TYPE_OPTIONS,
+          onChange: updateDatasetType,
+        })}
+        <div className="train-config-item">
+          <label className="train-config-label" htmlFor="cfg-io_config-output">
+            output
+          </label>
+          <input
+            id="cfg-io_config-output"
+            className="train-config-input"
+            type="text"
+            value={toDisplayValue(section.output)}
+            onChange={(e) => updateField("io_config", "output", e.target.value)}
+            disabled={configBusy}
+          />
+        </div>
+        <div className="train-config-item">
+          <label className="train-config-label" htmlFor="cfg-io_config-flux">
+            flux
+          </label>
+          <input
+            id="cfg-io_config-flux"
+            className="train-config-input"
+            type="text"
+            value={toDisplayValue(section.flux)}
+            onChange={(e) => updateField("io_config", "flux", e.target.value)}
+            disabled={configBusy}
+          />
+        </div>
+
+        {datasetType === "local" ? (
+          <>
+            <h3 style={sectionTitleStyle}>Local Dataset Config</h3>
+            {localEntries.map(([key, value]) => {
+              const originalLocalValue = originalConfig.sections?.local_dataset_config?.[key];
+              const localKind = inferInputKind(originalLocalValue);
+              const displayValue = toDisplayValue(value);
+              const inputId = `cfg-local_dataset_config-${key}`;
+
+              return (
+                <div key={key} className="train-config-item">
+                  <label className="train-config-label" htmlFor={inputId}>
+                    {key}
+                  </label>
+                  <input
+                    id={inputId}
+                    className="train-config-input"
+                    type={localKind === "number" ? "number" : "text"}
+                    value={displayValue}
+                    onChange={(e) => updateField("local_dataset_config", key, e.target.value)}
+                    disabled={configBusy}
+                  />
+                </div>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            <h3 style={sectionTitleStyle}>Doraemon Dataset Config</h3>
+            {doraemonLoading ? <div className="panel-status">loading Doraemon datasets...</div> : null}
+            {doraemonError ? <div className="panel-error">{doraemonError}</div> : null}
+            {renderSelectField({
+              id: "cfg-io_config-doraemon_generator",
+              label: "generator",
+              value: doraemonSection.doraemon_generator || "",
+              options: optionListWithCurrent(doraemonDatasets.generators, doraemonSection.doraemon_generator),
+              onChange: (value) => updateDoraemonSelection("generator", value),
+              disabled: (doraemonDatasets.generators || []).length === 0,
+            })}
+            {renderSelectField({
+              id: "cfg-io_config-doraemon_oscillation",
+              label: "oscillation",
+              value: doraemonSection.doraemon_oscillation || "",
+              options: doraemonOptionsFor("oscillation"),
+              onChange: (value) => updateDoraemonSelection("oscillation", value),
+            })}
+            {renderSelectField({
+              id: "cfg-io_config-doraemon_flavor",
+              label: "flavor",
+              value: doraemonSection.doraemon_flavor || "",
+              options: doraemonOptionsFor("flavor"),
+              onChange: (value) => updateDoraemonSelection("flavor", value),
+            })}
+            {renderSelectField({
+              id: "cfg-io_config-doraemon_beam_mode",
+              label: "beam_mode",
+              value: doraemonSection.doraemon_beam_mode || "",
+              options: doraemonOptionsFor("beam_mode"),
+              onChange: (value) => updateDoraemonSelection("beam_mode", value),
+            })}
+          </>
+        )}
+      </section>
+    );
   }
 
   function updateOptimizationIntegrationMode(nextMode) {
@@ -976,6 +1379,10 @@ export default function HyperParamPanel({ onBattle, disabled }) {
   }
 
   function renderSectionFields(sectionName) {
+    if (sectionName === "io_config") {
+      return renderIoConfig();
+    }
+
     const section = config.sections?.[sectionName] ?? {};
     const entries = Object.entries(section).filter(
       ([key]) => sectionName !== "optimization_config" || !OPTIMIZATION_INTEGRATION_KEYS.has(key)
@@ -1135,7 +1542,16 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     }
 
     return [renderSectionFields(activeConfigTab)];
-  }, [activeConfigTab, availableModels, config, configBusy, originalConfig]);
+  }, [
+    activeConfigTab,
+    availableModels,
+    config,
+    configBusy,
+    doraemonDatasets,
+    doraemonError,
+    doraemonLoading,
+    originalConfig,
+  ]);
 
   async function handleRefreshConfig() {
     if (disabled || saving || loading || refreshingConfig) return;
@@ -1193,7 +1609,35 @@ export default function HyperParamPanel({ onBattle, disabled }) {
     if (!saved) {
       setSaveError((prev) => prev || "failed to save config before battle");
     }
+
+    return saved;
   }
+
+  useEffect(() => {
+    if (!startBattleRequest?.id) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const saved = await handleBattle();
+        if (!cancelled) {
+          startBattleRequest.resolve?.({
+            ok: Boolean(saved),
+            config: saved ?? null,
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          startBattleRequest.reject?.(err);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [startBattleRequest?.id]);
 
   async function handleInitialize() {
     if (disabled || historyLoading || historyAction || !selectedSessionId) {

@@ -9,6 +9,7 @@ export async function sendChatStream(message, onToken, signal, options = {}) {
     },
     body: JSON.stringify({
       message,
+      display_message: options?.displayMessage ?? message,
       message_type: options?.messageType ?? "user"
     }),
     signal
@@ -46,6 +47,21 @@ export async function sendChatStream(message, onToken, signal, options = {}) {
         //   "[memory injected block]",
         //   data.debug_retrieval.injected_memory_block || "(none)"
         // )
+      }
+
+      if (data.tool_status) {
+        options?.onToolStatus?.({
+          ...data.tool_status,
+          at: Date.now(),
+        })
+      }
+
+      if (data.model_info) {
+        options?.onModelInfo?.(data.model_info)
+      }
+
+      if (Array.isArray(data.references)) {
+        options?.onReferences?.(data.references)
       }
 
       if (data.token) {

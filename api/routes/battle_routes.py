@@ -9,6 +9,7 @@ from services.train_service import (
     read_training_loss,
     read_training_live_log,
     read_training_loss_summary_prompt,
+    read_doraemon_dataset_options,
 )
 
 battle_bp = Blueprint("battle", __name__)
@@ -69,4 +70,10 @@ def train_config_get_route():
 def train_config_post_route():
     payload = request.get_json(silent=True) or {}
     result, status_code = write_train_config(payload)
+    return jsonify(result), status_code
+
+
+@battle_bp.route("/api/doraemon-datasets", methods=["GET"])
+def doraemon_datasets_route():
+    result, status_code = read_doraemon_dataset_options()
     return jsonify(result), status_code

@@ -57,6 +57,22 @@ export async function fetchLongTermMemorySnapshot({
   return parseJsonResponse(response);
 }
 
+export async function retrieveLongTermMemory({ query = "", limit = 6 } = {}) {
+  const params = new URLSearchParams({
+    query,
+    limit: String(limit),
+  });
+
+  const response = await fetch(`${MEMORY_API_BASE}/retrieve?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  return parseJsonResponse(response);
+}
+
 export async function archiveWakeCycleToBackend(payload) {
   const response = await fetch(`${MEMORY_API_BASE}/archive`, {
     method: "POST",

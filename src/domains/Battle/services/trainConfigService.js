@@ -29,3 +29,16 @@ export async function saveTrainConfig(config) {
 
   return res.json();
 }
+
+export async function fetchDoraemonDatasets() {
+  const res = await fetch(buildApiUrl("/api/doraemon-datasets"), {
+    method: "GET",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  return res.json();
+}

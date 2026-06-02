@@ -4,11 +4,16 @@ export function createExternalityModule({
   initialScale = 1.0,
   onChange = null,
 } = {}) {
+  const DEFAULT_ANIMATION_MS = 650;
+  const MIN_SCALE = 0.65;
+  const MAX_SCALE = 1.35;
+
   let state = {
     modelKey: initialModelKey,
     position: { ...initialPosition },
     scale: initialScale,
   };
+  let animationFrameId = null;
 
   const contactFeedListeners = new Set();
   const stageListeners = new Set();
@@ -23,6 +28,45 @@ export function createExternalityModule({
         console.warn("[externality] stage listener failed:", err);
       }
     });
+  }
+
+  function clamp(value, min, max) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return min;
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function easeInOutCubic(t) {
+    return t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  function sanitizeStagePatch(nextPartial = {}) {
+    const nextPosition = {
+      x:
+        typeof nextPartial.position?.x === "number"
+          ? clamp(nextPartial.position.x, -0.15, 1.15)
+          : state.position.x,
+      y:
+        typeof nextPartial.position?.y === "number"
+          ? clamp(nextPartial.position.y, 0.55, 1.25)
+          : state.position.y,
+    };
+    const nextScale =
+      typeof nextPartial.scale === "number" && Number.isFinite(nextPartial.scale)
+        ? clamp(nextPartial.scale, MIN_SCALE, MAX_SCALE)
+        : state.scale;
+
+    return {
+      position: nextPosition,
+      scale: nextScale,
+    };
+  }
+
+  function cancelAnimation() {
+    if (animationFrameId === null) return;
+    window.cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
   }
 
   function emitContactFeed(payload) {
@@ -80,8 +124,8 @@ export function createExternalityModule({
     state = {
       ...state,
       position: {
-        x: position.x,
-        y: position.y,
+        x: clamp(position.x, -0.15, 1.15),
+        y: clamp(position.y, 0.55, 1.25),
       },
     };
     emitChange();
@@ -92,7 +136,7 @@ export function createExternalityModule({
 
     state = {
       ...state,
-      scale,
+      scale: clamp(scale, MIN_SCALE, MAX_SCALE),
     };
     emitChange();
   }
@@ -122,10 +166,7 @@ export function createExternalityModule({
         nextPartial.position.x !== state.position.x ||
         nextPartial.position.y !== state.position.y
       ) {
-        nextState.position = {
-          x: nextPartial.position.x,
-          y: nextPartial.position.y,
-        };
+        nextState.position = sanitizeStagePatch(nextPartial).position;
         changed = true;
       }
     }
@@ -135,7 +176,7 @@ export function createExternalityModule({
       Number.isFinite(nextPartial.scale) &&
       nextPartial.scale !== state.scale
     ) {
-      nextState.scale = nextPartial.scale;
+      nextState.scale = sanitizeStagePatch(nextPartial).scale;
       changed = true;
     }
 
@@ -145,12 +186,65 @@ export function createExternalityModule({
     emitChange();
   }
 
+  function animateTo(nextPartial = {}, options = {}) {
+    if (typeof window === "undefined" || !window.requestAnimationFrame) {
+      patch(nextPartial);
+      return Promise.resolve(getState());
+    }
+
+    cancelAnimation();
+
+    const target = sanitizeStagePatch(nextPartial);
+    const from = getState();
+    const duration = clamp(
+      Number(options.durationMs ?? nextPartial.durationMs ?? DEFAULT_ANIMATION_MS),
+      120,
+      1800
+    );
+    const startedAt = window.performance?.now?.() ?? Date.now();
+
+    return new Promise((resolve) => {
+      const tick = (now) => {
+        const elapsed = now - startedAt;
+        const t = clamp(elapsed / duration, 0, 1);
+        const eased = easeInOutCubic(t);
+
+        state = {
+          ...state,
+          position: {
+            x: from.position.x + (target.position.x - from.position.x) * eased,
+            y: from.position.y + (target.position.y - from.position.y) * eased,
+          },
+          scale: from.scale + (target.scale - from.scale) * eased,
+        };
+        emitChange();
+
+        if (t < 1) {
+          animationFrameId = window.requestAnimationFrame(tick);
+          return;
+        }
+
+        animationFrameId = null;
+        state = {
+          ...state,
+          position: target.position,
+          scale: target.scale,
+        };
+        emitChange();
+        resolve(getState());
+      };
+
+      animationFrameId = window.requestAnimationFrame(tick);
+    });
+  }
+
   return {
     getState,
     setModelKey,
     setPosition,
     setScale,
     patch,
+    animateTo,
     emitContactFeed,
     subscribeContactFeed,
     subscribeStage,

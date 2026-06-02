@@ -28,6 +28,8 @@ export async function runLanguageTurn(
   let finalAssistantText = "";
   let interrupted = false;
   let errorObj = null;
+  let toolStatuses = [];
+  let references = [];
 
   const wrappedHandlers = {
     ...handlers,
@@ -54,6 +56,20 @@ export async function runLanguageTurn(
         partialText ?? latestAssistantText ?? finalAssistantText ?? "";
       handlers.onError?.(err, partialText);
     },
+
+    onToolStatus: (status) => {
+      if (status && typeof status === "object") {
+        toolStatuses = [...toolStatuses, status];
+      }
+      handlers.onToolStatus?.(status);
+    },
+
+    onReferences: (nextReferences) => {
+      if (Array.isArray(nextReferences)) {
+        references = [...references, ...nextReferences];
+      }
+      handlers.onReferences?.(nextReferences);
+    },
   };
 
   const result = await language.hear(input, wrappedHandlers, options);
@@ -68,5 +84,7 @@ export async function runLanguageTurn(
     interrupted:
       interrupted || result?.status === "interrupted" || false,
     errorObj: errorObj ?? result?.error ?? null,
+    toolStatuses,
+    references,
   };
 }

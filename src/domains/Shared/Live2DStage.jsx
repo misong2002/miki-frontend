@@ -10,6 +10,7 @@ export default function Live2DStage({
   position = DEFAULT_POSITION,
   scale = DEFAULT_SCALE,
   onInteraction = null,
+  onModelReady = null,
 }) {
   const containerRef = useRef(null);
   const managerRef = useRef(null);
@@ -44,6 +45,9 @@ export default function Live2DStage({
       });
 
       await manager.loadModel(modelKey);
+      if (!disposed) {
+        onModelReady?.({ modelKey });
+      }
     }
 
     setup().catch((err) => {
@@ -56,7 +60,7 @@ export default function Live2DStage({
       managerRef.current = null;
       initPromiseRef.current = null;
     };
-  }, [onInteraction]);
+  }, [onInteraction, onModelReady]);
 
   useEffect(() => {
     async function switchModel() {
@@ -70,12 +74,13 @@ export default function Live2DStage({
       if (!managerRef.current) return;
 
       await manager.switchTo(modelKey);
+      onModelReady?.({ modelKey });
     }
 
     switchModel().catch((err) => {
       console.error("[Live2DStage] switch model failed:", err);
     });
-  }, [modelKey]);
+  }, [modelKey, onModelReady]);
 
   useEffect(() => {
     const manager = managerRef.current;

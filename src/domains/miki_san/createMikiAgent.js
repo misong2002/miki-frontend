@@ -15,6 +15,7 @@ import { createTrainingCommentaryPipeline } from "./agent/createTrainingCommenta
 import { buildRemindPrompt } from "./agent/remindPromptBuilder";
 import { runLanguageTurn } from "./agent/runLanguageTurn";
 import { createPerceptionGate } from "./agent/perceptionGate";
+import { applyProgramControl } from "./program/programModule";
 
 const DEFAULT_STAGE_PROPS = {
   modelKey: "normal",
@@ -42,6 +43,20 @@ async function safeCall(fn, fallback = null, label = "safeCall") {
     console.warn(`[MikiAgent] ${label} failed:`, err);
     return fallback;
   }
+}
+
+function dedupeByStableKey(items = [], getKey = (item) => JSON.stringify(item)) {
+  const result = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(items) ? items : []) {
+    const key = getKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
 }
 
 function emitBootPhaseToHandlers(handlers, payload) {
@@ -75,6 +90,7 @@ function normalizeBootstrapMessages(messages) {
       role: msg.role ?? "assistant",
       content: msg.content,
       createdAt: msg.createdAt ?? Date.now(),
+      references: msg.references ?? msg.meta?.references ?? [],
       meta: msg.meta ?? {},
     }))
     .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
@@ -313,6 +329,7 @@ export function createMikiAgent({
     shouldRecordAssistantMessage = true,
     shouldTouchMemory = true,
     languageOptions = {},
+    displayText = inputText,
   }) {
     if (shouldTouchMemory) {
       touchMemory("runAgentTurn");
@@ -322,23 +339,52 @@ export function createMikiAgent({
       language,
       {
         text: inputText,
+        displayText,
         messageId,
         messageType,
       },
-      handlers,
+      {
+        ...handlers,
+        onControl: async (event) => {
+          handlers.onControl?.(event);
+          if (event?.type === "config") {
+            await safeCall(
+              () => applyProgramControl(event),
+              null,
+              "program.applyProgramControl"
+            );
+          }
+        },
+      },
       languageOptions
     );
 
     const assistantText = turn?.assistantText ?? "";
+    const persistedReferences = dedupeByStableKey(
+      [
+        ...(Array.isArray(assistantMeta.references) ? assistantMeta.references : []),
+        ...(Array.isArray(turn?.references) ? turn.references : []),
+      ],
+      (ref) => ref?.url || ref?.source || ref?.title
+    );
+    const persistedToolStatuses = dedupeByStableKey(
+      [
+        ...(Array.isArray(assistantMeta.toolStatuses) ? assistantMeta.toolStatuses : []),
+        ...(Array.isArray(turn?.toolStatuses) ? turn.toolStatuses : []),
+      ],
+      (status) => `${status?.tool || ""}:${status?.phase || ""}:${status?.message || ""}:${status?.at || ""}`
+    );
 
     if (shouldRecordAssistantMessage && assistantText.trim()) {
       await safeCall(
         () =>
           memory?.recordAssistantMessage?.(assistantText, {
+            ...assistantMeta,
             messageId,
             interrupted: Boolean(turn?.interrupted),
             error: turn?.errorObj ? String(turn.errorObj) : null,
-            ...assistantMeta,
+            references: persistedReferences,
+            toolStatuses: persistedToolStatuses,
           }),
         null,
         assistantRecordLabel
@@ -574,6 +620,10 @@ export function createMikiAgent({
 
   async function hear(input, handlers = {}) {
     const userText = typeof input === "string" ? input : input?.text ?? "";
+    const visibleUserText =
+      typeof input === "string"
+        ? input
+        : input?.displayText ?? input?.userText ?? input?.text ?? "";
     const messageId =
       typeof input === "string"
         ? createMessageId("miki")
@@ -584,8 +634,11 @@ export function createMikiAgent({
         : input?.messageType === "interaction" || input?.type === "interaction"
           ? "interaction"
           : "user";
+    const assistantMetaFromInput =
+      typeof input === "string" ? {} : input?.assistantMeta ?? {};
 
     const trimmed = userText.trim();
+    const displayTrimmed = String(visibleUserText ?? "").trim() || trimmed;
 
     if (!trimmed) {
       return {
@@ -599,7 +652,7 @@ export function createMikiAgent({
     await ensureMemoryBooted();
 
     await safeCall(
-      () => memory?.recordUserMessage?.(trimmed, {
+      () => memory?.recordUserMessage?.(displayTrimmed, {
         messageId,
         source: messageType === "interaction" ? "interaction" : null,
         messageType,
@@ -610,10 +663,11 @@ export function createMikiAgent({
 
     const turnResult = await runAgentTurn({
       inputText: trimmed,
+      displayText: displayTrimmed,
       messageId,
       messageType,
       handlers,
-      assistantMeta: {},
+      assistantMeta: assistantMetaFromInput,
       assistantRecordLabel: "memory.recordAssistantMessage",
       shouldTouchMemory: false,
     });
@@ -623,7 +677,7 @@ export function createMikiAgent({
         memory?.rememberTurn?.({
           messageId,
           messageType,
-          user: trimmed,
+          user: displayTrimmed,
           assistant: turnResult?.assistantText ?? "",
           interrupted: Boolean(turnResult?.interrupted),
           hadError: Boolean(turnResult?.errorObj),
@@ -748,6 +802,33 @@ export function createMikiAgent({
     });
   }
 
+  async function moveStage(nextStageProps = {}, options = {}) {
+    const current = getStageProps();
+    const nextPosition = {
+      x:
+        typeof nextStageProps.position?.x === "number"
+          ? nextStageProps.position.x
+          : current.position?.x ?? DEFAULT_STAGE_PROPS.position.x,
+      y:
+        typeof nextStageProps.position?.y === "number"
+          ? nextStageProps.position.y
+          : current.position?.y ?? DEFAULT_STAGE_PROPS.position.y,
+    };
+    const nextScale =
+      typeof nextStageProps.scale === "number"
+        ? nextStageProps.scale
+        : current.scale ?? DEFAULT_STAGE_PROPS.scale;
+
+    return externality?.animateTo?.(
+      {
+        position: nextPosition,
+        scale: nextScale,
+        durationMs: options.durationMs,
+      },
+      options
+    );
+  }
+
   function setStagePreset(presetKey) {
     if (presetKey === "normal" || presetKey === "magical") {
       externality?.setModelKey?.(presetKey);
@@ -756,9 +837,9 @@ export function createMikiAgent({
 
   function resetStage() {
     externality?.patch?.({
-      modelKey: initialStageProps?.modelKey ?? DEFAULT_STAGE_PROPS.modelKey,
-      position: initialStageProps?.position ?? DEFAULT_STAGE_PROPS.position,
-      scale: initialStageProps?.scale ?? DEFAULT_STAGE_PROPS.scale,
+      modelKey: DEFAULT_STAGE_PROPS.modelKey,
+      position: DEFAULT_STAGE_PROPS.position,
+      scale: DEFAULT_STAGE_PROPS.scale,
     });
   }
 
@@ -908,6 +989,7 @@ export function createMikiAgent({
         getStageProps,
         resetStage,
         setStageProps,
+        moveStage,
       },
 
       getDebugAPI,

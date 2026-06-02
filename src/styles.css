@@ -704,6 +704,50 @@ select:focus {
   );
 }
 
+.chat-tool-status-list {
+  margin: 0 0 8px 0;
+  display: grid;
+  gap: 6px;
+}
+
+.chat-tool-status {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(137, 183, 235, 0.32);
+  background: rgba(226, 240, 255, 0.72);
+  color: #41608a;
+  font-size: 12px;
+  line-height: 1.45;
+  font-style: normal;
+}
+
+.chat-tool-status.running {
+  color: #2f6fc2;
+  background: rgba(226, 240, 255, 0.86);
+}
+
+.chat-tool-status.done {
+  color: #47704b;
+  border-color: rgba(128, 184, 132, 0.34);
+  background: rgba(234, 248, 235, 0.78);
+}
+
+.chat-tool-status.error {
+  color: #8a3b3b;
+  border-color: rgba(211, 135, 135, 0.38);
+  background: rgba(255, 241, 241, 0.80);
+}
+
+.chat-tool-status-duration {
+  display: inline-block;
+  margin-left: 8px;
+  color: currentColor;
+  font-size: 11px;
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
 .chat-bubble p {
   margin: 0.4em 0;
 }
@@ -814,6 +858,40 @@ select:focus {
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.chat-file-input {
+  display: none;
+}
+
+.chat-attachment-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(137, 183, 235, 0.36);
+  border-radius: 12px;
+  background: rgba(238, 247, 255, 0.86);
+  color: #35527e;
+  font-size: 12px;
+}
+
+.chat-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-attachment-remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: #2f6fc2;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .primary-action-btn,
@@ -837,6 +915,21 @@ select:focus {
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.24),
     0 10px 22px rgba(47,111,194,0.24);
+}
+
+.chat-attach-btn {
+  margin-right: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(161, 186, 221, 0.52);
+  background: linear-gradient(135deg, rgba(255,250,235,0.96), rgba(238,247,255,0.92));
+  color: #35527e;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.chat-attach-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(255,247,218,0.98), rgba(226,240,255,0.95));
 }
 
 .chat-send-btn:hover:not(:disabled) {
@@ -1558,4 +1651,13 @@ select:focus {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(119, 191, 142, 0.48);
   color: #247045;
+}
+
+.panel-success-agent {
+  background: rgba(232, 248, 237, 0.42);
+  border: 1px solid rgba(32, 122, 72, 0.82);
+  color: #155c35;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.36),
+    0 0 0 1px rgba(32, 122, 72, 0.10);
 }

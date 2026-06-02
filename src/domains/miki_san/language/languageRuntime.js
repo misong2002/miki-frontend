@@ -10,6 +10,7 @@ import {
   moveNetworkBufferToDisplayQueue,
   finalizeLanguageRun,
 } from "./languageRunState";
+import { stripHiddenControlText } from "./controlTagParser";
 
 export function createLanguageRuntime({
   streamChat,
@@ -85,6 +86,17 @@ export function createLanguageRuntime({
 
     const parsed = run.parser.push(token);
     appendParsedOutput(run, parsed);
+  }
+
+  function handleModelInfo(info) {
+    emit({
+      type: "CHAT_MODEL_INFO",
+      payload: info,
+    });
+  }
+
+  function handleReferences(references) {
+    currentRun?.handlers?.onReferences?.(references);
   }
 
   function flushParserRemainder(run) {
@@ -204,7 +216,9 @@ export function createLanguageRuntime({
   }
 
   function finalizeDone(run, finalText) {
-    const text = finalText || run.displayedText || "……咦，我刚刚一下子卡住了。";
+    const text = stripHiddenControlText(
+      finalText || run.displayedText || "……咦，我刚刚一下子卡住了。"
+    );
 
     run.handlers.onDone?.(text);
     finalizeContent(run, {
@@ -215,10 +229,11 @@ export function createLanguageRuntime({
   }
 
   function finalizeError(run, finalText) {
-    const text =
+    const text = stripHiddenControlText(
       finalText ||
       run.displayedText ||
-      `请求失败：${run.finalError?.message ?? "unknown error"}`;
+      `请求失败：${run.finalError?.message ?? "unknown error"}`
+    );
 
     run.handlers.onError?.(run.finalError, text);
 
@@ -230,7 +245,7 @@ export function createLanguageRuntime({
   }
 
   function finalizeInterrupted(run, finalText) {
-    const text = finalText || run.displayedText || "……";
+    const text = stripHiddenControlText(finalText || run.displayedText || "……");
 
     run.handlers.onInterrupted?.(text);
 
@@ -305,6 +320,7 @@ export function createLanguageRuntime({
     }
 
     const trimmed = String(input?.text ?? "").trim();
+    const displayText = String(input?.displayText ?? input?.userText ?? trimmed).trim();
     const messageId = input?.messageId;
     const messageType = input?.messageType;
     const awaitDisplayDrain = options.awaitDisplayDrain ?? true;
@@ -355,7 +371,13 @@ export function createLanguageRuntime({
           handleIncomingToken(run, token);
         },
         run.abortController.signal,
-        { messageType }
+        {
+          messageType,
+          displayMessage: displayText || trimmed,
+          onToolStatus: handlers.onToolStatus,
+          onModelInfo: handleModelInfo,
+          onReferences: handleReferences,
+        }
       );
 
       flushParserRemainder(run);
@@ -367,7 +389,9 @@ export function createLanguageRuntime({
        * 内容一拿全就返回，不等 UI 播完。
        */
       if (!awaitDisplayDrain) {
-        const fullText = getFullTextSnapshot(run) || run.displayedText || "……";
+        const fullText = stripHiddenControlText(
+          getFullTextSnapshot(run) || run.displayedText || "……"
+        );
 
         run.handlers.onTextUpdate?.(fullText, "done");
         finalizeDone(run, fullText);
@@ -395,8 +419,10 @@ export function createLanguageRuntime({
 
       if (!awaitDisplayDrain) {
         const fullText =
-          getFullTextSnapshot(run) ||
-          `请求失败：${err.message ?? "unknown error"}`;
+          stripHiddenControlText(
+            getFullTextSnapshot(run) ||
+              `请求失败：${err.message ?? "unknown error"}`
+          );
 
         run.handlers.onTextUpdate?.(fullText, "error");
         finalizeError(run, fullText);

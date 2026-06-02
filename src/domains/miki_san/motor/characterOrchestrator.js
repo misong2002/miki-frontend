@@ -35,6 +35,7 @@ export function createInitialCharacterState(now = Date.now()) {
     chat: {
       active: false,
       speaking: false,
+      thinkingMotionEnabled: false,
       lastTokenAt: 0,
       pendingEmotion: null,
       pendingMotion: null,
@@ -154,6 +155,7 @@ export function reduceState(state, event) {
           ...state.chat,
           active: true,
           speaking: false,
+          thinkingMotionEnabled: false,
           lastTokenAt: now,
           pendingEmotion: null,
           pendingMotion: null,
@@ -164,6 +166,16 @@ export function reduceState(state, event) {
           startedAt: 0,
           motion: null,
           expression: null,
+        },
+      };
+
+    case "CHAT_MODEL_INFO":
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          thinkingMotionEnabled: Boolean(event.payload?.thinking_motion),
+          lastTokenAt: now,
         },
       };
 
@@ -232,6 +244,7 @@ export function reduceState(state, event) {
           ...state.chat,
           active: false,
           speaking: false,
+          thinkingMotionEnabled: false,
           pendingEmotion: null,
           pendingMotion: null,
         },
@@ -332,7 +345,7 @@ export function resolveIntent(
       source: "chat",
       priority: 100,
       emotion: state.chat.pendingEmotion || "focused",
-      motion: state.chat.pendingMotion || "shy",
+      motion: state.chat.pendingMotion || (state.chat.thinkingMotionEnabled ? "shy" : null),
       speech: false,
       interruptible: true,
       now,

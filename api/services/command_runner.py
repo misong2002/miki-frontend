@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Sequence
 
-MAX_COMMAND_OUTPUT_CHARS = 4000
+MAX_COMMAND_OUTPUT_CHARS = 8000
 
 
 def run_command(

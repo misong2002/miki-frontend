@@ -59,6 +59,7 @@ export function normalizeHearInput(input) {
 
   return {
     text: input?.text ?? "",
+    displayText: input?.displayText ?? input?.userText ?? input?.text ?? "",
     messageId: input?.messageId ?? createLanguageMessageId(),
     messageType: normalizeLanguageMessageType(input?.messageType ?? input?.type),
   };

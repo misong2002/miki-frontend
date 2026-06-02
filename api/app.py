@@ -7,6 +7,8 @@ from routes.battle_routes import battle_bp
 from routes.chat_routes import chat_bp
 from routes.memory_routes import memory_bp
 from routes.history_routes import history_bp
+from routes.agent_routes import agent_bp
+from routes.program_routes import program_bp
 
 
 def create_app() -> Flask:
@@ -17,6 +19,8 @@ def create_app() -> Flask:
     app.register_blueprint(chat_bp)
     app.register_blueprint(memory_bp)
     app.register_blueprint(history_bp, url_prefix="/api/history")
+    app.register_blueprint(agent_bp)
+    app.register_blueprint(program_bp)
 
     return app
 

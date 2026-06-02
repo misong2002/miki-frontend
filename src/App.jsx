@@ -33,6 +33,8 @@ const MAGICAL_STAGE_PROPS = {
 };
 
 const MODE_LOADING = "__APP_MODE_LOADING__";
+const CHAT_MODEL_READY_EXIT_DELAY_MS = 240;
+const CHAT_MODEL_READY_TIMEOUT_MS = 8000;
 
 const IS_DEV =
   typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
@@ -69,6 +71,7 @@ function StageSurface({
   hidden = false,
   loadingText = "",
   onInteraction = null,
+  onModelReady = null,
 }) {
   return (
     <main className={className}>
@@ -80,6 +83,7 @@ function StageSurface({
           position={stageProps.position}
           scale={stageProps.scale}
           onInteraction={onInteraction}
+          onModelReady={onModelReady}
         />
       )}
     </main>
@@ -90,6 +94,7 @@ function ChatModeView({
   params,
   setParams,
   onBattle,
+  startBattleRequest,
   panelDisabled,
   chatBootReady,
   chatShellReady,
@@ -101,6 +106,10 @@ function ChatModeView({
   interactionRequest,
   onLive2DInteraction,
   onInteractionRequestHandled,
+  onTransformRequest,
+  onStartTrainingRequest,
+  onMoveRequest,
+  onStageModelReady,
 }) {
   return (
     <>
@@ -109,6 +118,7 @@ function ChatModeView({
           params={params}
           setParams={setParams}
           onBattle={onBattle}
+          startBattleRequest={startBattleRequest}
           disabled={panelDisabled}
         />
       </aside>
@@ -123,6 +133,9 @@ function ChatModeView({
           initialMessages={initialChatMessages}
           interactionRequest={interactionRequest}
           onInteractionRequestHandled={onInteractionRequestHandled}
+          onTransformRequest={onTransformRequest}
+          onStartTrainingRequest={onStartTrainingRequest}
+          onMoveRequest={onMoveRequest}
         />
       </aside>
 
@@ -132,6 +145,7 @@ function ChatModeView({
         hidden={hideStageModel}
         loadingText={bootLoadingText}
         onInteraction={onLive2DInteraction}
+        onModelReady={onStageModelReady}
       />
     </>
   );
@@ -216,7 +230,11 @@ export default function App() {
   const [stageHydratedFromAgent, setStageHydratedFromAgent] = useState(false);
   const [whiteTransitionPhase, setWhiteTransitionPhase] = useState("idle");
   const [chatInteractionRequest, setChatInteractionRequest] = useState(null);
+  const [startBattleRequest, setStartBattleRequest] = useState(null);
   const lastStableModeRef = useRef(MODE_LOADING);
+  const readyChatModelKeyRef = useRef(null);
+  const pendingChatModelReadyRef = useRef(null);
+  const chatTransformSequenceRef = useRef(0);
 
   const handleStageChange = useCallback((nextStageProps) => {
     if (!nextStageProps) return;
@@ -227,6 +245,62 @@ export default function App() {
     onStageChange: handleStageChange,
   });
 
+  const clearPendingChatModelReady = useCallback((result = null) => {
+    const pending = pendingChatModelReadyRef.current;
+    if (!pending) return;
+
+    window.clearTimeout(pending.timeoutId);
+    pendingChatModelReadyRef.current = null;
+    pending.resolve(result);
+  }, []);
+
+  const waitForChatModelReady = useCallback(
+    (targetModelKey) => {
+      if (readyChatModelKeyRef.current === targetModelKey) {
+        return Promise.resolve({ ok: true, modelKey: targetModelKey });
+      }
+
+      clearPendingChatModelReady({ ok: false, cancelled: true });
+
+      return new Promise((resolve) => {
+        const timeoutId = window.setTimeout(() => {
+          if (pendingChatModelReadyRef.current?.targetModelKey !== targetModelKey) {
+            return;
+          }
+          pendingChatModelReadyRef.current = null;
+          resolve({ ok: false, timeout: true, modelKey: targetModelKey });
+        }, CHAT_MODEL_READY_TIMEOUT_MS);
+
+        pendingChatModelReadyRef.current = {
+          targetModelKey,
+          timeoutId,
+          resolve,
+        };
+      });
+    },
+    [clearPendingChatModelReady]
+  );
+
+  const handleChatStageModelReady = useCallback(
+    ({ modelKey } = {}) => {
+      if (!modelKey) return;
+
+      readyChatModelKeyRef.current = modelKey;
+
+      const pending = pendingChatModelReadyRef.current;
+      if (pending?.targetModelKey === modelKey) {
+        clearPendingChatModelReady({ ok: true, modelKey });
+      }
+    },
+    [clearPendingChatModelReady]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearPendingChatModelReady({ ok: false, cancelled: true });
+    };
+  }, [clearPendingChatModelReady]);
+
   const handleLive2DInteraction = useCallback((payload) => {
     const isHeadTap = payload?.type === "head_tap";
     const isBodyTap = payload?.type === "body_tap";
@@ -236,7 +310,8 @@ export default function App() {
 
       setChatInteractionRequest({
         id: `live2d-head-tap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        text: "（用户摸了摸你的头）",
+        text: "用户刚刚轻轻摸了摸你的头。这是一次日常互动，请结合最近对话自然回应，不要当成第一次见面。",
+        displayText: "（用户摸了摸你的头）",
         payload,
       });
       return;
@@ -252,6 +327,126 @@ export default function App() {
       current?.id === requestId ? null : current
     );
   }, []);
+
+  const handleTransformRequest = useCallback(
+    async ({ targetModel = "magical" } = {}) => {
+      const normalizedTarget =
+        targetModel === "normal" || targetModel === "magical"
+          ? targetModel
+          : "magical";
+
+      setWhiteTransitionPhase("visible");
+
+      const transformSequence = chatTransformSequenceRef.current + 1;
+      chatTransformSequenceRef.current = transformSequence;
+
+      try {
+        const modelReadyPromise = waitForChatModelReady(normalizedTarget);
+        agent.stage?.setStagePreset?.(normalizedTarget);
+        const modelReadyResult = await modelReadyPromise;
+        if (
+          !modelReadyResult?.ok ||
+          modelReadyResult?.cancelled ||
+          chatTransformSequenceRef.current !== transformSequence
+        ) {
+          return {
+            ok: false,
+            cancelled: Boolean(modelReadyResult?.cancelled),
+            timeout: Boolean(modelReadyResult?.timeout),
+            targetModel: normalizedTarget,
+            mode,
+          };
+        }
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, CHAT_MODEL_READY_EXIT_DELAY_MS)
+        );
+        if (chatTransformSequenceRef.current !== transformSequence) {
+          return {
+            ok: false,
+            cancelled: true,
+            targetModel: normalizedTarget,
+            mode,
+          };
+        }
+        setWhiteTransitionPhase("fading");
+        await new Promise((resolve) => window.setTimeout(resolve, 520));
+      } finally {
+        if (chatTransformSequenceRef.current === transformSequence) {
+          setWhiteTransitionPhase("idle");
+        }
+      }
+
+      return {
+        ok: true,
+        targetModel: normalizedTarget,
+        mode,
+      };
+    },
+    [agent.stage, mode, waitForChatModelReady]
+  );
+
+  const handleStartTrainingRequest = useCallback(() => {
+    if (mode !== AppMode.CHAT) {
+      return Promise.resolve({
+        ok: false,
+        error: "training can only be started from chat mode",
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      setStartBattleRequest({
+        id: `start-battle-tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        resolve: (result) => {
+          setStartBattleRequest(null);
+          resolve(result);
+        },
+        reject: (err) => {
+          setStartBattleRequest(null);
+          reject(err);
+        },
+      });
+    });
+  }, [mode]);
+
+  const handleMoveRequest = useCallback(
+    async ({ call = {}, target = {}, durationMs = 650 } = {}) => {
+      const current = agent.stage?.getStageProps?.() ?? DEFAULT_STAGE_PROPS;
+      const numberOrNull = (value) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+      };
+      const targetX =
+        numberOrNull(call.target_x ?? call.targetX ?? target.position?.x) ??
+        (current.position?.x ?? DEFAULT_STAGE_PROPS.position.x) +
+          (numberOrNull(call.dx) ?? 0);
+      const targetY =
+        numberOrNull(call.target_y ?? call.targetY ?? target.position?.y) ??
+        (current.position?.y ?? DEFAULT_STAGE_PROPS.position.y) +
+          (numberOrNull(call.dy) ?? 0);
+      const targetScale =
+        numberOrNull(call.target_scale ?? call.targetScale ?? target.scale) ??
+        (current.scale ?? DEFAULT_STAGE_PROPS.scale) +
+          (numberOrNull(call.scale_delta ?? call.scaleDelta ?? call.dscale) ?? 0);
+      const resolvedDuration =
+        numberOrNull(call.duration_ms ?? call.durationMs ?? durationMs) ?? 650;
+
+      const result = await agent.stage?.moveStage?.(
+        {
+          position: {
+            x: targetX,
+            y: targetY,
+          },
+          scale: targetScale,
+        },
+        { durationMs: resolvedDuration }
+      );
+      return {
+        ok: Boolean(result),
+        stage: result ?? agent.stage?.getStageProps?.() ?? null,
+      };
+    },
+    [agent.stage]
+  );
 
 
   useEffect(() => {
@@ -436,6 +631,7 @@ export default function App() {
           params={params}
           setParams={setParams}
           onBattle={handleEnterBattleMode}
+          startBattleRequest={startBattleRequest}
           panelDisabled={isTransforming}
           chatBootReady={chatBootReady}
           chatShellReady={chatShellReady}
@@ -447,6 +643,10 @@ export default function App() {
           interactionRequest={chatInteractionRequest}
           onLive2DInteraction={handleLive2DInteraction}
           onInteractionRequestHandled={handleInteractionRequestHandled}
+          onTransformRequest={handleTransformRequest}
+          onStartTrainingRequest={handleStartTrainingRequest}
+          onMoveRequest={handleMoveRequest}
+          onStageModelReady={handleChatStageModelReady}
         />
       ) : showBattleShell ? (
         <BattleModeView

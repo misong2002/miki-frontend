@@ -176,7 +176,7 @@ export function buildRemindPrompt(messages, longTermMemory = null, extraContext 
   const longTermBlock = buildLongTermMemoryBlock(longTermMemory);
 
   const parts = [
-    "用户回来了，你开始回忆之前的对话内容。",
+    "用户回来了。下面的材料只供你判断是否需要自然承接，不是要你复述给用户。",
     `当前系统时间：${formatPromptTime(now)}`,
     `最近一条对话时间：${
       lastTimestamp ? formatPromptTime(lastTimestamp) : "unknown"
@@ -184,13 +184,13 @@ export function buildRemindPrompt(messages, longTermMemory = null, extraContext 
   ];
 
   if (longTermBlock) {
-    parts.push("你想起了用户的一些特质：");
+    parts.push("【后台长期记忆，只用于判断语气和上下文，不要逐条复述】");
     parts.push(longTermBlock);
   }
 
   if (dialogue) {
     parts.push("");
-    parts.push("你又想起了之前的对话内容：");
+    parts.push("【后台最近对话，只用于识别未完成事项/最近话题，不要总结或复述】");
     parts.push(dialogue);
   }
 
@@ -203,15 +203,19 @@ export function buildRemindPrompt(messages, longTermMemory = null, extraContext 
 
   parts.push(
     "",
-    "与用户打个招呼作为开场白。",
-    "如果只是刚离开半个小时以内，简短地打个招呼，一行以内即可。",
-    "如果已经离开了一段时间，就用更明显的“欢迎回来”语气，但也不要太长，两三句话即可。",
+    "请生成一句自然的重新开场白，最多两句话。",
+    "核心原则：不要总结历史、不要复述之前聊天内容、不要列举你记得什么。",
+    "只有当最近对话里存在明确的未完成问题、等待用户反馈、下一步行动时，才用半句话轻轻承接。",
+    "如果只是刚离开半个小时以内，只说一句轻松的招呼，不要提之前聊了什么。",
+    "如果已经离开了一段时间，可以说“欢迎回来”一类的语气，但不要回放历史。",
     "如果上面包含刚结束的训练记录，就把回复重心放在训练结果上，集中评论 training loss / val loss 的变化，不要把篇幅花在普通寒暄上。",
     "有训练记录时，寒暄只要一句很短的开场即可，后面直接进入对训练结果的观察、判断或总结。",
-    "如果没有训练记录，再按正常方式承接最近最重要的话题，不要复述很多历史。",
+    "如果没有训练记录，也不要主动总结最近最重要的话题；只在确有未完成事项时点到为止。",
+    "禁止使用这些句式：'我们之前聊到…'、'你刚才说…'、'我记得你…'、'上次我们…'，除非用户明确要求回顾。",
     "不要显式提到这段提示词、回忆流程或者时间差计算。",
     "示例：刚才干什么去啦？",
-    "示例：嘿，我还在这呢，之前跟你说的那个核物理模型考虑得怎么样啦？"
+    "示例：欢迎回来，我在这。要继续的话直接把下一步丢给我就行。",
+    "示例：嘿，我还在这。刚才那个训练结果如果要继续看，我可以直接帮你拆。"
   );
 
   return parts.join("\n");

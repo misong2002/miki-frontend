@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any, Generator
 
 from config import (
@@ -8,6 +9,13 @@ from config import (
     PROFILE_BUNDLE_MAX_FACTS,
 )
 from memory.memory_store import get_long_term_db, list_idea_tag_catalog
+from services.agent_reader_service import summarize_paper_payload
+from services.agent_search_service import web_search_payload
+from services.code_agent_service import (
+    list_code_files_payload,
+    read_code_file_payload,
+    search_code_payload,
+)
 from services.llm_service import get_llm_client
 from services.memory_service import (
     append_message,
@@ -15,17 +23,28 @@ from services.memory_service import (
 )
 from services.persona_service import get_system_prompt
 from services.response_service import error_payload
+from services.train_service import read_train_config
 
 
-MAX_RETRIEVED_LONG_TERM_ITEMS = 4
-MAX_RETRIEVAL_HISTORY_MESSAGES = 3
-MAX_PROMPT_HISTORY_MESSAGES = 18
-MAX_PROMPT_MESSAGE_CHARS = 10000
-DEFAULT_MAX_COMPLETION_TOKENS = 3000
-EXTENDED_MAX_COMPLETION_TOKENS = 10000
-INTERACTION_PROMPT_HISTORY_MESSAGES = 4
-INTERACTION_PROMPT_MESSAGE_CHARS = 500
-INTERACTION_MAX_COMPLETION_TOKENS = 600
+MAX_RETRIEVED_LONG_TERM_ITEMS = 16
+MAX_MEMORY_RETRIEVE_TOOL_ITEMS = 24
+MAX_RETRIEVAL_HISTORY_MESSAGES = 6
+MAX_PROMPT_HISTORY_MESSAGES = 36
+MAX_PROMPT_MESSAGE_CHARS = 20000
+DEFAULT_MAX_COMPLETION_TOKENS = 6000
+EXTENDED_MAX_COMPLETION_TOKENS = 20000
+INTERACTION_PROMPT_HISTORY_MESSAGES = 24
+INTERACTION_PROMPT_MESSAGE_CHARS = 3600
+INTERACTION_MAX_COMPLETION_TOKENS = 1200
+MAX_BACKEND_TOOL_CALLS_PER_TURN = 6
+HIDDEN_CONTROL_TEXT_RE = re.compile(
+    r"<<\s*(?:emotion|motion)\s*:\s*[a-zA-Z0-9_-]*\s*>>"
+    r"|<<\s*config:set\s+[A-Za-z0-9_.]+\s*=\s*[\s\S]*?\s*>>"
+    r"|<<\s*initialization_ready\s*>>"
+    r"|\[\[\s*use_tool\s*:\s*\{[\s\S]*?\}\s*\]\]"
+    r"|\[\[\s*say\s*:[\s\S]*?\]\]",
+    re.IGNORECASE,
+)
 GENERIC_QUERY_TERMS = {
     "我们",
     "你们",
@@ -167,6 +186,16 @@ def _normalize_text(value: Any) -> str:
     if isinstance(value, list):
         return "\n".join(_normalize_text(item) for item in value)
     return str(value).strip()
+
+
+def _strip_hidden_control_text(value: Any) -> str:
+    text = _normalize_text(value)
+    if not text:
+        return ""
+    text = HIDDEN_CONTROL_TEXT_RE.sub("", text)
+    text = re.sub(r"^[ \t]+\n", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _is_active_memory(item: dict[str, Any]) -> bool:
@@ -695,11 +724,11 @@ def _retrieve_project_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
         db.get("session_summaries", []),
         key=lambda item: item.get("updated_at", 0),
         reverse=True,
-    )[:4]
+    )[:8]
     for summary in summaries:
         selected.append(_make_selected_item("summary", summary, score=80.0, matched_fields=["recent_summary"]))
 
-    return selected[:12]
+    return selected[:24]
 
 
 def _retrieve_session_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
@@ -707,7 +736,7 @@ def _retrieve_session_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
         db.get("session_summaries", []),
         key=lambda item: item.get("updated_at", 0),
         reverse=True,
-    )[:8]
+    )[:16]
     selected = [
         _make_selected_item("summary", summary, score=100.0, matched_fields=["recent_summary"])
         for summary in summaries
@@ -724,7 +753,7 @@ def _retrieve_idea_catalog_bundle(db: dict[str, Any]) -> list[dict[str, Any]]:
             item.get("updated_at", 0),
         ),
         reverse=True,
-    )[:10]
+    )[:20]
     return [
         _make_selected_item("idea", idea, score=100.0, matched_fields=["idea_catalog"])
         for idea in ideas
@@ -821,11 +850,11 @@ def retrieve_relevant_long_term_memories(
 
     selected = []
     type_limits = {
-        "fact": 2,
-        "project": 2,
-        "idea": 2,
-        "summary": 2,
-        "digest": 1,
+        "fact": 4,
+        "project": 4,
+        "idea": 4,
+        "summary": 4,
+        "digest": 2,
     }
     type_counts: dict[str, int] = {}
 
@@ -849,7 +878,7 @@ def get_long_term_memory_retrieval_payload(
     *,
     limit: int = MAX_RETRIEVED_LONG_TERM_ITEMS,
 ) -> dict[str, Any]:
-    context = build_memory_context(query_text)
+    context = build_memory_context(query_text, limit=limit)
     return {
         "ok": True,
         "query": query_text,
@@ -888,21 +917,8 @@ def build_chat_messages(
     )
     history = get_recent_messages(limit=history_limit, session_id=session_id)
 
-    if is_interaction:
-        context = {
-            "memory_block": "",
-            "debug_retrieval": {
-                "level": "interaction",
-                "strategy": "skip_long_term_memory_for_interaction",
-                "query": user_message,
-                "sensed_keywords": [],
-                "matched_triggers": [],
-                "hits": [],
-            },
-        }
-    else:
-        retrieval_query = _build_retrieval_query(history, user_message)
-        context = build_memory_context(retrieval_query)
+    retrieval_query = _build_retrieval_query(history, user_message)
+    context = build_memory_context(retrieval_query)
 
     retrieved_memory_block = context["memory_block"]
     prompt_history = _build_prompt_history(
@@ -919,6 +935,17 @@ def build_chat_messages(
         messages.append({
             "role": "system",
             "content": f"（用户的问题让你想起了：\n{retrieved_memory_block}\n）",
+        })
+
+    if is_interaction:
+        messages.append({
+            "role": "system",
+            "content": (
+                "当前用户消息是一次 Live2D 日常互动，不是新会话。"
+                "必须结合最近对话和已注入记忆回应，不要表现得像失忆或第一次被这样互动。"
+                "如果近期已经发生过类似摸头/互动，要承认连续性并自然变化措辞，不要重复固定模板、固定寒暄或固定问句。"
+                "仍然必须用开头 emotion/motion 控制符表达表情动作；不要输出任何可见括号动作描写。"
+            ),
         })
 
     messages.extend(prompt_history)
@@ -982,10 +1009,381 @@ def choose_chat_model(user_message: str, message_type: str = "user") -> str:
     return OPENAI_FAST_MODEL
 
 
+def get_chat_model_mode(model_name: str) -> str:
+    if model_name == OPENAI_THINKING_MODEL:
+        return "pro"
+    return "fast"
+
+
+def _backend_tool_schema(
+    name: str,
+    description: str,
+    properties: dict[str, Any] | None = None,
+    required: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties or {},
+                "required": required or [],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+BACKEND_CHAT_TOOLS: list[dict[str, Any]] = [
+    _backend_tool_schema(
+        "web_search",
+        "查最新信息、网页资料、新闻或外部资料。用户明确要求联网、最新、新闻、外部资料时使用。",
+        {
+            "query": {"type": "string", "description": "搜索 query，优先英文和一手来源关键词。"},
+            "limit": {"type": "integer", "description": "返回结果数量，默认 5。"},
+        },
+        ["query"],
+    ),
+    _backend_tool_schema(
+        "read_document",
+        "读取文档 URL 或 arXiv 论文。注意：上传文件仍由前端附件流程处理。",
+        {
+            "url": {"type": "string", "description": "文档 URL，可为空。"},
+            "arxiv_id": {"type": "string", "description": "arXiv ID，可为空。"},
+            "task": {"type": "string", "description": "阅读任务。"},
+        },
+    ),
+    _backend_tool_schema(
+        "code_search",
+        "在本地 MIKI 项目里搜索代码、notebook、配置、文档、函数、调用链、训练循环或实现逻辑。",
+        {
+            "query": {"type": "string", "description": "代码搜索关键词。"},
+            "path": {"type": "string", "description": "可选搜索路径。"},
+            "pattern": {"type": "string", "description": "可选文件 glob。"},
+            "limit": {"type": "integer", "description": "最大结果数，默认 80。"},
+        },
+        ["query"],
+    ),
+    _backend_tool_schema(
+        "code_read",
+        "读取明确的本地代码、notebook、配置或文本文件路径；.ipynb 会抽取源码、markdown 和纯文本输出。",
+        {"path": {"type": "string", "description": "要读取的文件路径。"}},
+        ["path"],
+    ),
+    _backend_tool_schema(
+        "code_list",
+        "检索本地 MIKI 项目目录或文件列表。",
+        {
+            "path": {"type": "string", "description": "目录路径，默认项目根目录。"},
+            "pattern": {"type": "string", "description": "可选文件 glob。"},
+            "recursive": {"type": "boolean", "description": "是否递归。"},
+            "limit": {"type": "integer", "description": "最大条目数，默认 160。"},
+        },
+    ),
+    _backend_tool_schema(
+        "config_context",
+        "读取当前训练配置。用户要求修改或检查训练 config 参数时使用。",
+    ),
+    _backend_tool_schema(
+        "memory_retrieve",
+        "检索长期记忆。用户要求回忆、查长期记忆、之前说过的项目或想法时使用。",
+        {
+            "query": {"type": "string", "description": "记忆检索 query。"},
+            "limit": {"type": "integer", "description": "最大结果数，默认 24。"},
+        },
+        ["query"],
+    ),
+]
+
+
+def _decode_tool_arguments(raw_arguments: Any) -> dict[str, Any]:
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+    if not raw_arguments:
+        return {}
+    try:
+        parsed = json.loads(str(raw_arguments))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _chat_tool_call_to_message_tool_call(tool_call: Any) -> dict[str, Any]:
+    function = getattr(tool_call, "function", None)
+    return {
+        "id": getattr(tool_call, "id", ""),
+        "type": getattr(tool_call, "type", "function"),
+        "function": {
+            "name": getattr(function, "name", ""),
+            "arguments": getattr(function, "arguments", "{}"),
+        },
+    }
+
+
+def _chat_assistant_tool_message(message: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "role": "assistant",
+        "content": message.content or "",
+        "tool_calls": [
+            _chat_tool_call_to_message_tool_call(tool_call)
+            for tool_call in (message.tool_calls or [])
+        ],
+    }
+
+    reasoning_content = getattr(message, "reasoning_content", None)
+    if reasoning_content:
+        payload["reasoning_content"] = reasoning_content
+
+    return payload
+
+
+def _coerce_tool_result(result: Any) -> dict[str, Any]:
+    if isinstance(result, tuple) and len(result) == 2:
+        body, status_code = result
+        if isinstance(body, dict):
+            return {**body, "http_status": status_code}
+        return {"ok": False, "http_status": status_code, "result": body}
+    if isinstance(result, dict):
+        return result
+    return {"ok": True, "result": result}
+
+
+def _json_tool_content(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _execute_backend_chat_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if name == "web_search":
+        payload = {
+            "query": arguments.get("query"),
+            "limit": arguments.get("limit") or 5,
+            "summarize": True,
+        }
+        return web_search_payload(payload)
+
+    if name == "read_document":
+        payload = {
+            "url": arguments.get("url") or "",
+            "arxiv_id": arguments.get("arxiv_id") or "",
+            "task": arguments.get("task") or DEFAULT_PAPER_TASK_FOR_CHAT_TOOL,
+        }
+        return summarize_paper_payload(payload)
+
+    if name == "code_search":
+        return _coerce_tool_result(search_code_payload(arguments))
+
+    if name == "code_read":
+        return _coerce_tool_result(read_code_file_payload(arguments))
+
+    if name == "code_list":
+        return _coerce_tool_result(list_code_files_payload(arguments))
+
+    if name == "config_context":
+        return _coerce_tool_result(read_train_config())
+
+    if name == "memory_retrieve":
+        query = str(arguments.get("query") or "").strip()
+        limit = int(arguments.get("limit") or MAX_MEMORY_RETRIEVE_TOOL_ITEMS)
+        return get_long_term_memory_retrieval_payload(query, limit=limit)
+
+    return {
+        "ok": False,
+        "error": f"unknown backend chat tool: {name}",
+    }
+
+
+DEFAULT_PAPER_TASK_FOR_CHAT_TOOL = (
+    "请结合用户问题阅读材料。输出可用于回答用户的关键信息、来源、限制和后续建议。"
+)
+
+
+def _tool_status_line(
+    name: str,
+    phase: str,
+    message: str,
+    *,
+    duration_ms: int | None = None,
+) -> str:
+    status = {
+        "tool": name,
+        "phase": phase,
+        "message": message,
+    }
+    if duration_ms is not None:
+        status["duration_ms"] = duration_ms
+
+    return json.dumps(
+        {"tool_status": status},
+        ensure_ascii=False,
+    ) + "\n"
+
+
+def _references_line(references: list[dict[str, Any]]) -> str:
+    return json.dumps({"references": references}, ensure_ascii=False) + "\n"
+
+
+def _extract_tool_references(name: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    if name == "web_search":
+        return [
+            {
+                "title": item.get("title"),
+                "source": item.get("url"),
+                "url": item.get("url"),
+            }
+            for item in result.get("results", [])
+            if isinstance(item, dict) and item.get("url")
+        ]
+
+    if name == "read_document":
+        source = result.get("source") if isinstance(result, dict) else None
+        if not isinstance(source, dict):
+            return []
+        url = source.get("url") or source.get("cache", {}).get("url") or ""
+        return [
+            {
+                "title": source.get("name") or url or "document",
+                "source": url or source.get("name") or "document",
+                "url": url,
+            }
+        ]
+
+    return []
+
+
+TOOL_STATUS_COPY: dict[str, dict[str, str]] = {
+    "web_search": {
+        "running": "正在查找资料",
+        "done": "资料查找完成",
+        "error": "资料查找失败",
+    },
+    "read_document": {
+        "running": "正在阅读文献",
+        "done": "文献阅读完成",
+        "error": "文献阅读失败",
+    },
+    "code_search": {
+        "running": "正在检索代码",
+        "done": "代码检索完成",
+        "error": "代码检索失败",
+    },
+    "code_read": {
+        "running": "正在阅读代码",
+        "done": "代码阅读完成",
+        "error": "代码阅读失败",
+    },
+    "code_list": {
+        "running": "正在查看项目文件",
+        "done": "项目文件已读完",
+        "error": "项目文件读取失败",
+    },
+    "config_context": {
+        "running": "正在查看训练配置",
+        "done": "训练配置已读取",
+        "error": "训练配置读取失败",
+    },
+    "memory_retrieve": {
+        "running": "正在回忆相关内容",
+        "done": "回忆完成",
+        "error": "忘掉了……",
+    },
+}
+
+
+def _tool_status_message(name: str, phase: str, fallback: str = "") -> str:
+    return TOOL_STATUS_COPY.get(name, {}).get(phase) or fallback or "正在处理"
+
+
+def _run_backend_tool_loop(
+    *,
+    messages: list[dict[str, Any]],
+    model_name: str,
+    max_completion_tokens: int,
+) -> Generator[str, None, tuple[list[dict[str, Any]], str]]:
+    tool_call_count = 0
+
+    while tool_call_count < MAX_BACKEND_TOOL_CALLS_PER_TURN:
+        response = get_llm_client().chat.completions.create(
+            model=model_name,
+            messages=messages,
+            tools=BACKEND_CHAT_TOOLS,
+            tool_choice="auto",
+            temperature=0.7,
+            max_tokens=max_completion_tokens,
+            stream=False,
+        )
+
+        message = response.choices[0].message
+        tool_calls = list(message.tool_calls or [])
+
+        if not tool_calls:
+            final_content = message.content or ""
+            messages.append({
+                "role": "assistant",
+                "content": final_content,
+            })
+            return messages, final_content
+
+        messages.append(_chat_assistant_tool_message(message))
+
+        for tool_call in tool_calls:
+            if tool_call_count >= MAX_BACKEND_TOOL_CALLS_PER_TURN:
+                break
+
+            function = getattr(tool_call, "function", None)
+            name = str(getattr(function, "name", "") or "").strip()
+            arguments = _decode_tool_arguments(getattr(function, "arguments", "{}"))
+            tool_call_count += 1
+
+            started_at = time.perf_counter()
+            yield _tool_status_line(
+                name,
+                "running",
+                _tool_status_message(name, "running"),
+            )
+
+            try:
+                result = _execute_backend_chat_tool(name, arguments)
+                phase = "done" if result.get("ok", True) is not False else "error"
+                message_text = _tool_status_message(
+                    name,
+                    phase,
+                    result.get("error", "处理失败"),
+                )
+            except Exception as exc:
+                result = {
+                    "ok": False,
+                    "error": str(exc),
+                }
+                phase = "error"
+                message_text = _tool_status_message(name, phase, str(exc))
+
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            yield _tool_status_line(name, phase, message_text, duration_ms=duration_ms)
+
+            references = _extract_tool_references(name, result)
+            if references:
+                yield _references_line(references)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": getattr(tool_call, "id", ""),
+                "content": _json_tool_content(result),
+            })
+
+    messages.append({
+        "role": "user",
+        "content": "工具调用次数已达到上限。请基于已经获得的工具结果回答用户；如果信息不足，请明确说明。",
+    })
+    return messages, ""
+
+
 def create_chat_stream_response(
     data: dict[str, Any],
 ) -> Generator[str, None, None] | tuple[dict[str, Any], int]:
     user_message = data.get("message", "").strip()
+    display_user_message = str(data.get("display_message") or user_message).strip()
     session_id = str(data.get("session_id") or "").strip() or None
     message_type = str(data.get("message_type") or "user").strip()
     if message_type not in {"user", "interaction"}:
@@ -1008,18 +1406,6 @@ def create_chat_stream_response(
         message_type=message_type,
     )
 
-    try:
-        stream = get_llm_client().chat.completions.create(
-            model=model_name,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=max_completion_tokens,
-            stream=True,
-        )
-    except Exception as e:
-        print("LLM stream init error:", e, flush=True)
-        return error_payload(f"LLM stream init failed: {e}"), 500
-
     def generate() -> Generator[str, None, None]:
         full_reply = ""
 
@@ -1028,27 +1414,64 @@ def create_chat_stream_response(
                 {"debug_retrieval": debug_retrieval},
                 ensure_ascii=False,
             ) + "\n"
+            yield json.dumps(
+                {
+                    "model_info": {
+                        "model": model_name,
+                        "mode": get_chat_model_mode(model_name),
+                        "thinking_motion": model_name == OPENAI_THINKING_MODEL,
+                    }
+                },
+                ensure_ascii=False,
+            ) + "\n"
 
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
+            loop = _run_backend_tool_loop(
+                messages=messages,
+                model_name=model_name,
+                max_completion_tokens=max_completion_tokens,
+            )
+            try:
+                while True:
+                    yield next(loop)
+            except StopIteration as stop:
+                _messages_after_tools, final_content = stop.value or (messages, "")
 
-                delta = chunk.choices[0].delta
-                token = getattr(delta, "content", None)
+            if final_content:
+                full_reply = final_content
+                yield json.dumps({"token": final_content}, ensure_ascii=False) + "\n"
+            else:
+                stream = get_llm_client().chat.completions.create(
+                    model=model_name,
+                    messages=_messages_after_tools,
+                    temperature=0.7,
+                    max_tokens=max_completion_tokens,
+                    stream=True,
+                )
 
-                if token is None:
-                    continue
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
 
-                full_reply += token
-                yield json.dumps({"token": token}, ensure_ascii=False) + "\n"
+                    delta = chunk.choices[0].delta
+                    token = getattr(delta, "content", None)
+
+                    if token is None:
+                        continue
+
+                    full_reply += token
+                    yield json.dumps({"token": token}, ensure_ascii=False) + "\n"
 
             append_message(
                 "user",
-                user_message,
+                display_user_message,
                 session_id=session_id,
                 message_type=message_type,
             )
-            append_message("assistant", full_reply, session_id=session_id)
+            append_message(
+                "assistant",
+                _strip_hidden_control_text(full_reply),
+                session_id=session_id,
+            )
 
         except Exception as e:
             print("LLM stream runtime error:", e, flush=True)

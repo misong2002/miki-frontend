@@ -74,7 +74,7 @@ def _clean_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return cleaned
 
 
-def _truncate_text(text: str, max_chars: int = 4000) -> str:
+def _truncate_text(text: str, max_chars: int = 8000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n...[truncated]"
@@ -82,8 +82,8 @@ def _truncate_text(text: str, max_chars: int = 4000) -> str:
 
 def _prepare_messages_for_prompt(
     messages: List[Dict[str, Any]],
-    max_messages: int = 120,
-    max_chars_per_message: int = 4000,
+    max_messages: int = 240,
+    max_chars_per_message: int = 8000,
 ) -> List[Dict[str, Any]]:
     cleaned = _clean_messages(messages)
     cleaned = cleaned[-max_messages:]
@@ -135,7 +135,7 @@ def _prepare_existing_memory_index(
         {
             "id": item.get("id"),
             "title": item.get("title"),
-            "content": _truncate_text(str(item.get("content") or ""), 500),
+            "content": _truncate_text(str(item.get("content") or ""), 1000),
             "category": item.get("category"),
             "status": item.get("status"),
             "tags": item.get("tags", []),
@@ -150,7 +150,7 @@ def _prepare_existing_memory_index(
             "project_key": item.get("project_key"),
             "title": item.get("title"),
             "status": item.get("status"),
-            "summary": _truncate_text(str(item.get("summary") or ""), 500),
+            "summary": _truncate_text(str(item.get("summary") or ""), 1000),
         }
         for item in existing_memory.get("project_states", [])
         if is_active(item)
