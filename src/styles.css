@@ -358,6 +358,20 @@ select:focus {
 
 .chat-column {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-column .history-panel {
+  flex: 0 0 auto;
+  max-height: 35%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-column .chat-shell {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* ===== TRAINING MODE LAYOUT ===== */
@@ -1206,6 +1220,50 @@ select:focus {
   background: linear-gradient(135deg, rgba(113,176,248,0.98), rgba(52,116,199,0.98));
 }
 
+/* ===== TRAIN CONFIG TABS ===== */
+
+.train-config-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  border-bottom: 2px solid var(--ui-plate-border);
+  margin-bottom: 0;
+}
+
+.train-config-tab {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.train-config-tab.active {
+  color: var(--deep-blue);
+  border-bottom-color: var(--blue-500);
+}
+
+.train-config-tab:hover:not(.active) {
+  color: var(--text-main);
+}
+
+.panel-sticky-footer {
+  flex: 0 0 auto;
+  padding: 12px 18px;
+  background: var(--ui-plate-bg-raised);
+  border-top: 1px solid var(--ui-plate-border);
+  backdrop-filter: var(--ui-plate-blur);
+}
+
+.panel-sticky-footer .train-config-actions {
+  padding-top: 0;
+}
+
 /* ===== TRAINING PANEL ===== */
 
 .metric-row {
@@ -1533,6 +1591,11 @@ select:focus {
   overflow: hidden;
 }
 
+.battle-chart-block-recent {
+  flex: 0 0 38%;
+  min-height: 180px;
+}
+
 .battle-chart-title {
   font-size: 14px;
   font-weight: 700;
@@ -1660,4 +1723,121 @@ select:focus {
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.36),
     0 0 0 1px rgba(32, 122, 72, 0.10);
+}
+/* ===== HISTORY PANEL ===== */
+
+.history-panel-body {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.history-tree-col {
+  flex: 65 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+}
+
+.history-tree {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: block;
+  padding: 2px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+
+.history-tree-row {
+  width: 100%; height: 32px; min-height: 32px; max-height: 32px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border: none; border-radius: 4px;
+  margin: 0;
+  background: transparent; color: inherit; text-align: left;
+  cursor: pointer; font-size: 0.82rem;
+  overflow: hidden; white-space: nowrap;
+  appearance: none;
+  transform: none;
+}
+
+.history-tree-row:hover {
+  background: rgba(125, 211, 252, 0.10);
+}
+
+.history-tree-row.active {
+  background: rgba(125, 211, 252, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.48);
+}
+
+.history-tree-row.child {
+  padding-left: 28px;
+  color: var(--text-main);
+}
+
+.history-tree-row.child.active {
+  background: rgba(134, 239, 172, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.46);
+}
+
+.history-tree-icon {
+  width: 14px;
+  flex: 0 0 14px;
+  opacity: 0.78;
+  text-align: center;
+}
+
+.history-tree-row-text {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 20px;
+}
+
+.history-actions-col {
+  flex: 35 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-toggle-btn {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid rgba(153, 193, 236, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.history-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 22px rgba(31, 77, 143, 0.12);
+}
+
+.feedback-slot {
+  min-height: 22px;
+  margin-top: 8px;
+}
+
+.feedback-slot .panel-status,
+.feedback-slot .panel-error,
+.feedback-slot .panel-success {
+  transition: opacity 0.2s ease;
 }

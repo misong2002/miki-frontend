@@ -14,7 +14,7 @@ import {
   normalizeContactMessages,
 } from "../domains/Battle/utils/contactMessageUtils";
 import { saveTrainingHistory } from "../domains/Battle/services/historyService";
-import { runHistoryPlot } from "../domains/Battle/services/historyToolService";
+import { runHistoryPlot, fetchHistoryPlotStatus } from "../domains/Battle/services/historyToolService";
 
 const INITIAL_BATTLE_STATUS_TIMEOUT_MS = 5000;
 const BATTLE_CONTACT_CACHE_KEY = "miki.battle.contactCache.v1";
@@ -122,7 +122,8 @@ function getSessionKey(session) {
   if (!session) return null;
 
   if (session.job_id != null) {
-    return `cluster:${session.job_id}`;
+    if (session.mode === "qos") return `qos:${session.job_id}`;
+    return `pbs:${session.job_id}`;
   }
 
   if (session.pid != null) {
@@ -168,6 +169,12 @@ export function useBattleController({
   const [historyStatusKind, setHistoryStatusKind] = useState("idle");
   const [lastPlottedSessionId, setLastPlottedSessionId] = useState("");
   const [plotRefreshKey, setPlotRefreshKey] = useState(0);
+  const [autoSaveStatus, setAutoSaveStatus] = useState({
+    message: "",
+    kind: "idle",
+    sessionId: "",
+  });
+  const [plotPendingSessions, setPlotPendingSessions] = useState([]);
 
   const pollTimerRef = useRef(null);
   const pollingRef = useRef(false);
@@ -175,6 +182,9 @@ export function useBattleController({
   const battleExitingRef = useRef(battleExiting);
   const trainLiveLogOffsetRef = useRef(null);
   const trainLiveLogBufferRef = useRef([]);
+  const autoSaveTimerRef = useRef(null);
+  const plotPollTimerRef = useRef(null);
+  const historyActionRef = useRef("");
 
   /**
    * 当前活跃 session 的 key。
@@ -192,6 +202,10 @@ export function useBattleController({
     battleExitingRef.current = battleExiting;
   }, [battleExiting]);
 
+  useEffect(() => {
+    historyActionRef.current = historyAction;
+  }, [historyAction]);
+
   const resetBattleState = useMemo(() => {
     return () => ({
       ...initialBattleState,
@@ -208,6 +222,16 @@ export function useBattleController({
     setHistoryStatusKind("idle");
     setLastPlottedSessionId("");
     setPlotRefreshKey(0);
+    setAutoSaveStatus({ message: "", kind: "idle", sessionId: "" });
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    setPlotPendingSessions([]);
+    if (plotPollTimerRef.current) {
+      clearInterval(plotPollTimerRef.current);
+      plotPollTimerRef.current = null;
+    }
   }
 
   function applyHistoryUiSuccess({
@@ -245,7 +269,6 @@ export function useBattleController({
   }
 
   async function executeSaveHistoryAndPlot() {
-    setHistoryAction("save-plot");
     setHistoryError("");
     setHistoryStatusKind("loading");
     setHistoryMessage("saving history...");
@@ -281,6 +304,8 @@ export function useBattleController({
       return { ok: false, skipped: true };
     }
 
+    setHistoryAction("save-plot");
+
     try {
       return await executeSaveHistoryAndPlot();
     } catch (err) {
@@ -292,45 +317,102 @@ export function useBattleController({
     }
   }
 
+  function clearAutoSaveTimer() {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+  }
+
+  function scheduleAutoSaveClear(ms) {
+    clearAutoSaveTimer();
+    autoSaveTimerRef.current = setTimeout(() => {
+      setAutoSaveStatus({ message: "", kind: "idle", sessionId: "" });
+      autoSaveTimerRef.current = null;
+    }, ms);
+  }
+
   function consumeAutoHistoryResult(autoHistory) {
     if (!autoHistory || typeof autoHistory !== "object") return;
+
+    // Lock the button during auto-save processing.
+    // Only set if not already locked by a manual save.
+    const wasIdle = !historyActionRef.current;
+
+    if (wasIdle) {
+      setHistoryAction("auto-save");
+    }
 
     const sessionId = extractHistorySessionId(autoHistory);
     const shouldPlot = autoHistory?.should_plot !== false;
     const plotOk = autoHistory?.plot?.ok === true;
-    const plotSkipped = autoHistory?.plot?.skipped === true || shouldPlot === false;
+    const plotSkipped =
+      autoHistory?.plot?.skipped === true || shouldPlot === false;
+
+    function clearAutoSaveAction() {
+      if (historyActionRef.current === "auto-save") {
+        setHistoryAction("");
+      }
+    }
 
     if (autoHistory?.ok !== true) {
-      applyHistoryUiError(autoHistory?.error || "auto save_history failed");
+      setAutoSaveStatus({
+        message: autoHistory?.error || "auto save_history failed",
+        kind: "error",
+        sessionId: "",
+      });
+      scheduleAutoSaveClear(12000);
+      if (wasIdle) setTimeout(clearAutoSaveAction, 50);
       return;
     }
 
     if (shouldPlot && !plotOk) {
-      applyHistoryUiError(autoHistory?.plot?.error || "auto plot failed");
+      setAutoSaveStatus({
+        message: autoHistory?.plot?.error || "auto plot failed",
+        kind: "error",
+        sessionId: "",
+      });
+      scheduleAutoSaveClear(12000);
+      if (wasIdle) setTimeout(clearAutoSaveAction, 50);
       return;
     }
 
+    // Track sessions whose plot is still pending (started on backend)
+    if (shouldPlot && sessionId && !plotOk && !plotSkipped) {
+      setPlotPendingSessions((prev) =>
+        prev.includes(sessionId) ? prev : [...prev, sessionId]
+      );
+    }
+
     if (plotSkipped) {
-      applyHistoryUiSuccess({
-        sessionId,
+      setAutoSaveStatus({
         message:
           autoHistory?.plot?.message ||
           (sessionId
             ? `history saved: ${sessionId}; skipped plot because model epoch did not change`
             : "history saved; skipped plot because model epoch did not change"),
-        refreshPlot: false,
+        kind: "success",
+        sessionId: sessionId || "",
       });
+      scheduleAutoSaveClear(8000);
+      if (wasIdle) setTimeout(clearAutoSaveAction, 50);
       return;
     }
 
-    applyHistoryUiSuccess({
-      sessionId,
+    setAutoSaveStatus({
       message:
         autoHistory?.plot?.message ||
         autoHistory?.message ||
         (sessionId ? `plot finished: ${sessionId}` : "plot finished"),
-      refreshPlot: Boolean(sessionId),
+      kind: "success",
+      sessionId: sessionId || "",
     });
+    scheduleAutoSaveClear(8000);
+
+    if (sessionId) {
+      setPlotRefreshKey((prev) => prev + 1);
+    }
+    if (wasIdle) setTimeout(clearAutoSaveAction, 50);
   }
 
   async function saveHistoryOnSessionClosedOnce(sessionKey = null) {
@@ -367,17 +449,20 @@ export function useBattleController({
         ...prev,
         lossData,
         lossMeta: result.meta ?? null,
+        lossSourcePath: result.path ?? prev.lossSourcePath ?? null,
       }));
 
       return {
         lossData,
         lossMeta: result.meta ?? null,
+        lossSourcePath: result.path ?? null,
       };
     } catch (err) {
       console.error("[battle] fetch loss failed:", err);
       return {
         lossData: [],
         lossMeta: null,
+        lossSourcePath: null,
       };
     }
   }
@@ -539,7 +624,7 @@ export function useBattleController({
 
     const startedSessionKey = markSessionRunning(
       startResult?.session ?? {
-        mode: startResult?.result?.job_id != null ? "cluster" : "local",
+        mode: startResult?.result?.mode ?? (startResult?.result?.job_id != null ? "pbs" : "local"),
         job_id: startResult?.result?.job_id ?? null,
         pid: startResult?.result?.pid ?? startResult?.pid ?? null,
       }
@@ -563,19 +648,20 @@ export function useBattleController({
           ? `JOB ${startResult.result.job_id}`
           : `PID ${startResult?.result?.pid ?? startResult?.pid ?? "unknown"}`;
 
-          setBattle((prev) => ({
-            ...prev,
-            contactMessages: [
-              ...prev.contactMessages,
-              makeContactMessage({ comment: "准备好了吗？要进入结界了！" }),
-              makeContactMessage({ comment: `已进入魔女结界：${pidOrJob}` }),
-              makeContactMessage({
-                comment: "站在我身后就好，帮我盯着魔力波动！",
-              }),
-            ].slice(-100),
-            lossData: result.data ?? [],
-            lossMeta: result.meta ?? null,
-          }));
+        setBattle((prev) => ({
+          ...prev,
+          contactMessages: [
+            ...prev.contactMessages,
+            makeContactMessage({ comment: "准备好了吗？要进入结界了！" }),
+            makeContactMessage({ comment: `已进入魔女结界：${pidOrJob}` }),
+            makeContactMessage({
+              comment: "站在我身后就好，帮我盯着魔力波动！",
+            }),
+          ].slice(-100),
+          lossData: result.data ?? [],
+          lossMeta: result.meta ?? null,
+          lossSourcePath: result.path ?? null,
+        }));
     } catch (err) {
       console.error("[battle] fetchLossData failed:", err);
 
@@ -591,6 +677,7 @@ export function useBattleController({
         ],
         lossData: [],
         lossMeta: null,
+        lossSourcePath: null,
       }));
     }
 
@@ -673,7 +760,7 @@ export function useBattleController({
             }),
             makeContactMessage({
               comment:
-                status.session?.mode === "cluster"
+                status.session?.mode === "pbs" || status.session?.mode === "qos"
                   ? `当前为集群任务：${status.session?.job_id ?? "unknown"}`
                   : `当前为本地任务：PID ${status.session?.pid ?? "unknown"}`,
             }),
@@ -798,8 +885,59 @@ export function useBattleController({
     return () => {
       stopLossPolling();
       battleAgent?.interrupt?.();
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      if (plotPollTimerRef.current) {
+        clearInterval(plotPollTimerRef.current);
+        plotPollTimerRef.current = null;
+      }
     };
   }, [battleAgent]);
+
+  // Poll for pending plot completion
+  useEffect(() => {
+    if (plotPendingSessions.length === 0) return;
+
+    let cancelled = false;
+
+    async function poll() {
+      const sessions = plotPendingSessions;
+      if (cancelled || sessions.length === 0) return;
+
+      const stillPending = [];
+      for (const sid of sessions) {
+        try {
+          const status = await fetchHistoryPlotStatus(sid);
+          if (cancelled) return;
+          if (status?.done) {
+            // plot finished; don't add back to pending
+            setPlotRefreshKey((prev) => prev + 1);
+          } else {
+            stillPending.push(sid);
+          }
+        } catch {
+          // keep in pending on error; will retry
+          stillPending.push(sid);
+        }
+      }
+      if (!cancelled) {
+        setPlotPendingSessions(stillPending);
+      }
+    }
+
+    poll();
+    plotPollTimerRef.current = setInterval(poll, 5000);
+
+    return () => {
+      cancelled = true;
+      if (plotPollTimerRef.current) {
+        clearInterval(plotPollTimerRef.current);
+        plotPollTimerRef.current = null;
+      }
+    };
+  }, [plotPendingSessions]);
 
   return {
     battle,
@@ -811,6 +949,8 @@ export function useBattleController({
     historyStatusKind,
     lastPlottedSessionId,
     plotRefreshKey,
+    autoSaveStatus,
+    plotPendingSessions,
     handleEnterBattleMode,
     handleForceExitBattle,
     handleSaveHistoryAndPlot,

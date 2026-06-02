@@ -577,3 +577,48 @@ def history_plot_file():
         return jsonify(error_payload(str(err))), 400
     except Exception as err:
         return jsonify(error_payload(str(err))), 500
+
+
+@history_bp.get("/plot-status")
+def history_plot_status():
+    """Return plot generation status for a session.
+
+    Query params: ``session_id``.
+
+    Response::
+
+        {status: "plotting"|"done"|"error"|"unknown",
+         message: "...", plots_exist: bool}
+    """
+    try:
+        session_id = _validate_session_id(request.args.get("session_id", ""))
+    except ValueError as err:
+        return jsonify(error_payload(str(err))), 400
+
+    from services.train_service import _get_plot_status
+    status_entry = _get_plot_status(session_id)
+
+    has_plots = _has_plot_image_files(session_id)
+
+    if status_entry is not None:
+        return jsonify(success_payload(
+            session_id=session_id,
+            status=status_entry["status"],
+            message=status_entry.get("message", ""),
+            plots_exist=has_plots,
+        )), 200
+
+    if has_plots:
+        return jsonify(success_payload(
+            session_id=session_id,
+            status="done",
+            message="plots exist",
+            plots_exist=True,
+        )), 200
+    else:
+        return jsonify(success_payload(
+            session_id=session_id,
+            status="unknown",
+            message="no status recorded and no plots found",
+            plots_exist=False,
+        )), 200
